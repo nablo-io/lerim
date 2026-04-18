@@ -426,6 +426,80 @@ def api_ask(
     }
 
 
+def api_query(
+    *,
+    entity: str,
+    mode: str,
+    scope: str = "all",
+    project: str | None = None,
+    kind: str | None = None,
+    status: str | None = None,
+    source_session_id: str | None = None,
+    created_since: str | None = None,
+    created_until: str | None = None,
+    updated_since: str | None = None,
+    updated_until: str | None = None,
+    valid_at: str | None = None,
+    order_by: str = "created_at",
+    limit: int = 20,
+    offset: int = 0,
+    include_total: bool = False,
+) -> dict[str, Any]:
+    """Run one deterministic context query against the canonical context store."""
+    config = get_config()
+    normalized_scope = "project" if str(scope).strip().lower() == "project" else "all"
+    try:
+        selected_projects = _resolve_selected_projects(
+            config=config,
+            scope=normalized_scope,
+            project=project,
+        )
+    except ValueError as exc:
+        return {
+            "error": True,
+            "message": str(exc),
+            "projects_used": [],
+        }
+
+    store = _context_store(config)
+    project_ids: list[str] = []
+    for _name, path in selected_projects:
+        identity = resolve_project_identity(path)
+        store.register_project(identity)
+        project_ids.append(identity.project_id)
+
+    try:
+        payload = store.query(
+            entity=entity,
+            mode=mode,
+            project_ids=project_ids or None,
+            kind=kind,
+            status=status,
+            source_session_id=source_session_id,
+            created_since=created_since,
+            created_until=created_until,
+            updated_since=updated_since,
+            updated_until=updated_until,
+            valid_at=valid_at,
+            order_by=order_by,
+            limit=limit,
+            offset=offset,
+            include_total=include_total,
+        )
+    except Exception as exc:
+        return {
+            "error": True,
+            "message": str(exc),
+            "projects_used": [name for name, _ in selected_projects],
+        }
+    return {
+        **payload,
+        "error": False,
+        "projects_used": [name for name, _ in selected_projects],
+        "scope": normalized_scope,
+    }
+
+
 def api_sync(
     agent: str | None = None,
     window: str | None = None,

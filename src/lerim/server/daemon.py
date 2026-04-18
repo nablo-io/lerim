@@ -29,13 +29,13 @@ from lerim.sessions.catalog import (
 )
 
 
-ACTIVITY_LOG_PATH = Path.home() / ".lerim" / "activity.log"
+ACTIVITY_LOG_PATH = Path.home() / ".lerim" / "logs" / "activity.log"
 
 
 def log_activity(
 	op: str, project: str, stats: str, duration_s: float, cost_usd: float = 0.0
 ) -> None:
-	"""Append one line to ~/.lerim/activity.log.
+	"""Append one line to ~/.lerim/logs/activity.log.
 
 	Format: ``2026-03-01 14:23:05 | sync | myproject | 3 new, 1 updated | $0.0042 | 4.2s``
 	"""

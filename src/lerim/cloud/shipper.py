@@ -164,14 +164,11 @@ def _normalize_cloud_kind(raw: str | None) -> str:
     return "fact"
 
 
-def _structured_from_cloud_record(record: dict[str, Any], *, kind: str) -> dict[str, Any]:
-    """Derive minimal structured payload for pulled cloud records."""
+def _typed_fields_from_cloud_record(record: dict[str, Any], *, kind: str) -> dict[str, str]:
+    """Derive typed record fields for pulled cloud records."""
     title = str(record.get("title") or record.get("name") or "").strip()
     summary = str(record.get("description") or "").strip()
     body = str(record.get("body") or "").strip()
-    structured = record.get("structured")
-    if isinstance(structured, dict) and structured:
-        return structured
     if kind == "decision":
         return {
             "decision": title or summary or body,
@@ -182,10 +179,7 @@ def _structured_from_cloud_record(record: dict[str, Any], *, kind: str) -> dict[
             "user_intent": summary or title,
             "what_happened": body or summary or title,
         }
-    return {
-        "content": body or summary or title,
-        "why": summary if body and summary else "",
-    }
+    return {}
 
 
 def _upsert_pulled_record(
@@ -205,7 +199,8 @@ def _upsert_pulled_record(
     store.register_project(identity)
     kind = _normalize_cloud_kind(str(record.get("record_kind") or ""))
     summary = str(record.get("description") or "").strip()
-    structured = _structured_from_cloud_record(record, kind=kind)
+    body = str(record.get("body") or "").strip() or summary or str(record.get("title") or "").strip()
+    typed_fields = _typed_fields_from_cloud_record(record, kind=kind)
     cloud_edited = str(record.get("cloud_edited_at") or "").strip() or datetime.now(timezone.utc).isoformat()
     with store.connect() as conn:
         row = conn.execute(
@@ -218,26 +213,25 @@ def _upsert_pulled_record(
             session_id=None,
             record_id=record_id,
             kind=kind,
-            domain="project",
             title=str(record.get("title") or record.get("name") or record_id).strip(),
-            summary=summary,
-            structured=structured,
+            body=body,
             status=str(record.get("status") or "active").strip() or "active",
             valid_from=cloud_edited,
             change_reason="cloud_pull",
+            **typed_fields,
         )
         return True
     store.update_record(
         record_id=record_id,
         session_id=None,
+        project_ids=[identity.project_id],
         changes={
             "kind": kind,
-            "domain": "project",
             "title": str(record.get("title") or record.get("name") or record_id).strip(),
-            "summary": summary,
-            "structured": structured,
+            "body": body,
             "status": str(record.get("status") or "active").strip() or "active",
             "valid_from": cloud_edited,
+            **typed_fields,
         },
         change_reason="cloud_pull",
     )
@@ -513,7 +507,8 @@ def _query_context_records(
     }
     placeholders = ", ".join("?" for _ in selected_ids)
     sql = (
-        "SELECT record_id, project_id, kind, title, summary, content_md, structured_json, status, updated_at "
+        "SELECT record_id, project_id, kind, title, body, status, updated_at, "
+        "decision, why, alternatives, consequences, user_intent, what_happened, outcomes "
         f"FROM records WHERE project_id IN ({placeholders})"
     )
     params: list[Any] = list(selected_ids.keys())
@@ -534,14 +529,6 @@ def _query_context_records(
         return []
     for row in rows:
         row["project"] = selected_ids.get(str(row.get("project_id") or ""), "")
-        structured_json = row.get("structured_json")
-        if isinstance(structured_json, str):
-            try:
-                row["structured"] = json.loads(structured_json)
-            except json.JSONDecodeError:
-                row["structured"] = {}
-        else:
-            row["structured"] = {}
     return rows
 
 
@@ -577,11 +564,17 @@ async def _ship_records(
                 "record_id": record.get("record_id", ""),
                 "record_kind": record.get("kind"),
                 "title": record.get("title", ""),
-                "description": record.get("summary", ""),
-                "body": record.get("content_md", ""),
+                "description": "",
+                "body": record.get("body", ""),
                 "project": record.get("project"),
                 "status": record.get("status", "active"),
-                "structured": record.get("structured", {}),
+                "decision": record.get("decision", ""),
+                "why": record.get("why", ""),
+                "alternatives": record.get("alternatives", ""),
+                "consequences": record.get("consequences", ""),
+                "user_intent": record.get("user_intent", ""),
+                "what_happened": record.get("what_happened", ""),
+                "outcomes": record.get("outcomes", ""),
                 "updated": record.get("updated_at", ""),
             }
             batch.append(entry)

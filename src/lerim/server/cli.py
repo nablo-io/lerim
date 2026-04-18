@@ -30,6 +30,7 @@ from lerim.adapters.registry import (
 from lerim.server.api import (
     api_project_add,
     api_project_list,
+    api_query,
     api_project_remove,
     api_up,
     api_down,
@@ -277,6 +278,37 @@ def _cmd_ask(args: argparse.Namespace) -> int:
         _emit(json.dumps(data, indent=2, ensure_ascii=True))
     else:
         _emit(data.get("answer", ""))
+    return 0
+
+
+def _cmd_query(args: argparse.Namespace) -> int:
+    """Run deterministic context query locally and print the result."""
+    scope = _normalize_scope(getattr(args, "scope", None))
+    payload = api_query(
+        entity=args.entity,
+        mode=args.mode,
+        scope=scope,
+        project=getattr(args, "project", None),
+        kind=getattr(args, "kind", None),
+        status=getattr(args, "status", None),
+        source_session_id=getattr(args, "source_session_id", None),
+        created_since=getattr(args, "created_since", None),
+        created_until=getattr(args, "created_until", None),
+        updated_since=getattr(args, "updated_since", None),
+        updated_until=getattr(args, "updated_until", None),
+        valid_at=getattr(args, "valid_at", None),
+        order_by=getattr(args, "order_by", "created_at"),
+        limit=int(getattr(args, "limit", 20)),
+        offset=int(getattr(args, "offset", 0)),
+        include_total=bool(getattr(args, "include_total", False)),
+    )
+    if args.json:
+        _emit(json.dumps(payload, indent=2, ensure_ascii=True))
+        return 1 if payload.get("error") else 0
+    if payload.get("error"):
+        _emit(str(payload.get("message") or "query failed"), file=sys.stderr)
+        return 1
+    _emit(json.dumps(payload, indent=2, ensure_ascii=True))
     return 0
 
 
@@ -1349,6 +1381,34 @@ def build_parser() -> argparse.ArgumentParser:
         "--project", help="Project name/path when --scope=project."
     )
     ask.set_defaults(func=_cmd_ask)
+
+    # ── query ────────────────────────────────────────────────────────
+    query = sub.add_parser(
+        "query",
+        formatter_class=_F,
+        help="Run deterministic context queries",
+        description=(
+            "Deterministic list/count queries over records, versions, or sessions.\n\n"
+            "Example: lerim query records list --kind decision --limit 10"
+        ),
+    )
+    query.add_argument("entity", choices=["records", "versions", "sessions"])
+    query.add_argument("mode", choices=["list", "count"])
+    query.add_argument("--scope", choices=["all", "project"], default="all")
+    query.add_argument("--project", help="Project name/path when --scope=project.")
+    query.add_argument("--kind")
+    query.add_argument("--status")
+    query.add_argument("--source-session-id")
+    query.add_argument("--created-since")
+    query.add_argument("--created-until")
+    query.add_argument("--updated-since")
+    query.add_argument("--updated-until")
+    query.add_argument("--valid-at")
+    query.add_argument("--order-by", choices=["created_at", "updated_at", "valid_from"], default="created_at")
+    query.add_argument("--limit", type=int, default=20)
+    query.add_argument("--offset", type=int, default=0)
+    query.add_argument("--include-total", action="store_true")
+    query.set_defaults(func=_cmd_query)
 
     # ── status ───────────────────────────────────────────────────────
     status = sub.add_parser(

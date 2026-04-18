@@ -29,6 +29,7 @@ from lerim.server.api import (
     api_maintain,
     api_project_add,
     api_project_list,
+    api_query,
     api_project_remove,
     api_queue_jobs,
     api_retry_all_dead_letter,
@@ -918,6 +919,31 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
                 self._json(result_holder[0])
             else:
                 self._error(HTTPStatus.GATEWAY_TIMEOUT, "Ask timed out")
+            return
+        if path == "/api/query":
+            body = self._read_json_body()
+            result = api_query(
+                entity=str(body.get("entity") or "").strip(),
+                mode=str(body.get("mode") or "").strip(),
+                scope=str(body.get("scope") or "all"),
+                project=str(body.get("project") or "").strip() or None,
+                kind=str(body.get("kind") or "").strip() or None,
+                status=str(body.get("status") or "").strip() or None,
+                source_session_id=str(body.get("source_session_id") or "").strip() or None,
+                created_since=str(body.get("created_since") or "").strip() or None,
+                created_until=str(body.get("created_until") or "").strip() or None,
+                updated_since=str(body.get("updated_since") or "").strip() or None,
+                updated_until=str(body.get("updated_until") or "").strip() or None,
+                valid_at=str(body.get("valid_at") or "").strip() or None,
+                order_by=str(body.get("order_by") or "created_at"),
+                limit=int(body.get("limit") or 20),
+                offset=int(body.get("offset") or 0),
+                include_total=bool(body.get("include_total")),
+            )
+            if result.get("error"):
+                self._error(HTTPStatus.BAD_REQUEST, str(result.get("message") or "query failed"))
+                return
+            self._json(result)
             return
         if path == "/api/sync":
             body = self._read_json_body()
