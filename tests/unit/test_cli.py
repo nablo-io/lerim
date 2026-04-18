@@ -131,6 +131,61 @@ def test_ask_forwards_to_api(monkeypatch: pytest.MonkeyPatch) -> None:
     assert payload["answer"] == "Use bearer tokens."
 
 
+def test_ask_verbose_forwards_flag_and_prints_debug(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_post(_path, body):
+        captured["body"] = body
+        return {
+            "answer": "Use bearer tokens.",
+            "agent_session_id": "ses-1",
+            "projects_used": [],
+            "error": False,
+            "debug": {
+                "messages": [
+                    {
+                        "message_index": 0,
+                        "kind": "request",
+                        "parts": [
+                            {"part_kind": "system-prompt", "char_count": 123},
+                            {"part_kind": "user-prompt", "content": "how to deploy"},
+                        ],
+                    },
+                    {
+                        "message_index": 1,
+                        "kind": "response",
+                        "parts": [
+                            {
+                                "part_kind": "tool-call",
+                                "tool_name": "context_query",
+                                "args": {"entity": "records", "mode": "count"},
+                            },
+                        ],
+                    },
+                    {
+                        "message_index": 2,
+                        "kind": "request",
+                        "parts": [
+                            {
+                                "part_kind": "tool-return",
+                                "tool_name": "context_query",
+                                "content_preview": "{\"count\": 3}",
+                            },
+                        ],
+                    },
+                ],
+            },
+        }
+
+    monkeypatch.setattr(cli, "_api_post", _fake_post)
+    code, output = run_cli(["ask", "how to deploy", "--verbose"])
+    assert code == 0
+    assert captured["body"]["verbose"] is True
+    assert "ASK TRACE" in output
+    assert "[tool-call] context_query" in output
+    assert "[tool-return] context_query -> {\"count\": 3}" in output
+
+
 def test_ask_returns_nonzero_on_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_response = {
         "answer": "authentication_error: invalid api key",

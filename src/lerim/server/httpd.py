@@ -902,14 +902,15 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
             scope = str(body.get("scope") or "all")
             project = body.get("project")
             project_name = str(project).strip() if isinstance(project, str) else None
+            verbose = bool(body.get("verbose"))
 
             def _run_ask() -> None:
                 """Execute ask in background thread."""
                 if scope == "all" and not project_name:
-                    result_holder.append(api_ask(question))
+                    result_holder.append(api_ask(question, verbose=verbose))
                 else:
                     result_holder.append(
-                        api_ask(question, scope=scope, project=project_name)
+                        api_ask(question, scope=scope, project=project_name, verbose=verbose)
                     )
 
             thread = threading.Thread(target=_run_ask)

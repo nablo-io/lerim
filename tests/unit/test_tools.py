@@ -192,7 +192,7 @@ def test_create_record_rejects_invalid_episode(tmp_path) -> None:
     """Episode creation should require session fields."""
     ctx, _store = _make_ctx(tmp_path)
 
-    with pytest.raises(ValueError, match="episode_requires_user_intent_and_what_happened"):
+    with pytest.raises(ModelRetry, match="Episode records need both"):
         create_record(
             ctx,
             kind="episode",
@@ -205,13 +205,28 @@ def test_create_record_rejects_invalid_decision(tmp_path) -> None:
     """Decision creation should require both decision and why."""
     ctx, _store = _make_ctx(tmp_path)
 
-    with pytest.raises(ValueError, match="decision_requires_decision_and_why"):
+    with pytest.raises(ModelRetry, match="Decision records need both"):
         create_record(
             ctx,
             kind="decision",
             title="Use Redis",
             body="Redis is the cache backend.",
             decision="Use Redis",
+        )
+
+
+def test_create_record_rejects_verbose_episode_recap(tmp_path) -> None:
+    """Episode records should stay compact and avoid session-report narration."""
+    ctx, _store = _make_ctx(tmp_path)
+
+    with pytest.raises(ModelRetry, match="Episode body is too long"):
+        create_record(
+            ctx,
+            kind="episode",
+            title="Reviewed Lerim DB tool design",
+            body="x" * 500,
+            user_intent="Review the DB tool design.",
+            what_happened="Compared typed tools and raw SQL access.",
         )
 
 

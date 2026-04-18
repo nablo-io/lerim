@@ -51,6 +51,12 @@ QUERY_MODE_ALIASES = {
     "count": "count",
     "counts": "count",
 }
+MAX_RECORD_TITLE_CHARS = 120
+MAX_EPISODE_BODY_CHARS = 420
+MAX_DURABLE_BODY_CHARS = 850
+MAX_EPISODE_USER_INTENT_CHARS = 180
+MAX_EPISODE_WHAT_HAPPENED_CHARS = 260
+MAX_EPISODE_OUTCOMES_CHARS = 180
 
 
 def _utc_now() -> str:
@@ -1152,6 +1158,8 @@ class ContextStore:
             raise ValueError("title_required")
         if not body_text:
             raise ValueError("body_required")
+        if len(title_text) > MAX_RECORD_TITLE_CHARS:
+            raise ValueError("title_too_long")
         payload = {
             "kind": kind_text,
             "title": title_text,
@@ -1171,6 +1179,18 @@ class ContextStore:
             "what_happened": _normalize_optional_text(what_happened),
             "outcomes": _normalize_optional_text(outcomes),
         }
+        if kind_text == "episode":
+            if len(body_text) > MAX_EPISODE_BODY_CHARS:
+                raise ValueError("episode_body_too_long")
+            if payload["user_intent"] and len(payload["user_intent"]) > MAX_EPISODE_USER_INTENT_CHARS:
+                raise ValueError("episode_user_intent_too_long")
+            if payload["what_happened"] and len(payload["what_happened"]) > MAX_EPISODE_WHAT_HAPPENED_CHARS:
+                raise ValueError("episode_what_happened_too_long")
+            if payload["outcomes"] and len(payload["outcomes"]) > MAX_EPISODE_OUTCOMES_CHARS:
+                raise ValueError("episode_outcomes_too_long")
+        else:
+            if len(body_text) > MAX_DURABLE_BODY_CHARS:
+                raise ValueError("record_body_too_long")
         if kind_text == "decision":
             if not payload["decision"] or not payload["why"]:
                 raise ValueError("decision_requires_decision_and_why")

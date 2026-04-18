@@ -64,7 +64,7 @@ def test_live_runtime_cycle_sync_then_maintain_then_ask(
     assert_clean_context_schema(live_config.context_db_path)
     assert_quality_metrics(metrics)
 
-    count_answer, _, _ = live_runtime.ask(
+    count_answer, _, _, _ = live_runtime.ask(
         "how many records are extracted",
         repo_root=live_repo_root,
     )
@@ -72,13 +72,13 @@ def test_live_runtime_cycle_sync_then_maintain_then_ask(
 
     latest_learning = durable_rows[0]
     latest_title = str(latest_learning["title"]).strip()
-    latest_answer, _, _ = live_runtime.ask(
+    latest_answer, _, _, _ = live_runtime.ask(
         "what is the last memory",
         repo_root=live_repo_root,
     )
     assert latest_title in latest_answer
 
-    semantic_answer, _, _ = live_runtime.ask(
+    semantic_answer, _, _, _ = live_runtime.ask(
         "What decision was made about logging format?",
         repo_root=live_repo_root,
     )

@@ -12,7 +12,14 @@ import httpx
 import pytest
 from openai import RateLimitError
 from pydantic_ai.exceptions import UsageLimitExceeded
-from pydantic_ai.messages import ModelRequest, SystemPromptPart
+from pydantic_ai.messages import (
+	ModelRequest,
+	ModelResponse,
+	SystemPromptPart,
+	ToolCallPart,
+	ToolReturnPart,
+	UserPromptPart,
+)
 
 from lerim.agents.ask import AskResult
 from lerim.agents.extract import ExtractionResult
@@ -269,10 +276,11 @@ class TestAskFlow:
 			return AskResult(answer="answer text")
 
 		monkeypatch.setattr("lerim.server.runtime.run_ask", _fake_run_ask)
-		answer, session_id, cost = rt.ask("what changed?", repo_root=tmp_path)
+		answer, session_id, cost, debug = rt.ask("what changed?", repo_root=tmp_path)
 		assert answer == "answer text"
 		assert session_id.startswith("lerim-")
 		assert cost == 0.0
+		assert debug is None
 		assert captured["question"] == "what changed?"
 		assert captured["request_limit"] == rt.config.agent_role.max_iters_ask
 
@@ -286,7 +294,7 @@ class TestAskFlow:
 			"lerim.server.runtime.run_ask",
 			lambda **kwargs: AskResult(answer="ok"),
 		)
-		_, session_id, _ = rt.ask("hello", session_id="fixed-id", repo_root=tmp_path)
+		_, session_id, _, _ = rt.ask("hello", session_id="fixed-id", repo_root=tmp_path)
 		assert session_id == "fixed-id"
 
 	def test_ask_does_not_short_circuit_known_phrases(self, tmp_path, monkeypatch):
@@ -302,6 +310,33 @@ class TestAskFlow:
 			return AskResult(answer="agent answered")
 
 		monkeypatch.setattr("lerim.server.runtime.run_ask", _fake_run_ask)
-		answer, _, _ = rt.ask("what is the last memory", repo_root=tmp_path)
+		answer, _, _, _ = rt.ask("what is the last memory", repo_root=tmp_path)
 		assert answer == "agent answered"
 		assert captured["question"] == "what is the last memory"
+
+	def test_ask_can_return_debug_payload(self, tmp_path, monkeypatch):
+		rt = _build_runtime(tmp_path, monkeypatch)
+		monkeypatch.setattr(
+			"lerim.server.runtime.build_pydantic_model",
+			lambda *args, **kwargs: "fake-model",
+		)
+
+		def _fake_run_ask(**kwargs):
+			assert kwargs["return_messages"] is True
+			return (
+				AskResult(answer="answer text"),
+				[
+					ModelRequest(parts=[SystemPromptPart(content="system"), UserPromptPart(content="how many records?")]),
+					ModelResponse(parts=[ToolCallPart(tool_name="context_query", args={"entity": "records", "mode": "count"}, tool_call_id="call-1")]),
+					ModelRequest(parts=[ToolReturnPart(tool_name="context_query", content='{"count": 3}', tool_call_id="call-1")]),
+				],
+			)
+
+		monkeypatch.setattr("lerim.server.runtime.run_ask", _fake_run_ask)
+		answer, _, _, debug = rt.ask("how many records?", repo_root=tmp_path, include_debug=True)
+		assert answer == "answer text"
+		assert debug is not None
+		assert debug["tool_calls"][0]["tool_name"] == "context_query"
+		assert debug["tool_results"][0]["tool_name"] == "context_query"
+		assert debug["messages"][0]["parts"][0]["part_kind"] == "system-prompt"
+		assert debug["messages"][1]["parts"][0]["part_kind"] == "tool-call"

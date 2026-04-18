@@ -261,10 +261,57 @@ def _normalize_scope(raw: str | None) -> str:
     return "project" if str(raw or "").strip().lower() == "project" else "all"
 
 
+def _render_ask_trace(debug: dict[str, Any]) -> list[str]:
+    """Render sanitized ask trace in notebook-style message order."""
+    messages = debug.get("messages") or []
+    if not messages:
+        return []
+
+    lines = [
+        "=" * 70,
+        f"ASK TRACE ({len(messages)} messages)",
+        "=" * 70,
+    ]
+    for message in messages:
+        message_index = int(message.get("message_index", 0))
+        kind = str(message.get("kind") or "?")
+        lines.append("")
+        lines.append(f"--- Message {message_index} [{kind}] ---")
+        for part in message.get("parts") or []:
+            part_kind = str(part.get("part_kind") or "")
+            if part_kind == "system-prompt":
+                lines.append(f"  [system-prompt] ({int(part.get('char_count', 0))} chars)")
+                continue
+            if part_kind == "user-prompt":
+                lines.append(f"  [user-prompt] {str(part.get('content') or '')}")
+                continue
+            if part_kind == "tool-call":
+                args_json = json.dumps(part.get("args"), ensure_ascii=True)
+                lines.append(
+                    f"  [tool-call] {str(part.get('tool_name') or '?')}({args_json})"
+                )
+                continue
+            if part_kind == "tool-return":
+                content = str(part.get("content_preview") or "").replace("\n", " ")
+                lines.append(
+                    f"  [tool-return] {str(part.get('tool_name') or '?')} -> {content}"
+                )
+                continue
+            if part_kind == "text":
+                lines.append(f"  [text] {str(part.get('content') or '')}")
+                continue
+            lines.append(f"  [{part_kind}] {str(part.get('content') or '')}")
+    return lines
+
+
 def _cmd_ask(args: argparse.Namespace) -> int:
     """Forward ask query to the running Lerim server."""
     scope = _normalize_scope(getattr(args, "scope", None))
-    payload: dict[str, Any] = {"question": args.question, "scope": scope}
+    payload: dict[str, Any] = {
+        "question": args.question,
+        "scope": scope,
+        "verbose": bool(getattr(args, "verbose", False)),
+    }
     project = getattr(args, "project", None)
     if project:
         payload["project"] = str(project)
@@ -278,6 +325,13 @@ def _cmd_ask(args: argparse.Namespace) -> int:
         _emit(json.dumps(data, indent=2, ensure_ascii=True))
     else:
         _emit(data.get("answer", ""))
+        if getattr(args, "verbose", False):
+            debug = data.get("debug") or {}
+            trace_lines = _render_ask_trace(debug)
+            if trace_lines:
+                _emit("")
+                for line in trace_lines:
+                    _emit(line)
     return 0
 
 
@@ -1379,6 +1433,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ask.add_argument(
         "--project", help="Project name/path when --scope=project."
+    )
+    ask.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Show ask tool calls and concise tool results.",
     )
     ask.set_defaults(func=_cmd_ask)
 

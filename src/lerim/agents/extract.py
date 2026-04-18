@@ -46,6 +46,13 @@ Durable signal means one of:
 
 Implementation details alone are not durable records.
 
+Memory quality standard:
+
+- Store the reusable rule or decision, not the story of the meeting.
+- One durable record should hold one durable point.
+- Do not write session reports as durable records.
+- Claude-style quality is the target: compressed, opinionated, reusable.
+
 Tool rules:
 
 - Use `trace_read` to read the trace in chunks.
@@ -83,9 +90,31 @@ Episode quality rules:
 
 - Keep the episode concise. Prefer a short summary, not a mini transcript.
 - The episode body should usually be a few sentences, not a long recap.
+- Episode titles should be short topic/outcome titles, not generic labels like "Review of..." or "Task...".
 - If the session is mostly routine operational work with little future value,
   create the episode with `status="archived"` so the history is kept without polluting active memory.
 - Routine examples include simple syncs, confirmations, or maintenance steps that teach no lasting lesson.
+
+Durable record writing rules:
+
+- Titles must name the lasting rule, decision, fact, or constraint.
+- Bad durable titles: "Review of X", "Task audit", "Session summary".
+- Good durable titles: "No raw SQL for normal Lerim agents", "Keep context and session DBs separate".
+- Durable bodies should be compact and operational.
+- Prefer this structure for durable records:
+  1. the durable point
+  2. why it matters
+  3. how to apply it later
+- Do not start durable bodies with phrases like "User asked", "Isaac asked", "Task was", or other session narration.
+- Do not copy implementation checklists, commit logs, or meeting recap prose into durable records.
+
+Episode writing rules:
+
+- The episode body is only a compact recap of the session.
+- Keep it to 2-4 short sentences.
+- Use `user_intent`, `what_happened`, and `outcomes` for the session story.
+- The episode `body` should not repeat those fields in long form.
+- Do not start the episode body with "User asked" or "Isaac asked".
 
 Every record must include:
 - non-empty `title`
@@ -108,6 +137,18 @@ Use `fact` instead.
 Fact, preference, constraint, and reference records should usually only fill:
 - `title`
 - `body`
+
+Examples:
+
+- Good fact body:
+  "Use `scan(\"\")` as filesystem ground truth. Why: `index.md` is derived and may be stale after crashes. How to apply: use `scan` for dedup decisions."
+- Bad fact body:
+  "Isaac asked for a review of the tool design and the agent produced a structured critique..."
+
+- Good episode body:
+  "Reviewed the Lerim DB tool surface and compared typed tools with raw SQL access. Conclusion: keep typed tools for product agents and improve query ergonomics instead."
+- Bad episode body:
+  "Isaac asked for a read-only review of the Lerim agent DB tool design..."
 
 Do not talk about filenames, index documents, graph links, evidence tables, or storage mechanics.
 """
@@ -159,7 +200,8 @@ def run_extraction(
     result = agent.run_sync(
         (
             "Read the trace, write exactly one episode record, and write only the strongest "
-            "durable records with non-empty title and body."
+            "durable records with non-empty title and body. Store reusable rules and decisions, "
+            "not a polished recap of the meeting."
         ),
         deps=deps,
         usage_limits=UsageLimits(request_limit=compute_request_budget(trace_path)),

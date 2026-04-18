@@ -217,6 +217,7 @@ Requires a running server (`lerim up` or `lerim serve`).
 ```bash
 lerim ask 'What auth pattern do we use?'
 lerim ask "How is the database configured?"
+lerim ask "How is the database configured?" --verbose
 ```
 
 | Flag | Default | Description |
@@ -224,10 +225,15 @@ lerim ask "How is the database configured?"
 | `question` | required | Your question (quote if spaces) |
 | `--scope` | `all` | Read scope: `all` or `project` |
 | `--project` | -- | Project name/path when `--scope=project` |
+| `--verbose` | off | Show the full sanitized ask trace in message order |
 
 Notes:
 - Ask uses hybrid retrieval for explanatory questions: local ONNX embeddings, `sqlite-vec`, SQLite FTS5, and RRF.
 - Ask uses deterministic query tools for count/latest/date questions.
+- `--verbose` prints the ordered ask trace: prompts, tool calls, tool returns, and assistant text.
+- System prompts are shown as character counts, not full text.
+- Tool-return payloads are clipped to the first 200 characters to keep the trace readable.
+- Hidden provider reasoning is not exposed.
 - If provider auth fails, CLI returns exit code 1.
 
 ### `lerim query`

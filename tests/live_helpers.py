@@ -225,6 +225,16 @@ def audit_context_db(db_path: Path) -> dict[str, Any]:
                     """
                 ).fetchone()[0]
             ),
+            "long_episode_bodies": int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM records
+                    WHERE kind = 'episode'
+                      AND length(trim(body)) > 420
+                    """
+                ).fetchone()[0]
+            ),
             "archived_without_valid_until": int(
                 conn.execute(
                     "SELECT COUNT(*) FROM records WHERE status = 'archived' AND valid_until IS NULL"
@@ -247,6 +257,7 @@ def assert_quality_metrics(metrics: dict[str, Any]) -> None:
     assert metrics["blank_bodies"] == 0
     assert metrics["bad_decisions"] == 0
     assert metrics["bad_episodes"] == 0
+    assert metrics["long_episode_bodies"] == 0
     assert metrics["archived_without_valid_until"] == 0
     assert metrics["record_count"] >= 1
     assert metrics["version_count"] >= metrics["record_count"]

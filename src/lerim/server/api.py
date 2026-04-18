@@ -381,6 +381,7 @@ def api_ask(
     *,
     scope: str = "all",
     project: str | None = None,
+    verbose: bool = False,
 ) -> dict[str, Any]:
     """Run one ask query against the runtime agent and return result dict."""
     config = get_config()
@@ -410,13 +411,14 @@ def api_ask(
             _context_store(config).register_project(identity)
             project_ids.append(identity.project_id)
         repo_root = selected_projects[0][1]
-    response, session_id, cost_usd = agent.ask(
+    response, session_id, cost_usd, debug = agent.ask(
         question,
         project_ids=project_ids or None,
         repo_root=repo_root,
+        include_debug=bool(verbose),
     )
     error = looks_like_auth_error(response)
-    return {
+    payload = {
         "answer": response,
         "agent_session_id": session_id,
         "projects_used": [name for name, _ in selected_projects],
@@ -424,6 +426,9 @@ def api_ask(
         "cost_usd": cost_usd,
         "scope": normalized_scope,
     }
+    if verbose and debug is not None:
+        payload["debug"] = debug
+    return payload
 
 
 def api_query(

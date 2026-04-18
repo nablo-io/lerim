@@ -271,6 +271,36 @@ def _normalize_status(status: str) -> str:
     return str(status or "active").strip().lower()
 
 
+def _maybe_raise_record_retry(exc: ValueError) -> None:
+    """Convert record-quality validation errors into guided model retries."""
+    code = str(exc or "").strip()
+    retry_messages = {
+        "title_required": "Every record needs a non-empty title.",
+        "body_required": "Every record needs a non-empty body.",
+        "title_too_long": "Title is too long. Use one short specific memory title under 120 characters.",
+        "decision_requires_decision_and_why": (
+            "Decision records need both `decision` and `why`. "
+            "If you cannot supply both, create a `fact` instead."
+        ),
+        "episode_requires_session_id": "Episode records must stay tied to the current session.",
+        "episode_requires_user_intent_and_what_happened": (
+            "Episode records need both `user_intent` and `what_happened`."
+        ),
+        "episode_body_too_long": (
+            "Episode body is too long. Compress it to 2-4 short sentences."
+        ),
+        "episode_user_intent_too_long": "user_intent is too long. Compress it to one short sentence.",
+        "episode_what_happened_too_long": "what_happened is too long. Keep only the essential session outcome.",
+        "episode_outcomes_too_long": "outcomes is too long. Keep only the lasting result.",
+        "record_body_too_long": (
+            "Durable record body is too long. Keep only the reusable rule/decision/fact and why it matters."
+        ),
+    }
+    message = retry_messages.get(code)
+    if message:
+        raise ModelRetry(message) from exc
+
+
 def create_record(
     ctx: RunContext[ContextDeps],
     kind: str,
@@ -292,24 +322,28 @@ def create_record(
     store = _store(ctx)
     project_id = ctx.deps.project_identity.project_id
     session_id = ctx.deps.session_id
-    result = store.create_record(
-        project_id=project_id,
-        session_id=session_id,
-        kind=_normalize_kind(kind),
-        title=title,
-        body=body,
-        status=_normalize_status(status),
-        valid_from=valid_from.strip() or None,
-        valid_until=valid_until.strip() or None,
-        decision=decision.strip() or None,
-        why=why.strip() or None,
-        alternatives=alternatives.strip() or None,
-        consequences=consequences.strip() or None,
-        user_intent=user_intent.strip() or None,
-        what_happened=what_happened.strip() or None,
-        outcomes=outcomes.strip() or None,
-        change_reason=change_reason.strip() or None,
-    )
+    try:
+        result = store.create_record(
+            project_id=project_id,
+            session_id=session_id,
+            kind=_normalize_kind(kind),
+            title=title,
+            body=body,
+            status=_normalize_status(status),
+            valid_from=valid_from.strip() or None,
+            valid_until=valid_until.strip() or None,
+            decision=decision.strip() or None,
+            why=why.strip() or None,
+            alternatives=alternatives.strip() or None,
+            consequences=consequences.strip() or None,
+            user_intent=user_intent.strip() or None,
+            what_happened=what_happened.strip() or None,
+            outcomes=outcomes.strip() or None,
+            change_reason=change_reason.strip() or None,
+        )
+    except ValueError as exc:
+        _maybe_raise_record_retry(exc)
+        raise
     return json.dumps({"ok": True, "result": result}, ensure_ascii=True, indent=2)
 
 
@@ -353,13 +387,17 @@ def update_record(
     if str(status or "").strip():
         changes["status"] = _normalize_status(status)
     store = _store(ctx)
-    result = store.update_record(
-        record_id=str(record_id or "").strip(),
-        session_id=ctx.deps.session_id,
-        project_ids=ctx.deps.project_ids or [ctx.deps.project_identity.project_id],
-        changes=changes,
-        change_reason=str(change_reason or "").strip() or None,
-    )
+    try:
+        result = store.update_record(
+            record_id=str(record_id or "").strip(),
+            session_id=ctx.deps.session_id,
+            project_ids=ctx.deps.project_ids or [ctx.deps.project_identity.project_id],
+            changes=changes,
+            change_reason=str(change_reason or "").strip() or None,
+        )
+    except ValueError as exc:
+        _maybe_raise_record_retry(exc)
+        raise
     return json.dumps({"ok": True, "result": result}, ensure_ascii=True, indent=2)
 
 

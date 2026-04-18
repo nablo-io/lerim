@@ -261,6 +261,30 @@ def test_api_sync_force_flag(monkeypatch, tmp_path) -> None:
 	assert captured_kwargs["force"] is True
 
 
+def test_api_ask_includes_debug_when_verbose(monkeypatch, tmp_path) -> None:
+	"""api_ask should pass verbose through to runtime ask and expose debug payload."""
+	cfg = make_config(tmp_path)
+	monkeypatch.setattr(api_mod, "get_config", lambda: cfg)
+	monkeypatch.setattr(api_mod, "_resolve_selected_projects", lambda **kw: [])
+
+	class _FakeRuntime:
+		def ask(self, question, project_ids=None, repo_root=None, include_debug=False):
+			assert question == "how many records"
+			assert include_debug is True
+			return (
+				"3 records",
+				"sid-1",
+				0.0,
+				{"tool_calls": [{"tool_name": "context_query"}], "tool_results": []},
+			)
+
+	monkeypatch.setattr(api_mod, "LerimRuntime", lambda: _FakeRuntime())
+
+	payload = api_mod.api_ask("how many records", verbose=True)
+	assert payload["answer"] == "3 records"
+	assert payload["debug"]["tool_calls"][0]["tool_name"] == "context_query"
+
+
 def test_api_sync_includes_queue_health_warning(monkeypatch, tmp_path) -> None:
 	"""Sync API response surfaces degraded queue warning hints."""
 	cfg = make_config(tmp_path)

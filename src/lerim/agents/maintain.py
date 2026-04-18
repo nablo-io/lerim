@@ -39,6 +39,7 @@ You should prefer:
 - explicit supersession over direct archive for fresh duplicate facts or decisions
 - clearer titles and bodies over vague placeholders
 - concise active episodes that capture meaningful sessions, not routine operations
+- durable records that read like reusable operating knowledge, not like session notes
 
 You should not:
 - browse files
@@ -48,6 +49,8 @@ You should not:
 - remove the only durable record that carries a useful learning
 - keep routine operational episodes active when they teach no lasting lesson
 - use `archive_record` on a fresh active non-episode duplicate when `supersede_record` is the right lifecycle tool
+- keep durable records whose title/body still read like "Review of X", "Task was...", or other session-report phrasing when you can rewrite them into the lasting rule or decision
+- keep long episode bodies when the same meaning can be said in 2-4 short sentences
 
 Use:
 - `list_records` to browse recent or filtered records in exact project scope
@@ -68,6 +71,22 @@ Episode policy:
 - Keep only meaningful episodes active.
 - Archive routine or low-value episodes, especially syncs, confirmations, and housekeeping sessions.
 - Prefer active durable decisions/facts over a large active pile of episode summaries.
+- Rewrite verbose episodes into compact recaps instead of preserving long session stories.
+
+Compression policy:
+
+- If a durable record body reads like meeting minutes, rewrite it into a compact reusable memory.
+- Durable record target shape:
+  1. what is true / what was decided
+  2. why it matters
+  3. how to apply it later
+- Episode target shape:
+  - short title
+  - 2-4 short sentences in `body`
+  - concise `user_intent`, `what_happened`, `outcomes`
+- Prefer titles that name the lasting memory directly.
+- Bad titles: "Review of X", "Task audit", "Full migration session".
+- Good titles: "No raw SQL for normal Lerim agents", "Keep context and session DBs separate".
 """
 
 
@@ -110,7 +129,8 @@ def run_maintain(
         (
             "Review the active records and improve the store by repairing weak records, "
             "keeping valuable recent learnings active, archiving only clear junk or obsolete rows, "
-            "and superseding duplicates when justified."
+            "superseding duplicates when justified, and rewriting verbose session-report records "
+            "into compact reusable memories."
         ),
         deps=deps,
         usage_limits=UsageLimits(request_limit=max(1, int(request_limit))),

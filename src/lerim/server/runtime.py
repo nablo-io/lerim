@@ -115,6 +115,107 @@ def _write_agent_trace(path: Path, messages: list[ModelMessage]) -> None:
 	path.write_text(json.dumps(trace_data, indent=2), encoding="utf-8")
 
 
+def _build_ask_debug(messages: list[ModelMessage]) -> dict[str, Any]:
+	"""Build a sanitized ask debug payload from message history."""
+	trace_data = ModelMessagesTypeAdapter.dump_python(messages, mode="json")
+	tool_calls: list[dict[str, Any]] = []
+	tool_results: list[dict[str, Any]] = []
+	assistant_texts: list[str] = []
+	ordered_messages: list[dict[str, Any]] = []
+
+	for message_index, message in enumerate(trace_data):
+		sanitized_parts: list[dict[str, Any]] = []
+		for part in message.get("parts", []) or []:
+			part_kind = str(part.get("part_kind") or "")
+			if part_kind == "tool-call":
+				entry = {
+					"part_kind": part_kind,
+					"tool_name": str(part.get("tool_name") or ""),
+					"args": part.get("args"),
+					"tool_call_id": part.get("tool_call_id"),
+				}
+				sanitized_parts.append(entry)
+				tool_calls.append(
+					{
+						"tool_name": entry["tool_name"],
+						"args": entry["args"],
+						"tool_call_id": entry["tool_call_id"],
+					}
+				)
+				continue
+			if part_kind == "tool-return":
+				content = part.get("content")
+				text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=True)
+				entry = {
+					"part_kind": part_kind,
+					"tool_name": str(part.get("tool_name") or ""),
+					"tool_call_id": part.get("tool_call_id"),
+					"is_error": bool(part.get("is_error")),
+					"content_preview": text[:200],
+				}
+				sanitized_parts.append(entry)
+				tool_results.append(
+					{
+						"tool_name": entry["tool_name"],
+						"tool_call_id": entry["tool_call_id"],
+						"is_error": entry["is_error"],
+						"content_preview": entry["content_preview"],
+					}
+				)
+				continue
+			if part_kind == "system-prompt":
+				sanitized_parts.append(
+					{
+						"part_kind": part_kind,
+						"char_count": len(str(part.get("content") or "")),
+					}
+				)
+				continue
+			if part_kind == "user-prompt":
+				sanitized_parts.append(
+					{
+						"part_kind": part_kind,
+						"content": str(part.get("content") or ""),
+					}
+				)
+				continue
+			if part_kind == "text":
+				text = str(part.get("content") or "").strip()
+				if text:
+					assistant_texts.append(text)
+					sanitized_parts.append(
+						{
+							"part_kind": part_kind,
+							"content": text,
+						}
+					)
+				continue
+			if part_kind == "thinking":
+				continue
+			sanitized_parts.append(
+				{
+					"part_kind": part_kind,
+					"content": str(part)[:1000],
+				}
+			)
+
+		ordered_messages.append(
+			{
+				"message_index": message_index,
+				"kind": str(message.get("kind") or ""),
+				"parts": sanitized_parts,
+			}
+		)
+
+	return {
+		"tool_calls": tool_calls,
+		"tool_results": tool_results,
+		"assistant_texts": assistant_texts,
+		"message_count": len(trace_data),
+		"messages": ordered_messages,
+	}
+
+
 # ---------------------------------------------------------------------------
 # Quota error detection (PydanticAI path)
 # ---------------------------------------------------------------------------
@@ -442,8 +543,9 @@ class LerimRuntime:
 		session_id: str | None = None,
 		project_ids: list[str] | None = None,
 		repo_root: str | Path | None = None,
-	) -> tuple[str, str, float]:
-		"""Run one ask prompt. Returns (response, session_id, cost_usd)."""
+		include_debug: bool = False,
+	) -> tuple[str, str, float, dict[str, Any] | None]:
+		"""Run one ask prompt. Returns (response, session_id, cost_usd, debug)."""
 		resolved_session_id = session_id or self.generate_session_id()
 		resolved_repo_root = Path(repo_root).expanduser().resolve() if repo_root else Path(self._default_cwd or Path.cwd()).expanduser().resolve()
 		project_identity = resolve_project_identity(resolved_repo_root)
@@ -463,7 +565,7 @@ class LerimRuntime:
 				question=prompt,
 				hints=hints,
 				request_limit=self.config.agent_role.max_iters_ask,
-				return_messages=False,
+				return_messages=include_debug,
 			)
 
 		result = self._run_with_fallback(
@@ -471,5 +573,10 @@ class LerimRuntime:
 			callable_fn=_call,
 			model_builders=[_primary_builder],
 		)
+		debug: dict[str, Any] | None = None
+		if include_debug:
+			result_obj, messages = result
+			result = result_obj
+			debug = _build_ask_debug(messages)
 		response_text = (result.answer or "").strip() or "(no response)"
-		return response_text, resolved_session_id, 0.0
+		return response_text, resolved_session_id, 0.0, debug

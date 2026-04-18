@@ -288,7 +288,7 @@ def test_server(tmp_path, monkeypatch):
 	monkeypatch.setattr("lerim.server.httpd.list_provider_models", lambda provider: ["model-a", "model-b"])
 
 	# POST action mocks
-	monkeypatch.setattr("lerim.server.httpd.api_ask", lambda question: {
+	monkeypatch.setattr("lerim.server.httpd.api_ask", lambda question, **kwargs: {
 		"answer": f"Mocked answer for: {question}",
 		"agent_session_id": "test-session-001",
 		"projects_used": [],
