@@ -47,11 +47,12 @@ lerim sync --max-sessions 10         # limit batch size
 The maintain path runs offline refinement over stored context records,
 iterating over all registered projects:
 
-1. **Search** -- `search_records()` finds candidate active records in one project scope
-2. **Inspect** -- `fetch_records()` loads only the records that may change
-3. **Refine or supersede** -- `update_record()` and `supersede_record()` improve or replace redundant truth
-4. **Archive low-value** -- `archive_record()` moves junk or routine rows to archived status in the DB
-5. **Keep the store lean** -- the maintainer prefers stronger durable records over a noisy pile of routine episodes
+1. **Browse** -- `list_records()` scans active records in one project scope with exact ordering and filters
+2. **Search** -- `search_records()` finds semantic duplicate candidates or topic-related records when needed
+3. **Inspect** -- `fetch_records()` loads only the records that may change
+4. **Refine or supersede** -- `update_record()` and `supersede_record()` improve or replace redundant truth
+5. **Archive low-value** -- `archive_record()` moves junk or routine rows to archived status in the DB
+6. **Keep the store lean** -- the maintainer prefers stronger durable records over a noisy pile of routine episodes
 
 ### Request turn limits
 

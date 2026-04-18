@@ -30,6 +30,7 @@ Lerim does not expose raw SQL or file CRUD to the agent.
 The durable context tools are:
 
 - `trace_read`
+- `list_records`
 - `search_records`
 - `fetch_records`
 - `create_record`
