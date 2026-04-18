@@ -1,56 +1,84 @@
-"""SQLite-backed context store for Lerim.
+"""Canonical SQLite context store for Lerim.
 
-This module owns the canonical schema, record/session mutations, and hybrid
-retrieval helpers for the DB-only context architecture.
+This module keeps the durable context model intentionally small:
+
+- one global context database
+- one honest records table
+- one versions table for history
+- derived embedding + FTS tables for retrieval
+
+The store does not expose graph/evidence/findings tables in this repair pass.
 """
 
 from __future__ import annotations
 
-import json
 import sqlite3
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from lerim.config.logging import logger
-from lerim.context.embedding import EMBEDDING_MODEL_NAME, cosine_similarity, embed_text
+import sqlite_vec
+
+from lerim.config.settings import get_config
+from lerim.context.embedding import get_embedding_provider
 from lerim.context.project_identity import ProjectIdentity
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
 ALLOWED_KINDS = ("decision", "preference", "constraint", "fact", "reference", "episode")
-ALLOWED_DOMAINS = ("project", "user", "team", "external", "session")
 ALLOWED_STATUSES = ("active", "archived")
-ALLOWED_RELATIONS = ("supersedes", "supports", "contradicts", "related")
-ALLOWED_CHANGE_KINDS = ("create", "update", "supersede", "archive", "migrate")
+ALLOWED_CHANGE_KINDS = ("create", "update", "archive", "supersede", "migrate")
+QUERY_ENTITIES = ("records", "versions", "sessions")
+QUERY_MODES = ("list", "count")
+QUERY_ORDER_FIELDS = ("created_at", "updated_at", "valid_from")
 RRF_K = 60
+QUERY_ENTITY_ALIASES = {
+    "learning": "records",
+    "learnings": "records",
+    "record": "records",
+    "records": "records",
+    "version": "versions",
+    "versions": "versions",
+    "session": "sessions",
+    "sessions": "sessions",
+}
+QUERY_MODE_ALIASES = {
+    "list": "list",
+    "count": "count",
+    "counts": "count",
+}
 
 
 def _utc_now() -> str:
-    """Return the current UTC timestamp in ISO-8601 format."""
+    """Return current UTC timestamp."""
     return datetime.now(timezone.utc).isoformat()
 
 
-def _json(value: Any) -> str:
-    """Serialize JSON payloads with stable formatting."""
-    return json.dumps(value if value is not None else {}, ensure_ascii=True, sort_keys=True)
-
-
-def _parse_json(raw: str | None, default: Any) -> Any:
-    """Parse JSON text safely with a default value."""
-    if not raw:
-        return default
+def _parse_iso_utc(raw: str | None) -> datetime | None:
+    """Parse one ISO timestamp into an aware UTC datetime when possible."""
+    text = str(raw or "").strip()
+    if not text:
+        return None
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        return default
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _new_id(prefix: str) -> str:
-    """Create a compact prefixed ID."""
+    """Return a short prefixed identifier."""
     return f"{prefix}_{uuid.uuid4().hex[:12]}"
+
+
+def _normalize_optional_text(value: Any) -> str | None:
+    """Normalize optional text fields to stripped strings or None."""
+    text = str(value or "").strip()
+    return text or None
 
 
 def _compile_safe_fts_query(raw: str) -> str | None:
@@ -82,46 +110,6 @@ def _compile_safe_fts_query(raw: str) -> str | None:
     return " OR ".join(f'"{term}"' for term in terms)
 
 
-def render_content_md(kind: str, summary: str, structured: dict[str, Any]) -> str:
-    """Render human-readable markdown from structured semantic content."""
-    summary = (summary or "").strip()
-    if kind == "decision":
-        decision = str(structured.get("decision") or summary).strip()
-        why = str(structured.get("why") or "").strip()
-        alternatives = structured.get("alternatives") or []
-        consequences = structured.get("consequences") or []
-        lines = [decision]
-        if why:
-            lines.extend(["", f"**Why:** {why}"])
-        if alternatives:
-            lines.extend(["", "**Alternatives considered:**"])
-            lines.extend(f"- {item}" for item in alternatives if str(item).strip())
-        if consequences:
-            lines.extend(["", "**Consequences:**"])
-            lines.extend(f"- {item}" for item in consequences if str(item).strip())
-        return "\n".join(lines).strip()
-
-    if kind == "episode":
-        user_intent = str(structured.get("user_intent") or "").strip()
-        happened = str(structured.get("what_happened") or summary).strip()
-        outcomes = structured.get("outcomes") or []
-        lines = ["## User Intent", user_intent or "(not captured)", "", "## What Happened", happened]
-        if outcomes:
-            lines.extend(["", "## Outcomes"])
-            lines.extend(f"- {item}" for item in outcomes if str(item).strip())
-        return "\n".join(lines).strip()
-
-    content = str(structured.get("content") or summary).strip()
-    why = str(structured.get("why") or "").strip()
-    how = str(structured.get("how_to_apply") or "").strip()
-    lines = [content or summary]
-    if why:
-        lines.extend(["", f"**Why:** {why}"])
-    if how:
-        lines.extend(["", f"**How to apply:** {how}"])
-    return "\n".join(lines).strip()
-
-
 @dataclass(frozen=True)
 class SearchHit:
     """Compact retrieval hit returned by hybrid search."""
@@ -129,10 +117,11 @@ class SearchHit:
     record_id: str
     project_id: str
     kind: str
-    domain: str
     title: str
-    summary: str
+    body: str
     status: str
+    created_at: str
+    updated_at: str
     valid_from: str
     valid_until: str | None
     score: float
@@ -143,7 +132,6 @@ class ContextStore:
     """Canonical global SQLite context store."""
 
     def __init__(self, db_path: Path | str) -> None:
-        """Create a store wrapper for one SQLite database path."""
         self.db_path = Path(db_path).expanduser().resolve()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -154,6 +142,12 @@ class ContextStore:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         try:
+            conn.enable_load_extension(True)
+            sqlite_vec.load(conn)
+            conn.enable_load_extension(False)
+        except Exception as exc:
+            raise RuntimeError("failed_to_load_sqlite_vec_extension") from exc
+        try:
             yield conn
             conn.commit()
         finally:
@@ -163,154 +157,122 @@ class ContextStore:
         """Create all canonical tables and indexes idempotently."""
         with self.connect() as conn:
             conn.executescript(
-                        """
-                        CREATE TABLE IF NOT EXISTS schema_meta (
-                            key TEXT PRIMARY KEY,
-                            value TEXT NOT NULL
-                        );
+                """
+                CREATE TABLE IF NOT EXISTS schema_meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
 
-                        CREATE TABLE IF NOT EXISTS projects (
-                            project_id TEXT PRIMARY KEY,
-                            project_slug TEXT NOT NULL,
-                            repo_path TEXT NOT NULL UNIQUE,
-                            created_at TEXT NOT NULL,
-                            updated_at TEXT NOT NULL
-                        );
+                CREATE TABLE IF NOT EXISTS projects (
+                    project_id TEXT PRIMARY KEY,
+                    project_slug TEXT NOT NULL,
+                    repo_path TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
 
-                        CREATE TABLE IF NOT EXISTS sessions (
-                            session_id TEXT PRIMARY KEY,
-                            project_id TEXT NOT NULL,
-                            agent_type TEXT NOT NULL,
-                            source_trace_ref TEXT NOT NULL,
-                            repo_path TEXT,
-                            cwd TEXT,
-                            started_at TEXT,
-                            model_name TEXT,
-                            instructions_text TEXT,
-                            prompt_text TEXT,
-                            metadata_json TEXT NOT NULL,
-                            created_at TEXT NOT NULL,
-                            FOREIGN KEY(project_id) REFERENCES projects(project_id)
-                        );
+                CREATE TABLE IF NOT EXISTS sessions (
+                    session_id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    agent_type TEXT NOT NULL,
+                    source_trace_ref TEXT NOT NULL,
+                    repo_path TEXT,
+                    cwd TEXT,
+                    started_at TEXT,
+                    model_name TEXT,
+                    instructions_text TEXT,
+                    prompt_text TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(project_id) REFERENCES projects(project_id)
+                );
 
-                        CREATE TABLE IF NOT EXISTS records (
-                            record_id TEXT PRIMARY KEY,
-                            project_id TEXT NOT NULL,
-                            kind TEXT NOT NULL,
-                            domain TEXT NOT NULL,
-                            title TEXT NOT NULL,
-                            summary TEXT NOT NULL,
-                            content_md TEXT NOT NULL,
-                            structured_json TEXT NOT NULL,
-                            status TEXT NOT NULL,
-                            confidence REAL,
-                            source_session_id TEXT,
-                            created_at TEXT NOT NULL,
-                            updated_at TEXT NOT NULL,
-                            valid_from TEXT NOT NULL,
-                            valid_until TEXT,
-                            FOREIGN KEY(project_id) REFERENCES projects(project_id),
-                            FOREIGN KEY(source_session_id) REFERENCES sessions(session_id)
-                        );
+                CREATE TABLE IF NOT EXISTS records (
+                    record_id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    source_session_id TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    valid_from TEXT NOT NULL,
+                    valid_until TEXT,
+                    superseded_by_record_id TEXT,
+                    decision TEXT,
+                    why TEXT,
+                    alternatives TEXT,
+                    consequences TEXT,
+                    user_intent TEXT,
+                    what_happened TEXT,
+                    outcomes TEXT,
+                    FOREIGN KEY(project_id) REFERENCES projects(project_id),
+                    FOREIGN KEY(source_session_id) REFERENCES sessions(session_id),
+                    FOREIGN KEY(superseded_by_record_id) REFERENCES records(record_id),
+                    CHECK (length(trim(title)) > 0),
+                    CHECK (length(trim(body)) > 0)
+                );
 
-                        CREATE TABLE IF NOT EXISTS record_versions (
-                            version_id TEXT PRIMARY KEY,
-                            project_id TEXT NOT NULL,
-                            record_id TEXT NOT NULL,
-                            version_no INTEGER NOT NULL,
-                            kind TEXT NOT NULL,
-                            domain TEXT NOT NULL,
-                            title TEXT NOT NULL,
-                            summary TEXT NOT NULL,
-                            content_md TEXT NOT NULL,
-                            structured_json TEXT NOT NULL,
-                            status TEXT NOT NULL,
-                            change_kind TEXT NOT NULL,
-                            change_reason TEXT,
-                            changed_at TEXT NOT NULL,
-                            changed_by_session_id TEXT,
-                            FOREIGN KEY(project_id) REFERENCES projects(project_id),
-                            FOREIGN KEY(record_id) REFERENCES records(record_id),
-                            FOREIGN KEY(changed_by_session_id) REFERENCES sessions(session_id)
-                        );
+                CREATE TABLE IF NOT EXISTS record_versions (
+                    version_id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    record_id TEXT NOT NULL,
+                    version_no INTEGER NOT NULL,
+                    kind TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    source_session_id TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    valid_from TEXT NOT NULL,
+                    valid_until TEXT,
+                    superseded_by_record_id TEXT,
+                    decision TEXT,
+                    why TEXT,
+                    alternatives TEXT,
+                    consequences TEXT,
+                    user_intent TEXT,
+                    what_happened TEXT,
+                    outcomes TEXT,
+                    change_kind TEXT NOT NULL,
+                    change_reason TEXT,
+                    changed_at TEXT NOT NULL,
+                    changed_by_session_id TEXT,
+                    FOREIGN KEY(project_id) REFERENCES projects(project_id),
+                    FOREIGN KEY(record_id) REFERENCES records(record_id),
+                    FOREIGN KEY(source_session_id) REFERENCES sessions(session_id),
+                    FOREIGN KEY(superseded_by_record_id) REFERENCES records(record_id),
+                    FOREIGN KEY(changed_by_session_id) REFERENCES sessions(session_id)
+                );
 
-                        CREATE TABLE IF NOT EXISTS record_links (
-                            link_id TEXT PRIMARY KEY,
-                            project_id TEXT NOT NULL,
-                            from_record_id TEXT NOT NULL,
-                            to_record_id TEXT NOT NULL,
-                            relation TEXT NOT NULL,
-                            reason TEXT,
-                            created_at TEXT NOT NULL,
-                            created_by_session_id TEXT,
-                            FOREIGN KEY(project_id) REFERENCES projects(project_id),
-                            FOREIGN KEY(from_record_id) REFERENCES records(record_id),
-                            FOREIGN KEY(to_record_id) REFERENCES records(record_id),
-                            FOREIGN KEY(created_by_session_id) REFERENCES sessions(session_id)
-                        );
+                CREATE VIRTUAL TABLE IF NOT EXISTS records_fts USING fts5(
+                    record_id UNINDEXED,
+                    project_id UNINDEXED,
+                    title,
+                    body,
+                    decision,
+                    why,
+                    user_intent,
+                    what_happened
+                );
 
-                        CREATE TABLE IF NOT EXISTS evidence (
-                            evidence_id TEXT PRIMARY KEY,
-                            project_id TEXT NOT NULL,
-                            record_id TEXT NOT NULL,
-                            session_id TEXT,
-                            evidence_type TEXT NOT NULL,
-                            snippet TEXT,
-                            source_ref TEXT,
-                            metadata_json TEXT NOT NULL,
-                            created_at TEXT NOT NULL,
-                            FOREIGN KEY(project_id) REFERENCES projects(project_id),
-                            FOREIGN KEY(record_id) REFERENCES records(record_id),
-                            FOREIGN KEY(session_id) REFERENCES sessions(session_id)
-                        );
-
-                        CREATE TABLE IF NOT EXISTS session_findings (
-                            finding_id TEXT PRIMARY KEY,
-                            project_id TEXT NOT NULL,
-                            session_id TEXT NOT NULL,
-                            theme TEXT NOT NULL,
-                            durability TEXT NOT NULL,
-                            kind_hint TEXT,
-                            quote TEXT NOT NULL,
-                            trace_ref TEXT,
-                            metadata_json TEXT NOT NULL,
-                            created_at TEXT NOT NULL,
-                            committed_record_id TEXT,
-                            FOREIGN KEY(project_id) REFERENCES projects(project_id),
-                            FOREIGN KEY(session_id) REFERENCES sessions(session_id),
-                            FOREIGN KEY(committed_record_id) REFERENCES records(record_id)
-                        );
-
-                        CREATE TABLE IF NOT EXISTS record_embeddings (
-                            record_id TEXT PRIMARY KEY,
-                            project_id TEXT NOT NULL,
-                            embedding_model TEXT NOT NULL,
-                            embedding_json TEXT NOT NULL,
-                            updated_at TEXT NOT NULL,
-                            FOREIGN KEY(project_id) REFERENCES projects(project_id),
-                            FOREIGN KEY(record_id) REFERENCES records(record_id)
-                        );
-
-                        CREATE VIRTUAL TABLE IF NOT EXISTS records_fts USING fts5(
-                            record_id UNINDEXED,
-                            project_id UNINDEXED,
-                            title,
-                            summary,
-                            content_md
-                        );
-
-                        CREATE INDEX IF NOT EXISTS idx_projects_repo_path ON projects(repo_path);
-                        CREATE INDEX IF NOT EXISTS idx_sessions_project_id ON sessions(project_id);
-                        CREATE INDEX IF NOT EXISTS idx_records_project_id ON records(project_id);
-                        CREATE INDEX IF NOT EXISTS idx_records_kind ON records(kind);
-                        CREATE INDEX IF NOT EXISTS idx_records_status ON records(status);
-                        CREATE INDEX IF NOT EXISTS idx_links_from_record ON record_links(from_record_id);
-                        CREATE INDEX IF NOT EXISTS idx_links_to_record ON record_links(to_record_id);
-                        CREATE INDEX IF NOT EXISTS idx_evidence_record_id ON evidence(record_id);
-                        CREATE INDEX IF NOT EXISTS idx_findings_session_id ON session_findings(session_id);
-                        """
-                    )
+                CREATE INDEX IF NOT EXISTS idx_projects_repo_path ON projects(repo_path);
+                CREATE INDEX IF NOT EXISTS idx_sessions_project_id ON sessions(project_id);
+                CREATE INDEX IF NOT EXISTS idx_records_project_id ON records(project_id);
+                CREATE INDEX IF NOT EXISTS idx_records_kind ON records(kind);
+                CREATE INDEX IF NOT EXISTS idx_records_status ON records(status);
+                CREATE INDEX IF NOT EXISTS idx_records_created_at ON records(created_at);
+                CREATE INDEX IF NOT EXISTS idx_records_updated_at ON records(updated_at);
+                CREATE INDEX IF NOT EXISTS idx_records_valid_from ON records(valid_from);
+                CREATE INDEX IF NOT EXISTS idx_records_source_session_id ON records(source_session_id);
+                CREATE INDEX IF NOT EXISTS idx_record_versions_record_id ON record_versions(record_id);
+                CREATE INDEX IF NOT EXISTS idx_record_versions_changed_at ON record_versions(changed_at);
+                """
+            )
+            needs_embedding_rebuild = self._ensure_record_embeddings_index(conn)
             self._validate_schema(conn)
+            self._repair_archived_validity(conn)
             conn.execute(
                 """
                 INSERT INTO schema_meta(key, value)
@@ -319,21 +281,34 @@ class ContextStore:
                 """,
                 (SCHEMA_VERSION,),
             )
+            if needs_embedding_rebuild:
+                self._rebuild_embeddings(conn)
 
     def _validate_schema(self, conn: sqlite3.Connection) -> None:
-        """Ensure the on-disk DB matches the canonical DB-only schema."""
+        """Ensure the on-disk DB matches the simplified canonical schema."""
         required_columns = {
             "projects": {"project_id", "project_slug", "repo_path"},
             "sessions": {"session_id", "project_id", "agent_type", "source_trace_ref"},
-            "records": {"record_id", "project_id", "kind", "domain", "title", "summary", "content_md"},
-            "record_versions": {"version_id", "project_id", "record_id", "version_no", "change_kind"},
-            "record_links": {"link_id", "project_id", "from_record_id", "to_record_id", "relation"},
-            "evidence": {"evidence_id", "project_id", "record_id", "evidence_type"},
-            "session_findings": {"finding_id", "project_id", "session_id", "theme", "durability"},
-            "record_embeddings": {"record_id", "project_id", "embedding_model", "embedding_json"},
-            "records_fts": {"record_id", "project_id", "title", "summary", "content_md"},
+            "records": {"record_id", "project_id", "kind", "title", "body", "status"},
+            "record_versions": {"version_id", "record_id", "version_no", "change_kind"},
+            "record_embeddings": {
+                "embedding",
+                "project_id",
+                "record_id",
+                "embedding_model",
+                "updated_at",
+            },
+            "records_fts": {
+                "record_id",
+                "project_id",
+                "title",
+                "body",
+                "decision",
+                "why",
+                "user_intent",
+                "what_happened",
+            },
         }
-
         for table_name, expected in required_columns.items():
             rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
             actual = {str(row[1]) for row in rows}
@@ -343,9 +318,65 @@ class ContextStore:
                 raise sqlite3.OperationalError(
                     f"context schema incompatible: table {table_name} missing columns {missing_list}"
                 )
+        embeddings_sql_row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'record_embeddings'"
+        ).fetchone()
+        embeddings_sql = str(embeddings_sql_row["sql"] or "") if embeddings_sql_row else ""
+        if "vec0" not in embeddings_sql.lower():
+            raise sqlite3.OperationalError("context schema incompatible: record_embeddings is not vec0")
+
+    def _ensure_record_embeddings_index(self, conn: sqlite3.Connection) -> bool:
+        """Ensure record_embeddings uses sqlite-vec and return whether to rebuild rows."""
+        provider = get_embedding_provider()
+        expected_fragment = f"float[{provider.embedding_dims}]"
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'record_embeddings'"
+        ).fetchone()
+        sql = str(row["sql"] or "") if row else ""
+        rebuild = False
+        if row and ("vec0" not in sql.lower() or expected_fragment not in sql):
+            conn.execute("DROP TABLE IF EXISTS record_embeddings")
+            row = None
+            rebuild = True
+        if not row:
+            conn.execute(
+                f"""
+                CREATE VIRTUAL TABLE record_embeddings USING vec0(
+                    embedding float[{provider.embedding_dims}],
+                    project_id text,
+                    record_id text auxiliary,
+                    embedding_model text auxiliary,
+                    updated_at text auxiliary
+                )
+                """
+            )
+            return True
+
+        current_model = conn.execute(
+            "SELECT DISTINCT embedding_model FROM record_embeddings WHERE embedding_model IS NOT NULL"
+        ).fetchall()
+        current_models = {str(item["embedding_model"]) for item in current_model if item["embedding_model"]}
+        if current_models and current_models != {provider.model_id}:
+            rebuild = True
+
+        record_count = int(conn.execute("SELECT COUNT(*) FROM records").fetchone()[0])
+        embedding_count = int(conn.execute("SELECT COUNT(*) FROM record_embeddings").fetchone()[0])
+        if embedding_count != record_count:
+            rebuild = True
+        return rebuild
+
+    def _repair_archived_validity(self, conn: sqlite3.Connection) -> None:
+        """Backfill missing valid-until timestamps for archived rows."""
+        conn.execute(
+            """
+            UPDATE records
+            SET valid_until = COALESCE(valid_until, updated_at, created_at)
+            WHERE status = 'archived' AND valid_until IS NULL
+            """
+        )
 
     def register_project(self, identity: ProjectIdentity) -> dict[str, Any]:
-        """Upsert a project row and return the canonical project payload."""
+        """Upsert one project row."""
         self.initialize()
         now = _utc_now()
         with self.connect() as conn:
@@ -387,7 +418,8 @@ class ContextStore:
         prompt_text: str | None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Insert or replace a session provenance row."""
+        """Insert or update one session provenance row."""
+        del metadata
         self.initialize()
         now = _utc_now()
         with self.connect() as conn:
@@ -395,9 +427,9 @@ class ContextStore:
                 """
                 INSERT INTO sessions(
                     session_id, project_id, agent_type, source_trace_ref, repo_path, cwd,
-                    started_at, model_name, instructions_text, prompt_text, metadata_json, created_at
+                    started_at, model_name, instructions_text, prompt_text, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(session_id) DO UPDATE SET
                     project_id=excluded.project_id,
                     agent_type=excluded.agent_type,
@@ -407,8 +439,7 @@ class ContextStore:
                     started_at=excluded.started_at,
                     model_name=excluded.model_name,
                     instructions_text=excluded.instructions_text,
-                    prompt_text=excluded.prompt_text,
-                    metadata_json=excluded.metadata_json
+                    prompt_text=excluded.prompt_text
                 """,
                 (
                     session_id,
@@ -421,48 +452,10 @@ class ContextStore:
                     model_name,
                     instructions_text,
                     prompt_text,
-                    _json(metadata or {}),
                     now,
                 ),
             )
         return {"session_id": session_id, "project_id": project_id}
-
-    def add_session_findings(
-        self,
-        *,
-        project_id: str,
-        session_id: str,
-        findings: list[dict[str, Any]],
-    ) -> list[str]:
-        """Persist extraction findings for one session."""
-        self.initialize()
-        created_ids: list[str] = []
-        with self.connect() as conn:
-            for finding in findings:
-                finding_id = _new_id("find")
-                created_ids.append(finding_id)
-                conn.execute(
-                    """
-                    INSERT INTO session_findings(
-                        finding_id, project_id, session_id, theme, durability, kind_hint, quote,
-                        trace_ref, metadata_json, created_at, committed_record_id
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
-                    """,
-                    (
-                        finding_id,
-                        project_id,
-                        session_id,
-                        str(finding.get("theme") or "").strip(),
-                        str(finding.get("level") or "").strip(),
-                        str(finding.get("kind_hint") or "").strip() or None,
-                        str(finding.get("quote") or "").strip(),
-                        str(finding.get("offset") or ""),
-                        _json({"source": "note"}),
-                        _utc_now(),
-                    ),
-                )
-        return created_ids
 
     def fetch_record(
         self,
@@ -470,17 +463,21 @@ class ContextStore:
         *,
         project_ids: list[str] | None = None,
         include_versions: bool = False,
-        include_evidence: bool = False,
-        include_links: bool = False,
     ) -> dict[str, Any] | None:
-        """Fetch one record plus optional related detail."""
+        """Fetch one record plus optional versions."""
         self.initialize()
         filter_sql, params = self._build_record_filter_sql(
             project_ids=project_ids,
             kind_filters=None,
-            domain_filters=None,
-            as_of=None,
-            include_history=True,
+            statuses=None,
+            source_session_id=None,
+            created_since=None,
+            created_until=None,
+            updated_since=None,
+            updated_until=None,
+            valid_at=None,
+            include_archived=True,
+            table_alias="",
         )
         with self.connect() as conn:
             row = conn.execute(
@@ -493,33 +490,14 @@ class ContextStore:
             if include_versions:
                 versions = conn.execute(
                     """
-                    SELECT * FROM record_versions
+                    SELECT *
+                    FROM record_versions
                     WHERE record_id = ?
                     ORDER BY version_no DESC
                     """,
                     (record_id,),
                 ).fetchall()
-                payload["versions"] = [dict(item) | {"structured": _parse_json(item["structured_json"], {})} for item in versions]
-            if include_evidence:
-                evidence = conn.execute(
-                    """
-                    SELECT * FROM evidence
-                    WHERE record_id = ?
-                    ORDER BY created_at ASC
-                    """,
-                    (record_id,),
-                ).fetchall()
-                payload["evidence"] = [dict(item) | {"metadata": _parse_json(item["metadata_json"], {})} for item in evidence]
-            if include_links:
-                links = conn.execute(
-                    """
-                    SELECT * FROM record_links
-                    WHERE from_record_id = ? OR to_record_id = ?
-                    ORDER BY created_at ASC
-                    """,
-                    (record_id, record_id),
-                ).fetchall()
-                payload["links"] = [dict(item) for item in links]
+                payload["versions"] = [self._version_row_to_dict(item) for item in versions]
             return payload
 
     def create_record(
@@ -527,63 +505,85 @@ class ContextStore:
         *,
         project_id: str,
         session_id: str | None,
-        record_id: str | None = None,
         kind: str,
-        domain: str,
         title: str,
-        summary: str,
-        structured: dict[str, Any],
+        body: str,
         status: str = "active",
-        confidence: float | None = None,
+        record_id: str | None = None,
         valid_from: str | None = None,
         valid_until: str | None = None,
-        links: list[dict[str, Any]] | None = None,
-        evidence: list[dict[str, Any]] | None = None,
+        superseded_by_record_id: str | None = None,
+        decision: str | None = None,
+        why: str | None = None,
+        alternatives: str | None = None,
+        consequences: str | None = None,
+        user_intent: str | None = None,
+        what_happened: str | None = None,
+        outcomes: str | None = None,
         change_reason: str | None = None,
     ) -> dict[str, Any]:
-        """Create a new canonical record and first version."""
-        self._validate_record_fields(kind=kind, domain=domain, status=status)
+        """Create a new canonical record and its first version."""
         self.initialize()
-        now = _utc_now()
         record_id = str(record_id or _new_id("rec")).strip()
         if not record_id:
             raise ValueError("record_id_required")
-        self._validate_structured_payload(kind=kind, structured=structured, session_id=session_id)
-        content_md = render_content_md(kind, summary, structured)
-        effective_valid_from = valid_from or now
+        now = _utc_now()
+        payload = self._normalize_record_payload(
+            kind=kind,
+            title=title,
+            body=body,
+            status=status,
+            source_session_id=session_id,
+            created_at=now,
+            updated_at=now,
+            valid_from=valid_from or now,
+            valid_until=valid_until,
+            superseded_by_record_id=superseded_by_record_id,
+            decision=decision,
+            why=why,
+            alternatives=alternatives,
+            consequences=consequences,
+            user_intent=user_intent,
+            what_happened=what_happened,
+            outcomes=outcomes,
+        )
         with self.connect() as conn:
             self._ensure_episode_uniqueness(
                 conn,
                 project_id=project_id,
-                kind=kind,
+                kind=payload["kind"],
                 session_id=session_id,
                 exclude_record_id=None,
             )
             conn.execute(
                 """
                 INSERT INTO records(
-                    record_id, project_id, kind, domain, title, summary, content_md,
-                    structured_json, status, confidence, source_session_id,
-                    created_at, updated_at, valid_from, valid_until
+                    record_id, project_id, kind, title, body, status, source_session_id,
+                    created_at, updated_at, valid_from, valid_until, superseded_by_record_id,
+                    decision, why, alternatives, consequences, user_intent, what_happened, outcomes
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record_id,
                     project_id,
-                    kind,
-                    domain,
-                    title.strip(),
-                    summary.strip(),
-                    content_md,
-                    _json(structured),
-                    status,
-                    confidence,
-                    session_id,
-                    now,
-                    now,
-                    effective_valid_from,
-                    valid_until,
+                    payload["kind"],
+                    payload["title"],
+                    payload["body"],
+                    payload["status"],
+                    payload["source_session_id"],
+                    payload["created_at"],
+                    payload["updated_at"],
+                    payload["valid_from"],
+                    payload["valid_until"],
+                    payload["superseded_by_record_id"],
+                    payload["decision"],
+                    payload["why"],
+                    payload["alternatives"],
+                    payload["consequences"],
+                    payload["user_intent"],
+                    payload["what_happened"],
+                    payload["outcomes"],
                 ),
             )
             self._insert_record_version(
@@ -591,189 +591,183 @@ class ContextStore:
                 project_id=project_id,
                 record_id=record_id,
                 version_no=1,
-                kind=kind,
-                domain=domain,
-                title=title,
-                summary=summary,
-                content_md=content_md,
-                structured=structured,
-                status=status,
+                payload=payload,
                 change_kind="create",
                 change_reason=change_reason,
                 changed_by_session_id=session_id,
             )
-            self._upsert_embedding(conn, project_id=project_id, record_id=record_id, text=self._search_text(title, summary, content_md))
-            self._upsert_fts(conn, project_id=project_id, record_id=record_id, title=title, summary=summary, content_md=content_md)
-            self._insert_links(conn, project_id=project_id, session_id=session_id, from_record_id=record_id, links=links or [])
-            self._insert_evidence(conn, project_id=project_id, record_id=record_id, session_id=session_id, evidence=evidence or [])
-        return self.fetch_record(record_id, include_evidence=True, include_links=True) or {}
+            self._upsert_embedding(
+                conn,
+                project_id=project_id,
+                record_id=record_id,
+                text=self._search_text(payload),
+            )
+            self._upsert_fts(conn, project_id=project_id, record_id=record_id, payload=payload)
+        return self.fetch_record(record_id, project_ids=[project_id], include_versions=True) or {}
 
     def update_record(
         self,
         *,
         record_id: str,
         session_id: str | None,
+        project_ids: list[str] | None,
         changes: dict[str, Any],
         change_reason: str | None = None,
         change_kind_override: str | None = None,
     ) -> dict[str, Any]:
-        """Apply a partial semantic update and create a new version."""
+        """Apply a partial update and append a version snapshot."""
         self.initialize()
         with self.connect() as conn:
             current = conn.execute("SELECT * FROM records WHERE record_id = ?", (record_id,)).fetchone()
             if current is None:
                 raise ValueError(f"record_not_found:{record_id}")
             merged = self._record_row_to_dict(current)
-            structured = dict(merged["structured"])
-            if "structured" in changes and isinstance(changes["structured"], dict):
-                structured.update(changes["structured"])
-            kind = str(changes.get("kind") or merged["kind"])
-            domain = str(changes.get("domain") or merged["domain"])
-            status = str(changes.get("status") or merged["status"])
-            title = str(changes.get("title") or merged["title"])
-            summary = str(changes.get("summary") or merged["summary"])
-            confidence = changes.get("confidence", merged.get("confidence"))
-            valid_from = str(changes.get("valid_from") or merged["valid_from"])
-            valid_until = changes.get("valid_until", merged.get("valid_until"))
-            self._validate_record_fields(kind=kind, domain=domain, status=status)
-            self._validate_structured_payload(
-                kind=kind,
-                structured=structured,
-                session_id=merged.get("source_session_id"),
+            if project_ids and merged["project_id"] not in project_ids:
+                raise ValueError(f"record_out_of_scope:{record_id}")
+            now = _utc_now()
+            payload = self._normalize_record_payload(
+                kind=changes.get("kind", merged["kind"]),
+                title=changes.get("title", merged["title"]),
+                body=changes.get("body", merged["body"]),
+                status=changes.get("status", merged["status"]),
+                source_session_id=merged["source_session_id"],
+                created_at=merged["created_at"],
+                updated_at=now,
+                valid_from=changes.get("valid_from", merged["valid_from"]),
+                valid_until=changes.get("valid_until", merged["valid_until"]),
+                superseded_by_record_id=changes.get(
+                    "superseded_by_record_id", merged["superseded_by_record_id"]
+                ),
+                decision=changes.get("decision", merged["decision"]),
+                why=changes.get("why", merged["why"]),
+                alternatives=changes.get("alternatives", merged["alternatives"]),
+                consequences=changes.get("consequences", merged["consequences"]),
+                user_intent=changes.get("user_intent", merged["user_intent"]),
+                what_happened=changes.get("what_happened", merged["what_happened"]),
+                outcomes=changes.get("outcomes", merged["outcomes"]),
             )
             self._ensure_episode_uniqueness(
                 conn,
                 project_id=merged["project_id"],
-                kind=kind,
-                session_id=merged.get("source_session_id"),
+                kind=payload["kind"],
+                session_id=payload["source_session_id"],
                 exclude_record_id=record_id,
             )
-            content_md = render_content_md(kind, summary, structured)
-            now = _utc_now()
             conn.execute(
                 """
                 UPDATE records
-                SET kind=?, domain=?, title=?, summary=?, content_md=?, structured_json=?,
-                    status=?, confidence=?, updated_at=?, valid_from=?, valid_until=?
+                SET kind=?, title=?, body=?, status=?, updated_at=?, valid_from=?,
+                    valid_until=?, superseded_by_record_id=?, decision=?, why=?,
+                    alternatives=?, consequences=?, user_intent=?, what_happened=?, outcomes=?
                 WHERE record_id=?
                 """,
                 (
-                    kind,
-                    domain,
-                    title,
-                    summary,
-                    content_md,
-                    _json(structured),
-                    status,
-                    confidence,
-                    now,
-                    valid_from,
-                    valid_until,
+                    payload["kind"],
+                    payload["title"],
+                    payload["body"],
+                    payload["status"],
+                    payload["updated_at"],
+                    payload["valid_from"],
+                    payload["valid_until"],
+                    payload["superseded_by_record_id"],
+                    payload["decision"],
+                    payload["why"],
+                    payload["alternatives"],
+                    payload["consequences"],
+                    payload["user_intent"],
+                    payload["what_happened"],
+                    payload["outcomes"],
                     record_id,
                 ),
             )
-            version_no = int(conn.execute("SELECT COALESCE(MAX(version_no), 0) FROM record_versions WHERE record_id = ?", (record_id,)).fetchone()[0]) + 1
-            change_kind = change_kind_override or ("archive" if status == "archived" else "update")
+            version_no = (
+                int(
+                    conn.execute(
+                        "SELECT COALESCE(MAX(version_no), 0) FROM record_versions WHERE record_id = ?",
+                        (record_id,),
+                    ).fetchone()[0]
+                )
+                + 1
+            )
+            change_kind = change_kind_override or ("archive" if payload["status"] == "archived" else "update")
             self._insert_record_version(
                 conn,
                 project_id=merged["project_id"],
                 record_id=record_id,
                 version_no=version_no,
-                kind=kind,
-                domain=domain,
-                title=title,
-                summary=summary,
-                content_md=content_md,
-                structured=structured,
-                status=status,
+                payload=payload,
                 change_kind=change_kind,
                 change_reason=change_reason,
                 changed_by_session_id=session_id,
             )
-            self._upsert_embedding(conn, project_id=merged["project_id"], record_id=record_id, text=self._search_text(title, summary, content_md))
-            self._upsert_fts(conn, project_id=merged["project_id"], record_id=record_id, title=title, summary=summary, content_md=content_md)
-            if isinstance(changes.get("links"), list):
-                self._insert_links(conn, project_id=merged["project_id"], session_id=session_id, from_record_id=record_id, links=changes["links"])
-            if isinstance(changes.get("evidence"), list):
-                self._insert_evidence(conn, project_id=merged["project_id"], record_id=record_id, session_id=session_id, evidence=changes["evidence"])
-        return self.fetch_record(record_id, include_evidence=True, include_links=True) or {}
+            self._upsert_embedding(
+                conn,
+                project_id=merged["project_id"],
+                record_id=record_id,
+                text=self._search_text(payload),
+            )
+            self._upsert_fts(conn, project_id=merged["project_id"], record_id=record_id, payload=payload)
+        return self.fetch_record(record_id, project_ids=project_ids, include_versions=True) or {}
 
     def archive_record(
         self,
         *,
         record_id: str,
         session_id: str | None,
+        project_ids: list[str] | None,
         reason: str | None = None,
     ) -> dict[str, Any]:
         """Archive an existing record."""
+        current = self.fetch_record(record_id, project_ids=project_ids, include_versions=False)
+        if current is None:
+            raise ValueError(f"record_not_found:{record_id}")
+        created_at = _parse_iso_utc(current.get("created_at"))
+        now = datetime.now(timezone.utc)
+        if (
+            str(current.get("status") or "") == "active"
+            and str(current.get("kind") or "") != "episode"
+            and not str(current.get("superseded_by_record_id") or "").strip()
+            and created_at is not None
+            and (now - created_at) < timedelta(hours=24)
+        ):
+            raise ValueError(f"refuse_archive_recent_active_record:{record_id}")
         return self.update_record(
             record_id=record_id,
             session_id=session_id,
-            changes={"status": "archived"},
+            project_ids=project_ids,
+            changes={
+                "status": "archived",
+                "valid_until": str(current.get("valid_until") or _utc_now()),
+            },
             change_reason=reason or "archive_record",
+            change_kind_override="archive",
         )
-
-    def link_records(
-        self,
-        *,
-        project_id: str,
-        from_record_id: str,
-        to_record_id: str,
-        relation: str,
-        reason: str | None,
-        session_id: str | None,
-    ) -> dict[str, Any]:
-        """Create one graph link between two records."""
-        if relation not in ALLOWED_RELATIONS:
-            raise ValueError(f"invalid_relation:{relation}")
-        self.initialize()
-        link_id = _new_id("link")
-        with self.connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO record_links(
-                    link_id, project_id, from_record_id, to_record_id, relation,
-                    reason, created_at, created_by_session_id
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (link_id, project_id, from_record_id, to_record_id, relation, reason, _utc_now(), session_id),
-            )
-        return {
-            "link_id": link_id,
-            "project_id": project_id,
-            "from_record_id": from_record_id,
-            "to_record_id": to_record_id,
-            "relation": relation,
-            "reason": reason,
-        }
 
     def supersede_record(
         self,
         *,
         record_id: str,
         session_id: str | None,
+        project_ids: list[str] | None,
         replacement_record_id: str,
         reason: str | None = None,
         valid_until: str | None = None,
     ) -> dict[str, Any]:
-        """Close one record's validity window and link it to its replacement."""
-        archived = self.update_record(
+        """Mark one record as superseded by another record."""
+        replacement = self.fetch_record(replacement_record_id, project_ids=project_ids, include_versions=False)
+        if replacement is None:
+            raise ValueError(f"replacement_record_not_found:{replacement_record_id}")
+        return self.update_record(
             record_id=record_id,
             session_id=session_id,
-            changes={"valid_until": valid_until or _utc_now()},
+            project_ids=project_ids,
+            changes={
+                "valid_until": valid_until or _utc_now(),
+                "superseded_by_record_id": replacement_record_id,
+            },
             change_reason=reason or "supersede_record",
             change_kind_override="supersede",
         )
-        self.link_records(
-            project_id=archived["project_id"],
-            from_record_id=replacement_record_id,
-            to_record_id=record_id,
-            relation="supersedes",
-            reason=reason,
-            session_id=session_id,
-        )
-        return self.fetch_record(record_id, include_evidence=True, include_links=True) or {}
 
     def search(
         self,
@@ -781,52 +775,43 @@ class ContextStore:
         project_ids: list[str] | None,
         query: str,
         kind_filters: list[str] | None = None,
-        domain_filters: list[str] | None = None,
-        as_of: str | None = None,
-        include_history: bool = False,
+        statuses: list[str] | None = None,
+        valid_at: str | None = None,
+        include_archived: bool = False,
         limit: int = 8,
     ) -> list[SearchHit]:
-        """Run hybrid search over active records with optional temporal filters."""
+        """Run hybrid retrieval over records."""
         self.initialize()
+        config = get_config()
         semantic_rows = self._semantic_candidates(
             project_ids=project_ids,
             query=query,
             kind_filters=kind_filters,
-            domain_filters=domain_filters,
-            as_of=as_of,
-            include_history=include_history,
-            limit=max(limit * 3, 24),
+            statuses=statuses,
+            valid_at=valid_at,
+            include_archived=include_archived,
+            limit=max(limit * 3, config.semantic_shortlist_size),
         )
         lexical_rows = self._lexical_candidates(
             project_ids=project_ids,
             query=query,
             kind_filters=kind_filters,
-            domain_filters=domain_filters,
-            as_of=as_of,
-            include_history=include_history,
-            limit=max(limit * 3, 24),
+            statuses=statuses,
+            valid_at=valid_at,
+            include_archived=include_archived,
+            limit=max(limit * 3, config.lexical_shortlist_size),
         )
         combined = self._rrf_fuse(semantic_rows=semantic_rows, lexical_rows=lexical_rows)
         if not combined:
             return []
         top_ids = [record_id for record_id, _score, _sources in combined[:limit]]
-        expanded_ids = self._expand_related(top_ids, limit=limit)
-        if not expanded_ids:
-            return []
-        filter_sql, params = self._build_record_filter_sql(
-            project_ids=project_ids,
-            kind_filters=kind_filters,
-            domain_filters=domain_filters,
-            as_of=as_of,
-            include_history=include_history,
-        )
         with self.connect() as conn:
-            placeholders = ", ".join("?" for _ in expanded_ids)
+            placeholders = ", ".join("?" for _ in top_ids)
             rows = conn.execute(
-                f"SELECT * FROM records WHERE record_id IN ({placeholders}) AND {filter_sql}",
-                tuple(expanded_ids + params),
+                f"SELECT * FROM records WHERE record_id IN ({placeholders})",
+                tuple(top_ids),
             ).fetchall()
-            row_map = {str(row["record_id"]): row for row in rows}
+        row_map = {str(row["record_id"]): row for row in rows}
         hits: list[SearchHit] = []
         for record_id, score, sources in combined:
             row = row_map.get(record_id)
@@ -837,10 +822,11 @@ class ContextStore:
                     record_id=record_id,
                     project_id=str(row["project_id"]),
                     kind=str(row["kind"]),
-                    domain=str(row["domain"]),
                     title=str(row["title"]),
-                    summary=str(row["summary"]),
+                    body=str(row["body"]),
                     status=str(row["status"]),
+                    created_at=str(row["created_at"]),
+                    updated_at=str(row["updated_at"]),
                     valid_from=str(row["valid_from"]),
                     valid_until=row["valid_until"],
                     score=score,
@@ -849,85 +835,358 @@ class ContextStore:
             )
             if len(hits) >= limit:
                 break
-        if len(hits) < limit:
-            for record_id in expanded_ids:
-                if any(hit.record_id == record_id for hit in hits):
-                    continue
-                row = row_map.get(record_id)
-                if row is None:
-                    continue
-                hits.append(
-                    SearchHit(
-                        record_id=record_id,
-                        project_id=str(row["project_id"]),
-                        kind=str(row["kind"]),
-                        domain=str(row["domain"]),
-                        title=str(row["title"]),
-                        summary=str(row["summary"]),
-                        status=str(row["status"]),
-                        valid_from=str(row["valid_from"]),
-                        valid_until=row["valid_until"],
-                        score=0.0,
-                        sources=["graph"],
-                    )
-                )
-                if len(hits) >= limit:
-                    break
         return hits
 
-    def _search_text(self, title: str, summary: str, content_md: str) -> str:
-        """Build canonical text used for embeddings."""
-        return "\n".join([title.strip(), summary.strip(), content_md.strip()]).strip()
+    def query(
+        self,
+        *,
+        entity: str,
+        mode: str,
+        project_ids: list[str] | None = None,
+        kind: str | None = None,
+        status: str | None = None,
+        source_session_id: str | None = None,
+        created_since: str | None = None,
+        created_until: str | None = None,
+        updated_since: str | None = None,
+        updated_until: str | None = None,
+        valid_at: str | None = None,
+        order_by: str = "created_at",
+        limit: int = 20,
+        offset: int = 0,
+        include_total: bool = False,
+    ) -> dict[str, Any]:
+        """Run a deterministic list/count query for records, versions, or sessions."""
+        entity_name = QUERY_ENTITY_ALIASES.get(str(entity or "").strip().lower(), str(entity or "").strip().lower())
+        mode_name = QUERY_MODE_ALIASES.get(str(mode or "").strip().lower(), str(mode or "").strip().lower())
+        if entity_name not in QUERY_ENTITIES:
+            raise ValueError(f"invalid_query_entity:{entity}")
+        if mode_name not in QUERY_MODES:
+            raise ValueError(f"invalid_query_mode:{mode}")
+        order_field = str(order_by or "created_at").strip()
+        if order_field not in QUERY_ORDER_FIELDS:
+            raise ValueError(f"invalid_query_order:{order_by}")
+
+        self.initialize()
+        if entity_name == "records":
+            return self._query_records(
+                mode=mode_name,
+                project_ids=project_ids,
+                kind=kind,
+                status=status,
+                source_session_id=source_session_id,
+                created_since=created_since,
+                created_until=created_until,
+                updated_since=updated_since,
+                updated_until=updated_until,
+                valid_at=valid_at,
+                order_by=order_field,
+                limit=limit,
+                offset=offset,
+                include_total=include_total,
+            )
+        if entity_name == "versions":
+            return self._query_versions(
+                mode=mode_name,
+                project_ids=project_ids,
+                kind=kind,
+                status=status,
+                source_session_id=source_session_id,
+                created_since=created_since,
+                created_until=created_until,
+                updated_since=updated_since,
+                updated_until=updated_until,
+                valid_at=valid_at,
+                order_by=order_field,
+                limit=limit,
+                offset=offset,
+                include_total=include_total,
+            )
+        return self._query_sessions(
+            mode=mode_name,
+            project_ids=project_ids,
+            source_session_id=source_session_id,
+            created_since=created_since,
+            created_until=created_until,
+            order_by=order_field,
+            limit=limit,
+            offset=offset,
+            include_total=include_total,
+        )
+
+    def _query_records(
+        self,
+        *,
+        mode: str,
+        project_ids: list[str] | None,
+        kind: str | None,
+        status: str | None,
+        source_session_id: str | None,
+        created_since: str | None,
+        created_until: str | None,
+        updated_since: str | None,
+        updated_until: str | None,
+        valid_at: str | None,
+        order_by: str,
+        limit: int,
+        offset: int,
+        include_total: bool,
+    ) -> dict[str, Any]:
+        filter_sql, params = self._build_record_filter_sql(
+            project_ids=project_ids,
+            kind_filters=[kind] if kind else None,
+            statuses=[status] if status else None,
+            source_session_id=source_session_id,
+            created_since=created_since,
+            created_until=created_until,
+            updated_since=updated_since,
+            updated_until=updated_until,
+            valid_at=valid_at,
+            include_archived=True,
+            table_alias="",
+        )
+        with self.connect() as conn:
+            total = None
+            if include_total or mode == "count":
+                total = int(
+                    conn.execute(f"SELECT COUNT(1) AS total FROM records WHERE {filter_sql}", tuple(params)).fetchone()["total"]
+                )
+            if mode == "count":
+                return {"entity": "records", "mode": "count", "count": int(total or 0)}
+            rows = conn.execute(
+                f"""
+                SELECT *
+                FROM records
+                WHERE {filter_sql}
+                ORDER BY {order_by} DESC, record_id DESC
+                LIMIT ? OFFSET ?
+                """,
+                tuple(params + [max(1, int(limit)), max(0, int(offset))]),
+            ).fetchall()
+        return {
+            "entity": "records",
+            "mode": "list",
+            "count": len(rows),
+            "total": total,
+            "rows": [self._record_row_to_dict(row) for row in rows],
+        }
+
+    def _query_versions(
+        self,
+        *,
+        mode: str,
+        project_ids: list[str] | None,
+        kind: str | None,
+        status: str | None,
+        source_session_id: str | None,
+        created_since: str | None,
+        created_until: str | None,
+        updated_since: str | None,
+        updated_until: str | None,
+        valid_at: str | None,
+        order_by: str,
+        limit: int,
+        offset: int,
+        include_total: bool,
+    ) -> dict[str, Any]:
+        filter_sql, params = self._build_version_filter_sql(
+            project_ids=project_ids,
+            kind=kind,
+            status=status,
+            source_session_id=source_session_id,
+            created_since=created_since,
+            created_until=created_until,
+            updated_since=updated_since,
+            updated_until=updated_until,
+            valid_at=valid_at,
+        )
+        order_column = {
+            "created_at": "changed_at",
+            "updated_at": "changed_at",
+            "valid_from": "valid_from",
+        }[order_by]
+        with self.connect() as conn:
+            total = None
+            if include_total or mode == "count":
+                total = int(
+                    conn.execute(
+                        f"SELECT COUNT(1) AS total FROM record_versions WHERE {filter_sql}",
+                        tuple(params),
+                    ).fetchone()["total"]
+                )
+            if mode == "count":
+                return {"entity": "versions", "mode": "count", "count": int(total or 0)}
+            rows = conn.execute(
+                f"""
+                SELECT *
+                FROM record_versions
+                WHERE {filter_sql}
+                ORDER BY {order_column} DESC, version_no DESC
+                LIMIT ? OFFSET ?
+                """,
+                tuple(params + [max(1, int(limit)), max(0, int(offset))]),
+            ).fetchall()
+        return {
+            "entity": "versions",
+            "mode": "list",
+            "count": len(rows),
+            "total": total,
+            "rows": [self._version_row_to_dict(row) for row in rows],
+        }
+
+    def _query_sessions(
+        self,
+        *,
+        mode: str,
+        project_ids: list[str] | None,
+        source_session_id: str | None,
+        created_since: str | None,
+        created_until: str | None,
+        order_by: str,
+        limit: int,
+        offset: int,
+        include_total: bool,
+    ) -> dict[str, Any]:
+        del source_session_id
+        order_column = "created_at" if order_by in {"created_at", "updated_at", "valid_from"} else "created_at"
+        clauses = ["1=1"]
+        params: list[Any] = []
+        if project_ids:
+            placeholders = ", ".join("?" for _ in project_ids)
+            clauses.append(f"project_id IN ({placeholders})")
+            params.extend(project_ids)
+        if created_since:
+            clauses.append("created_at >= ?")
+            params.append(created_since)
+        if created_until:
+            clauses.append("created_at <= ?")
+            params.append(created_until)
+        filter_sql = " AND ".join(clauses)
+        with self.connect() as conn:
+            total = None
+            if include_total or mode == "count":
+                total = int(
+                    conn.execute(f"SELECT COUNT(1) AS total FROM sessions WHERE {filter_sql}", tuple(params)).fetchone()["total"]
+                )
+            if mode == "count":
+                return {"entity": "sessions", "mode": "count", "count": int(total or 0)}
+            rows = conn.execute(
+                f"""
+                SELECT *
+                FROM sessions
+                WHERE {filter_sql}
+                ORDER BY {order_column} DESC, session_id DESC
+                LIMIT ? OFFSET ?
+                """,
+                tuple(params + [max(1, int(limit)), max(0, int(offset))]),
+            ).fetchall()
+        return {
+            "entity": "sessions",
+            "mode": "list",
+            "count": len(rows),
+            "total": total,
+            "rows": [dict(row) for row in rows],
+        }
 
     def _record_row_to_dict(self, row: sqlite3.Row) -> dict[str, Any]:
-        """Convert a record row into JSON-like data."""
+        """Convert one record row into JSON-like data."""
         return {
             "record_id": str(row["record_id"]),
             "project_id": str(row["project_id"]),
             "kind": str(row["kind"]),
-            "domain": str(row["domain"]),
             "title": str(row["title"]),
-            "summary": str(row["summary"]),
-            "content_md": str(row["content_md"]),
-            "structured": _parse_json(row["structured_json"], {}),
+            "body": str(row["body"]),
             "status": str(row["status"]),
-            "confidence": row["confidence"],
             "source_session_id": row["source_session_id"],
             "created_at": str(row["created_at"]),
             "updated_at": str(row["updated_at"]),
             "valid_from": str(row["valid_from"]),
             "valid_until": row["valid_until"],
+            "superseded_by_record_id": row["superseded_by_record_id"],
+            "decision": row["decision"],
+            "why": row["why"],
+            "alternatives": row["alternatives"],
+            "consequences": row["consequences"],
+            "user_intent": row["user_intent"],
+            "what_happened": row["what_happened"],
+            "outcomes": row["outcomes"],
         }
 
-    def _validate_record_fields(self, *, kind: str, domain: str, status: str) -> None:
-        """Validate canonical record enums."""
-        if kind not in ALLOWED_KINDS:
-            raise ValueError(f"invalid_kind:{kind}")
-        if domain not in ALLOWED_DOMAINS:
-            raise ValueError(f"invalid_domain:{domain}")
-        if status not in ALLOWED_STATUSES:
-            raise ValueError(f"invalid_status:{status}")
+    def _version_row_to_dict(self, row: sqlite3.Row) -> dict[str, Any]:
+        """Convert one version row into JSON-like data."""
+        return dict(row)
 
-    def _validate_structured_payload(
+    def _normalize_record_payload(
         self,
         *,
-        kind: str,
-        structured: dict[str, Any],
-        session_id: str | None,
-    ) -> None:
-        """Validate kind-specific structured payload requirements."""
-        if kind == "episode":
-            if not str(session_id or "").strip():
+        kind: Any,
+        title: Any,
+        body: Any,
+        status: Any,
+        source_session_id: Any,
+        created_at: Any,
+        updated_at: Any,
+        valid_from: Any,
+        valid_until: Any,
+        superseded_by_record_id: Any,
+        decision: Any,
+        why: Any,
+        alternatives: Any,
+        consequences: Any,
+        user_intent: Any,
+        what_happened: Any,
+        outcomes: Any,
+    ) -> dict[str, Any]:
+        """Normalize and validate one record payload."""
+        kind_text = str(kind or "").strip().lower()
+        if kind_text not in ALLOWED_KINDS:
+            raise ValueError(f"invalid_kind:{kind}")
+        status_text = str(status or "").strip().lower()
+        if status_text not in ALLOWED_STATUSES:
+            raise ValueError(f"invalid_status:{status}")
+        title_text = str(title or "").strip()
+        body_text = str(body or "").strip()
+        if not title_text:
+            raise ValueError("title_required")
+        if not body_text:
+            raise ValueError("body_required")
+        payload = {
+            "kind": kind_text,
+            "title": title_text,
+            "body": body_text,
+            "status": status_text,
+            "source_session_id": _normalize_optional_text(source_session_id),
+            "created_at": str(created_at or _utc_now()).strip(),
+            "updated_at": str(updated_at or _utc_now()).strip(),
+            "valid_from": str(valid_from or created_at or _utc_now()).strip(),
+            "valid_until": _normalize_optional_text(valid_until),
+            "superseded_by_record_id": _normalize_optional_text(superseded_by_record_id),
+            "decision": _normalize_optional_text(decision),
+            "why": _normalize_optional_text(why),
+            "alternatives": _normalize_optional_text(alternatives),
+            "consequences": _normalize_optional_text(consequences),
+            "user_intent": _normalize_optional_text(user_intent),
+            "what_happened": _normalize_optional_text(what_happened),
+            "outcomes": _normalize_optional_text(outcomes),
+        }
+        if kind_text == "decision":
+            if not payload["decision"] or not payload["why"]:
+                raise ValueError("decision_requires_decision_and_why")
+        else:
+            payload["decision"] = None
+            payload["why"] = None
+            payload["alternatives"] = None
+            payload["consequences"] = None
+        if kind_text == "episode":
+            if not payload["source_session_id"]:
                 raise ValueError("episode_requires_session_id")
-            user_intent = str(structured.get("user_intent") or "").strip()
-            what_happened = str(structured.get("what_happened") or "").strip()
-            if not user_intent or not what_happened:
-                raise ValueError("invalid_episode_structured")
-        if kind == "decision":
-            decision = str(structured.get("decision") or "").strip()
-            why = str(structured.get("why") or "").strip()
-            if not decision or not why:
-                raise ValueError("invalid_decision_structured")
+            if not payload["user_intent"] or not payload["what_happened"]:
+                raise ValueError("episode_requires_user_intent_and_what_happened")
+        else:
+            payload["user_intent"] = None
+            payload["what_happened"] = None
+            payload["outcomes"] = None
+        return payload
 
     def _ensure_episode_uniqueness(
         self,
@@ -938,8 +1197,8 @@ class ContextStore:
         session_id: str | None,
         exclude_record_id: str | None,
     ) -> None:
-        """Ensure one episode record per project session."""
-        if kind != "episode" or not str(session_id or "").strip():
+        """Enforce one episode record per session."""
+        if kind != "episode" or not session_id:
             return
         query = """
             SELECT record_id
@@ -961,115 +1220,53 @@ class ContextStore:
         project_id: str,
         record_id: str,
         version_no: int,
-        kind: str,
-        domain: str,
-        title: str,
-        summary: str,
-        content_md: str,
-        structured: dict[str, Any],
-        status: str,
+        payload: dict[str, Any],
         change_kind: str,
         change_reason: str | None,
         changed_by_session_id: str | None,
     ) -> None:
-        """Insert one immutable record version row."""
+        """Insert one immutable version row."""
         if change_kind not in ALLOWED_CHANGE_KINDS:
             raise ValueError(f"invalid_change_kind:{change_kind}")
         conn.execute(
             """
             INSERT INTO record_versions(
-                version_id, project_id, record_id, version_no, kind, domain, title,
-                summary, content_md, structured_json, status, change_kind,
-                change_reason, changed_at, changed_by_session_id
+                version_id, project_id, record_id, version_no, kind, title, body, status,
+                source_session_id, created_at, updated_at, valid_from, valid_until,
+                superseded_by_record_id, decision, why, alternatives, consequences,
+                user_intent, what_happened, outcomes, change_kind, change_reason,
+                changed_at, changed_by_session_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 _new_id("ver"),
                 project_id,
                 record_id,
                 version_no,
-                kind,
-                domain,
-                title,
-                summary,
-                content_md,
-                _json(structured),
-                status,
+                payload["kind"],
+                payload["title"],
+                payload["body"],
+                payload["status"],
+                payload["source_session_id"],
+                payload["created_at"],
+                payload["updated_at"],
+                payload["valid_from"],
+                payload["valid_until"],
+                payload["superseded_by_record_id"],
+                payload["decision"],
+                payload["why"],
+                payload["alternatives"],
+                payload["consequences"],
+                payload["user_intent"],
+                payload["what_happened"],
+                payload["outcomes"],
                 change_kind,
-                change_reason,
+                _normalize_optional_text(change_reason),
                 _utc_now(),
-                changed_by_session_id,
+                _normalize_optional_text(changed_by_session_id),
             ),
         )
-
-    def _insert_links(
-        self,
-        conn: sqlite3.Connection,
-        *,
-        project_id: str,
-        session_id: str | None,
-        from_record_id: str,
-        links: list[dict[str, Any]],
-    ) -> None:
-        """Insert link rows from a normalized link list."""
-        for link in links:
-            target_record_id = str(link.get("target_record_id") or "").strip()
-            relation = str(link.get("relation") or "").strip()
-            if not target_record_id or relation not in ALLOWED_RELATIONS:
-                continue
-            conn.execute(
-                """
-                INSERT INTO record_links(
-                    link_id, project_id, from_record_id, to_record_id, relation,
-                    reason, created_at, created_by_session_id
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    _new_id("link"),
-                    project_id,
-                    from_record_id,
-                    target_record_id,
-                    relation,
-                    str(link.get("reason") or "").strip() or None,
-                    _utc_now(),
-                    session_id,
-                ),
-            )
-
-    def _insert_evidence(
-        self,
-        conn: sqlite3.Connection,
-        *,
-        project_id: str,
-        record_id: str,
-        session_id: str | None,
-        evidence: list[dict[str, Any]],
-    ) -> None:
-        """Insert bounded evidence rows."""
-        for item in evidence:
-            evidence_type = str(item.get("evidence_type") or "").strip() or "trace_snippet"
-            conn.execute(
-                """
-                INSERT INTO evidence(
-                    evidence_id, project_id, record_id, session_id, evidence_type,
-                    snippet, source_ref, metadata_json, created_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    _new_id("evi"),
-                    project_id,
-                    record_id,
-                    session_id,
-                    evidence_type,
-                    str(item.get("snippet") or "").strip()[:1200] or None,
-                    str(item.get("source_ref") or "").strip() or None,
-                    _json(item.get("metadata") or {}),
-                    _utc_now(),
-                ),
-            )
 
     def _upsert_embedding(
         self,
@@ -1079,18 +1276,18 @@ class ContextStore:
         record_id: str,
         text: str,
     ) -> None:
-        """Update derived embedding storage for one record."""
+        """Refresh derived embedding storage for one record."""
+        provider = get_embedding_provider()
+        vector = sqlite_vec.serialize_float32(provider.embed_document(text))
+        conn.execute("DELETE FROM record_embeddings WHERE record_id = ?", (record_id,))
         conn.execute(
             """
-            INSERT INTO record_embeddings(record_id, project_id, embedding_model, embedding_json, updated_at)
+            INSERT INTO record_embeddings(
+                embedding, project_id, record_id, embedding_model, updated_at
+            )
             VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(record_id) DO UPDATE SET
-                project_id=excluded.project_id,
-                embedding_model=excluded.embedding_model,
-                embedding_json=excluded.embedding_json,
-                updated_at=excluded.updated_at
             """,
-            (record_id, project_id, EMBEDDING_MODEL_NAME, _json(embed_text(text)), _utc_now()),
+            (vector, project_id, record_id, provider.model_id, _utc_now()),
         )
 
     def _upsert_fts(
@@ -1099,31 +1296,78 @@ class ContextStore:
         *,
         project_id: str,
         record_id: str,
-        title: str,
-        summary: str,
-        content_md: str,
+        payload: dict[str, Any],
     ) -> None:
         """Refresh derived FTS storage for one record."""
         conn.execute("DELETE FROM records_fts WHERE record_id = ?", (record_id,))
         conn.execute(
             """
-            INSERT INTO records_fts(record_id, project_id, title, summary, content_md)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO records_fts(
+                record_id, project_id, title, body, decision, why, user_intent, what_happened
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (record_id, project_id, title, summary, content_md),
+            (
+                record_id,
+                project_id,
+                payload["title"],
+                payload["body"],
+                payload["decision"] or "",
+                payload["why"] or "",
+                payload["user_intent"] or "",
+                payload["what_happened"] or "",
+            ),
         )
+
+    def _search_text(self, payload: dict[str, Any]) -> str:
+        """Build canonical search text from one record payload."""
+        parts: list[str] = [f"kind: {payload['kind']}"]
+        field_order = (
+            ("title", payload["title"]),
+            ("body", payload["body"]),
+            ("decision", payload.get("decision") or ""),
+            ("why", payload.get("why") or ""),
+            ("alternatives", payload.get("alternatives") or ""),
+            ("consequences", payload.get("consequences") or ""),
+            ("user_intent", payload.get("user_intent") or ""),
+            ("what_happened", payload.get("what_happened") or ""),
+            ("outcomes", payload.get("outcomes") or ""),
+        )
+        for label, value in field_order:
+            text = str(value or "").strip()
+            if text:
+                parts.append(f"{label}: {text}")
+        return "\n".join(parts)
+
+    def _rebuild_embeddings(self, conn: sqlite3.Connection) -> None:
+        """Rebuild all derived embedding rows from canonical record text."""
+        conn.execute("DELETE FROM record_embeddings")
+        rows = conn.execute("SELECT * FROM records ORDER BY created_at ASC, record_id ASC").fetchall()
+        for row in rows:
+            payload = self._record_row_to_dict(row)
+            self._upsert_embedding(
+                conn,
+                project_id=str(row["project_id"]),
+                record_id=str(row["record_id"]),
+                text=self._search_text(payload),
+            )
 
     def _build_record_filter_sql(
         self,
         *,
-        table_alias: str = "",
         project_ids: list[str] | None,
         kind_filters: list[str] | None,
-        domain_filters: list[str] | None,
-        as_of: str | None,
-        include_history: bool,
+        statuses: list[str] | None,
+        source_session_id: str | None,
+        created_since: str | None,
+        created_until: str | None,
+        updated_since: str | None,
+        updated_until: str | None,
+        valid_at: str | None,
+        include_archived: bool,
+        table_alias: str = "",
     ) -> tuple[str, list[Any]]:
-        """Build reusable SQL filter fragments for record queries."""
+        """Build reusable record filter fragments."""
         prefix = f"{table_alias}." if table_alias else ""
         clauses = ["1=1"]
         params: list[Any] = []
@@ -1135,16 +1379,78 @@ class ContextStore:
             placeholders = ", ".join("?" for _ in kind_filters)
             clauses.append(f"{prefix}kind IN ({placeholders})")
             params.extend(kind_filters)
-        if domain_filters:
-            placeholders = ", ".join("?" for _ in domain_filters)
-            clauses.append(f"{prefix}domain IN ({placeholders})")
-            params.extend(domain_filters)
-        if not include_history:
+        if statuses:
+            placeholders = ", ".join("?" for _ in statuses)
+            clauses.append(f"{prefix}status IN ({placeholders})")
+            params.extend(statuses)
+        elif not include_archived:
             clauses.append(f"{prefix}status = 'active'")
-        if as_of:
+        if source_session_id:
+            clauses.append(f"{prefix}source_session_id = ?")
+            params.append(source_session_id)
+        if created_since:
+            clauses.append(f"{prefix}created_at >= ?")
+            params.append(created_since)
+        if created_until:
+            clauses.append(f"{prefix}created_at <= ?")
+            params.append(created_until)
+        if updated_since:
+            clauses.append(f"{prefix}updated_at >= ?")
+            params.append(updated_since)
+        if updated_until:
+            clauses.append(f"{prefix}updated_at <= ?")
+            params.append(updated_until)
+        if valid_at:
             clauses.append(f"{prefix}valid_from <= ?")
             clauses.append(f"({prefix}valid_until IS NULL OR {prefix}valid_until >= ?)")
-            params.extend([as_of, as_of])
+            params.extend([valid_at, valid_at])
+        return " AND ".join(clauses), params
+
+    def _build_version_filter_sql(
+        self,
+        *,
+        project_ids: list[str] | None,
+        kind: str | None,
+        status: str | None,
+        source_session_id: str | None,
+        created_since: str | None,
+        created_until: str | None,
+        updated_since: str | None,
+        updated_until: str | None,
+        valid_at: str | None,
+    ) -> tuple[str, list[Any]]:
+        """Build reusable version filter fragments."""
+        clauses = ["1=1"]
+        params: list[Any] = []
+        if project_ids:
+            placeholders = ", ".join("?" for _ in project_ids)
+            clauses.append(f"project_id IN ({placeholders})")
+            params.extend(project_ids)
+        if kind:
+            clauses.append("kind = ?")
+            params.append(kind)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if source_session_id:
+            clauses.append("source_session_id = ?")
+            params.append(source_session_id)
+        if created_since:
+            clauses.append("created_at >= ?")
+            params.append(created_since)
+        if created_until:
+            clauses.append("created_at <= ?")
+            params.append(created_until)
+        if updated_since:
+            clauses.append("updated_at >= ?")
+            params.append(updated_since)
+        if updated_until:
+            clauses.append("updated_at <= ?")
+            params.append(updated_until)
+        if valid_at:
+            clauses.append("valid_from <= ?")
+            clauses.append("(valid_until IS NULL OR valid_until >= ?)")
+            params.extend([valid_at, valid_at])
         return " AND ".join(clauses), params
 
     def _semantic_candidates(
@@ -1153,39 +1459,48 @@ class ContextStore:
         project_ids: list[str] | None,
         query: str,
         kind_filters: list[str] | None,
-        domain_filters: list[str] | None,
-        as_of: str | None,
-        include_history: bool,
+        statuses: list[str] | None,
+        valid_at: str | None,
+        include_archived: bool,
         limit: int,
     ) -> list[tuple[str, float]]:
-        """Return ranked semantic candidates from local embeddings."""
-        query_vec = embed_text(query)
+        """Return ranked semantic candidates from sqlite-vec nearest neighbors."""
+        provider = get_embedding_provider()
+        query_vec = sqlite_vec.serialize_float32(provider.embed_query(query))
         filter_sql, params = self._build_record_filter_sql(
-            table_alias="records",
             project_ids=project_ids,
             kind_filters=kind_filters,
-            domain_filters=domain_filters,
-            as_of=as_of,
-            include_history=include_history,
+            statuses=statuses,
+            source_session_id=None,
+            created_since=None,
+            created_until=None,
+            updated_since=None,
+            updated_until=None,
+            valid_at=valid_at,
+            include_archived=include_archived,
+            table_alias="records",
         )
+        vector_filter_sql = ""
+        vector_filter_params: list[Any] = []
+        if project_ids and len(project_ids) == 1:
+            vector_filter_sql = " AND record_embeddings.project_id = ?"
+            vector_filter_params.append(project_ids[0])
         with self.connect() as conn:
             rows = conn.execute(
                 f"""
-                SELECT records.record_id, record_embeddings.embedding_json
-                FROM records
-                JOIN record_embeddings ON record_embeddings.record_id = records.record_id
-                WHERE {filter_sql}
+                SELECT records.record_id, record_embeddings.distance
+                FROM record_embeddings
+                JOIN records ON records.record_id = record_embeddings.record_id
+                WHERE record_embeddings.embedding MATCH ?
+                  AND record_embeddings.k = ?
+                  {vector_filter_sql}
+                  AND {filter_sql}
+                ORDER BY record_embeddings.distance ASC
+                LIMIT ?
                 """,
-                tuple(params),
+                tuple([query_vec, limit] + vector_filter_params + params + [limit]),
             ).fetchall()
-        scored: list[tuple[str, float]] = []
-        for row in rows:
-            vector = _parse_json(row["embedding_json"], [])
-            if not vector:
-                continue
-            scored.append((str(row["record_id"]), cosine_similarity(query_vec, vector)))
-        scored.sort(key=lambda item: item[1], reverse=True)
-        return scored[:limit]
+        return [(str(row["record_id"]), float(row["distance"])) for row in rows]
 
     def _lexical_candidates(
         self,
@@ -1193,9 +1508,9 @@ class ContextStore:
         project_ids: list[str] | None,
         query: str,
         kind_filters: list[str] | None,
-        domain_filters: list[str] | None,
-        as_of: str | None,
-        include_history: bool,
+        statuses: list[str] | None,
+        valid_at: str | None,
+        include_archived: bool,
         limit: int,
     ) -> list[tuple[str, float]]:
         """Return ranked lexical candidates from SQLite FTS."""
@@ -1203,12 +1518,17 @@ class ContextStore:
         if not compiled_query:
             return []
         filter_sql, params = self._build_record_filter_sql(
-            table_alias="records",
             project_ids=project_ids,
             kind_filters=kind_filters,
-            domain_filters=domain_filters,
-            as_of=as_of,
-            include_history=include_history,
+            statuses=statuses,
+            source_session_id=None,
+            created_since=None,
+            created_until=None,
+            updated_since=None,
+            updated_until=None,
+            valid_at=valid_at,
+            include_archived=include_archived,
+            table_alias="records",
         )
         with self.connect() as conn:
             rows = conn.execute(
@@ -1246,36 +1566,9 @@ class ContextStore:
         combined.sort(key=lambda item: item[1], reverse=True)
         return combined
 
-    def _expand_related(self, record_ids: list[str], *, limit: int) -> list[str]:
-        """Expand one graph hop from the top-ranked records."""
-        if not record_ids:
-            return []
-        ordered = list(record_ids)
-        seen = set(ordered)
-        placeholders = ", ".join("?" for _ in record_ids)
-        with self.connect() as conn:
-            rows = conn.execute(
-                f"""
-                SELECT from_record_id, to_record_id
-                FROM record_links
-                WHERE from_record_id IN ({placeholders}) OR to_record_id IN ({placeholders})
-                ORDER BY created_at ASC
-                """,
-                tuple(record_ids + record_ids),
-            ).fetchall()
-        for row in rows:
-            for candidate in (str(row["from_record_id"]), str(row["to_record_id"])):
-                if candidate in seen:
-                    continue
-                seen.add(candidate)
-                ordered.append(candidate)
-                if len(ordered) >= max(limit * 2, limit):
-                    return ordered
-        return ordered
-
 
 if __name__ == "__main__":
-    """Run a small end-to-end smoke check for schema and record creation."""
+    """Run a small schema and search smoke check."""
     import tempfile
 
     from lerim.context.project_identity import resolve_project_identity
@@ -1302,10 +1595,10 @@ if __name__ == "__main__":
             project_id=identity.project_id,
             session_id="sess_demo",
             kind="decision",
-            domain="project",
             title="Use one global DB",
-            summary="Canonical context store lives in ~/.lerim/context.sqlite3.",
-            structured={"decision": "Use one global DB", "why": "One source of truth."},
+            body="Use ~/.lerim/context.sqlite3 as the canonical context store.",
+            decision="Use one global DB",
+            why="One source of truth.",
         )
         assert record["record_id"]
         hits = store.search(project_ids=[identity.project_id], query="global sqlite db", limit=4)
