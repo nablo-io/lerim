@@ -1,8 +1,0 @@
-{"role":"user","content":"The worker process keeps crashing with OOM after running for about 2 hours. Memory usage grows linearly."}
-{"role":"assistant","content":"Sounds like a memory leak. Let me investigate. The linear growth pattern suggests objects are being accumulated without cleanup - likely a list or cache that grows unbounded."}
-{"role":"user","content":"I ran a memory profiler and the biggest growth is in the event_handlers dictionary."}
-{"role":"assistant","content":"Learning: event handlers that register callbacks without cleanup cause memory leaks. The pattern is: each request registers a handler but never deregisters it. Fix: use weak references for event handlers, or explicitly deregister in a finally block. I'll add a cleanup mechanism."}
-{"role":"user","content":"That fixed the leak. But now the worker restarts are slow because it reloads the ML model on every start."}
-{"role":"assistant","content":"Decision: cache the ML model in shared memory across worker restarts using mmap. The model file is read-only after loading, so sharing is safe. This eliminates the 30-second cold start on restart. Alternative considered: keeping the model in Redis, but mmap is faster for large tensors."}
-{"role":"user","content":"Good. Last thing - we need to add health checks so Kubernetes knows when a worker is degraded but not dead."}
-{"role":"assistant","content":"Learning: Kubernetes liveness probes should only check if the process is alive, not if it's healthy. Use readiness probes for health checks. A common pitfall is putting health checks in liveness probes, which causes unnecessary restarts. I'll add separate /healthz (liveness) and /readyz (readiness) endpoints."}

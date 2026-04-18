@@ -1,6 +1,0 @@
-{"type":"human","message":{"content":"I want to set up authentication using JWT tokens instead of session cookies."},"timestamp":"2026-02-20T10:00:00Z"}
-{"type":"assistant","message":{"content":"Good choice. JWT tokens are stateless and work well for API-first architectures. I'll set up the auth middleware with RS256 signing."},"timestamp":"2026-02-20T10:00:05Z"}
-{"type":"human","message":{"content":"Actually, let's use HS256 - simpler for a single-service setup."},"timestamp":"2026-02-20T10:01:00Z"}
-{"type":"assistant","message":{"content":"Decision noted: HS256 for JWT signing. I'll configure the secret in environment variables."},"timestamp":"2026-02-20T10:01:05Z"}
-{"type":"human","message":{"content":"I keep getting CORS errors when the frontend calls the API."},"timestamp":"2026-02-20T10:05:00Z"}
-{"type":"assistant","message":{"content":"The CORS middleware needs to allow the frontend origin. Let me add that. Lesson learned: always configure CORS early in the project."},"timestamp":"2026-02-20T10:05:10Z"}
