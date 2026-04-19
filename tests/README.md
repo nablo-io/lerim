@@ -9,7 +9,6 @@ What we test:
 - unit tests for config, adapters, store, tools, CLI, API, daemon, and runtime
 - smoke tests for quick real-LLM extract sanity
 - integration tests for real extract, maintain, and semantic ask flows
-- end-to-end tests for the full runtime cycle on the DB-only system
 
 What we do not keep anymore:
 
@@ -29,8 +28,32 @@ For live QA after runtime changes:
 ```bash
 tests/run_tests.sh smoke
 tests/run_tests.sh integration
-tests/run_tests.sh e2e
 ```
+
+## Unit test structure
+
+Unit tests live in `tests/unit/` and mirror the source tree. Each `src/lerim/<package>/` has a corresponding `tests/unit/<package>/` with one test file per source module.
+
+Subpackages: `agents/`, `adapters/`, `config/`, `context/`, `server/`, `sessions/`, `cloud/`, `transcripts/`, `skills/`.
+
+Rules:
+
+- one test file per source module
+- test file names match source file names (without `_adapter`/`_functions` suffix)
+- each subpackage has its own `conftest.py` with domain-specific fixtures
+
+## Testing rules
+
+1. **Every public function gets a test.** No exceptions.
+2. **Database operations get direct store tests.** Never test `ContextStore` methods only through agent tools.
+3. **Validation paths are first-class.** Every `ValueError`, `ModelRetry`, and guard condition needs a dedicated test.
+4. **One test file per source module.** Never split one module's tests across multiple files.
+5. **Three layers: unit (no LLM/network, temp DB), integration (real LLM, real DB, `@pytest.mark.llm`), smoke (quick sanity).**
+6. **Mock external deps, not internal modules.** Use temp SQLite DBs instead of mocking ContextStore.
+7. **When adding a new tool:** test happy path, validation failure, guard failure, edge case.
+8. **When adding a store method:** test happy path, each validation error, idempotency, side effects (version/FTS/embedding).
+9. **Keep tests independent.** Each test creates its own temp state. No shared mutable state.
+10. **Reference source constants.** Use `MAX_RECORD_TITLE_CHARS + 1` not `121` in boundary tests.
 
 ## Architecture under test
 
