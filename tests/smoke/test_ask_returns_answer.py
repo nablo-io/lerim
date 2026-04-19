@@ -6,13 +6,10 @@ from lerim.agents.ask import run_ask
 from lerim.config.providers import build_pydantic_model
 from lerim.context import ContextStore, resolve_project_identity
 
-pytestmark = [
-	pytest.mark.smoke,
-	pytest.mark.llm,
-	pytest.mark.agent,
-]
 
-
+@pytest.mark.smoke
+@pytest.mark.llm
+@pytest.mark.agent
 def test_ask_returns_answer(live_config, live_repo_root):
 	"""Verify ask agent can retrieve and answer from seeded records."""
 	store = ContextStore(live_config.context_db_path)

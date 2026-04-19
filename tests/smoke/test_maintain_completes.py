@@ -6,13 +6,10 @@ from lerim.agents.maintain import run_maintain
 from lerim.config.providers import build_pydantic_model
 from lerim.context import ContextStore, resolve_project_identity
 
-pytestmark = [
-	pytest.mark.smoke,
-	pytest.mark.llm,
-	pytest.mark.agent,
-]
 
-
+@pytest.mark.smoke
+@pytest.mark.llm
+@pytest.mark.agent
 def test_maintain_completes(live_config, live_repo_root):
 	"""Verify maintain agent runs without crashing on seeded records."""
 	store = ContextStore(live_config.context_db_path)
