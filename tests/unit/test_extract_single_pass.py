@@ -7,6 +7,8 @@ import inspect
 from dataclasses import fields
 from pathlib import Path
 
+import pytest
+from pydantic_ai import ModelRetry
 from pydantic_ai import RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
@@ -19,7 +21,11 @@ from lerim.agents.extract import (
     run_extraction,
 )
 from lerim.agents.tools import (
+    CONTEXT_HARD_PRESSURE_PCT,
+    CONTEXT_SOFT_PRESSURE_PCT,
     ContextDeps,
+    Finding,
+    _require_note_or_prune_before_trace_read,
     compute_request_budget,
     create_record,
     fetch_records,
@@ -52,7 +58,7 @@ def test_context_deps_fields(tmp_path) -> None:
         "notes",
         "pruned_offsets",
         "last_context_tokens",
-        "last_context_pressure",
+        "last_context_fill_ratio",
     }
     deps = ContextDeps(
         context_db_path=tmp_path / "context.sqlite3",
@@ -64,7 +70,7 @@ def test_context_deps_fields(tmp_path) -> None:
     assert deps.notes == []
     assert deps.pruned_offsets == set()
     assert deps.last_context_tokens == 0
-    assert deps.last_context_pressure == "normal"
+    assert deps.last_context_fill_ratio == 0.0
 
 
 def test_build_extract_agent_wires_simplified_tool_surface(tmp_path) -> None:
@@ -178,3 +184,49 @@ def test_old_three_pass_symbols_do_not_exist() -> None:
     """Regression guard: the old three-pass extract architecture stays gone."""
     assert not hasattr(extract_module, "run_extraction_three_pass")
     assert not hasattr(extract_module, "FinalizeResult")
+
+
+def test_soft_pressure_requires_note_before_more_trace_reads(tmp_path) -> None:
+    """At soft pressure, another read should be blocked until findings are noted."""
+    deps = ContextDeps(
+        context_db_path=tmp_path / "context.sqlite3",
+        project_identity=resolve_project_identity(tmp_path),
+        session_id="sess_test",
+        last_context_fill_ratio=CONTEXT_SOFT_PRESSURE_PCT,
+        read_ranges=[(0, 100), (100, 200)],
+    )
+    ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
+
+    with pytest.raises(ModelRetry) as exc_info:
+        _require_note_or_prune_before_trace_read(ctx, 200)
+
+    message = str(exc_info.value).lower()
+    assert "soft" in message
+    assert "note" in message
+
+
+def test_hard_pressure_requires_prune_before_more_trace_reads(tmp_path) -> None:
+    """At hard pressure, another read should be blocked until older reads are pruned."""
+    deps = ContextDeps(
+        context_db_path=tmp_path / "context.sqlite3",
+        project_identity=resolve_project_identity(tmp_path),
+        session_id="sess_test",
+        last_context_fill_ratio=CONTEXT_HARD_PRESSURE_PCT,
+        read_ranges=[(0, 100), (100, 200), (200, 300)],
+        notes=[
+            Finding(
+                theme="state-boundary",
+                offset=210,
+                quote="authoritative state must be persisted",
+                level="decision",
+            )
+        ],
+    )
+    ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
+
+    with pytest.raises(ModelRetry) as exc_info:
+        _require_note_or_prune_before_trace_read(ctx, 300)
+
+    message = str(exc_info.value).lower()
+    assert "hard" in message
+    assert "prune" in message
