@@ -1,0 +1,37 @@
+case: multi_learning_trace
+summary: One trace can yield two clearly independent durable learnings when each is reusable on its own.
+
+expected:
+  episode_count: 1
+  durable_count: 2
+  decision_count: 1
+  fact_count: 1
+  must_use_tools:
+    - trace_read
+    - create_record
+  must_not_use_tools:
+    - update_record
+    - prune
+  decision_text_must_include_all:
+    - raw sql
+    - typed
+    - tools
+  decision_text_must_include_any:
+    - product agents
+    - domain tools
+    - invariants
+  decision_text_must_not_include:
+    - debug print
+    - helper variable
+    - assertion
+  fact_text_must_include_all:
+    - libvips
+    - image
+  fact_text_must_include_any:
+    - ci
+    - transforms
+    - dependency
+  fact_text_must_not_include:
+    - debug print
+    - helper variable
+    - assertion

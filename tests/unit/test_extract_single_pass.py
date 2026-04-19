@@ -47,16 +47,24 @@ def test_context_deps_fields(tmp_path) -> None:
         "project_ids",
         "trace_path",
         "run_folder",
+        "trace_total_lines",
+        "read_ranges",
         "notes",
         "pruned_offsets",
+        "last_context_tokens",
+        "last_context_pressure",
     }
     deps = ContextDeps(
         context_db_path=tmp_path / "context.sqlite3",
         project_identity=resolve_project_identity(tmp_path),
         session_id="sess_test",
     )
+    assert deps.trace_total_lines == 0
+    assert deps.read_ranges == []
     assert deps.notes == []
     assert deps.pruned_offsets == set()
+    assert deps.last_context_tokens == 0
+    assert deps.last_context_pressure == "normal"
 
 
 def test_build_extract_agent_wires_simplified_tool_surface(tmp_path) -> None:
@@ -113,6 +121,8 @@ def test_system_prompt_mentions_simplified_flow() -> None:
     assert "update_record" in SYSTEM_PROMPT
     assert "graph links" in SYSTEM_PROMPT.lower()
     assert "if you need more than one `trace_read`" in SYSTEM_PROMPT.lower()
+    assert "prune older `trace_read` results" in SYSTEM_PROMPT.lower()
+    assert "end the run with the `final_result` tool" in SYSTEM_PROMPT.lower()
 
 
 def test_run_extraction_signature_matches_db_inputs() -> None:

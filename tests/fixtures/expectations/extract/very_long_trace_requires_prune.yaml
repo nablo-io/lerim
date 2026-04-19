@@ -1,0 +1,31 @@
+case: very_long_trace_requires_prune
+summary: A very long trace should require note-backed compression and pruning before the final writes.
+
+expected:
+  episode_count: 1
+  durable_count: 1
+  decision_count: 1
+  trace_read_count_at_least: 4
+  note_count_at_least: 1
+  prune_count_at_least: 1
+  must_use_tools:
+    - trace_read
+    - note
+    - prune
+    - create_record
+  must_not_use_tools:
+    - update_record
+  decision_text_must_include_all:
+    - lease
+    - ownership
+    - queue
+  decision_text_must_include_any:
+    - persisted
+    - failover
+    - worker memory
+    - restart
+  decision_text_must_not_include:
+    - helper rename
+    - debug label
+    - snapshot formatting
+    - cleanup notes

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,108 @@ def load_extract_expectation(case_name: str) -> dict[str, Any]:
     """Load one YAML expectation file for an extract case."""
     path = EXTRACT_EXPECTATIONS_DIR / f"{case_name}.yaml"
     return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def _build_very_long_prune_trace(trace_path: Path) -> None:
+    """Materialize one very long trace that can create real context pressure."""
+    messages: list[dict[str, str]] = [
+        {
+            "role": "user",
+            "content": (
+                "Investigate the lease-handoff failures in the distributed worker. "
+                "Keep only durable memory. Do not store the long debugging story."
+            ),
+        },
+        {
+            "role": "assistant",
+            "content": (
+                "I will trace the failure across the worker, queue row, and recovery path, "
+                "then keep only the durable rule."
+            ),
+        },
+    ]
+
+    filler = (
+        "I inspected another noisy segment of the lease handoff path. "
+        "This chunk includes temporary debug labels, helper rename ideas, repeated metric wording, "
+        "snapshot formatting concerns, command-output comparisons, and local cleanup notes that are "
+        "useful for this investigation but not durable memory. "
+        "The implementation noise keeps repeating across worker restarts, queue polling, heartbeats, "
+        "timeout handling, and recovery logging, so I am tracking only what could matter later."
+    )
+    filler = f"{filler} {filler}"
+
+    for index in range(1, 431):
+        messages.append(
+            {
+                "role": "assistant",
+                "content": (
+                    f"Chunk {index}: {filler} "
+                    f"Segment {index} compares worker-local lease state with persisted queue-row state "
+                    f"while repeating local observations about log wording, helper naming, and trace noise."
+                ),
+            }
+        )
+        if index in {100, 200, 300, 400}:
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": (
+                        f"Checkpoint {index}: still mostly implementation detail. "
+                        "The one durable boundary is unchanged: authoritative lease ownership must live in the "
+                        "persisted queue row, not only in worker memory, so restart and failover can recover it."
+                    ),
+                }
+            )
+
+    messages.extend(
+        [
+            {
+                "role": "user",
+                "content": (
+                    "Important rule: authoritative lease ownership must live in the persisted queue row, "
+                    "not only in worker memory. Restarts and failover must recover ownership from persisted state."
+                ),
+            },
+            {
+                "role": "assistant",
+                "content": (
+                    "Understood. That is the durable decision. The repeated log-cleanup and helper-rename details are not."
+                ),
+            },
+            {
+                "role": "assistant",
+                "content": (
+                    "I checked more recovery paths. Heartbeats, renewals, and takeover logic all depend on the same boundary: "
+                    "authoritative lease ownership must be persisted in the queue row so another worker can recover it safely."
+                ),
+            },
+            {
+                "role": "assistant",
+                "content": (
+                    "Everything else in this trace is investigation noise or local cleanup. "
+                    "The lasting memory is one state-boundary decision."
+                ),
+            },
+        ]
+    )
+
+    trace_path.write_text(
+        "\n".join(json.dumps(message, ensure_ascii=True) for message in messages) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _resolve_trace_path(case_name: str, run_folder: Path) -> Path:
+    """Return the case trace path, materializing generated traces when needed."""
+    static_path = EXTRACT_TRACES_DIR / f"{case_name}.jsonl"
+    if static_path.exists():
+        return static_path
+    if case_name == "very_long_trace_requires_prune":
+        generated = run_folder / f"{case_name}.jsonl"
+        _build_very_long_prune_trace(generated)
+        return generated
+    raise FileNotFoundError(f"no extract trace fixture found for case {case_name!r}")
 
 
 def _seed_session(
@@ -67,11 +170,11 @@ def run_extract_case(
     seed_records: list[dict[str, Any]] | None = None,
 ) -> ExtractCaseOutcome:
     """Run one named extract case against a fresh isolated live test DB."""
-    trace_path = EXTRACT_TRACES_DIR / f"{case_name}.jsonl"
     session_id = f"integration-extract-{case_name}"
     seed_session_id = f"integration-seed-{case_name}"
     run_folder = live_config.global_data_dir / "workspace" / "sync" / session_id
     run_folder.mkdir(parents=True, exist_ok=True)
+    trace_path = _resolve_trace_path(case_name, run_folder)
 
     identity = resolve_project_identity(live_repo_root)
     store = ContextStore(live_config.context_db_path)
