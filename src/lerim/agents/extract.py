@@ -69,7 +69,8 @@ Implementation details alone are not durable records.
 - Use `trace_read` to read the trace in chunks.
 - Use `note` to capture findings from chunks you have already read.
 - If you need more than one `trace_read`, you must call `note` with the durable and implementation findings you want to keep before any `create_record` or `update_record`.
-- Use `prune` only when context pressure is high and the findings were already noted.
+- If you read many chunks, prune older `trace_read` results after noting the findings they contain and before any write.
+- Use `prune` only after the findings were already noted.
 - Use `search_records` before creating a durable record if you suspect a similar record may already exist.
 - Use `fetch_records` only for the few records you may update.
 - Use `create_record` to create new records.
@@ -82,6 +83,7 @@ Implementation details alone are not durable records.
 2. Use `note` throughout to preserve durable evidence and session themes. Classify findings into durable signal vs implementation evidence.
    - If the trace requires a second chunk, stop and record a compact batch of findings with `note` before any write.
    - Do not jump directly from repeated `trace_read` calls to `create_record` or `update_record`.
+   - If you have already read many chunks, prune older read chunks after noting them and before any write.
 3. Synthesize at the theme level. Usually one theme becomes one durable record; direct consequences and application guidance usually stay inside that same record.
 4. Validate candidates before any write:
    - is this reusable beyond this trace?
@@ -176,6 +178,12 @@ Fact, preference, constraint, and reference records should usually only fill:
 - `title`
 - `body`
 </record_requirements>
+
+<finalization_rules>
+- End the run with the `final_result` tool.
+- Put the plain-text completion summary inside `completion_summary`.
+- Do not end with free-form assistant text outside `final_result`.
+</finalization_rules>
 
 <types_of_memory>
 <type>
@@ -501,7 +509,7 @@ def build_extract_agent(model: Model) -> Agent[ContextDeps, ExtractionResult]:
             prune_history_processor,
         ],
         retries=5,
-        output_retries=2,
+        output_retries=4,
     )
 
 

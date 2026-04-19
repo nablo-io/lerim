@@ -26,11 +26,13 @@ from lerim.context import ALLOWED_KINDS, ALLOWED_STATUSES, ContextStore, Project
 TRACE_MAX_LINES_PER_READ = 100
 TRACE_MAX_LINE_BYTES = 5_000
 TRACE_MAX_CHUNK_BYTES = 50_000
-MODEL_CONTEXT_TOKEN_LIMIT = 128_000
+MODEL_CONTEXT_TOKEN_LIMIT = 200_000
 CONTEXT_SOFT_PRESSURE_PCT = 0.60
 CONTEXT_HARD_PRESSURE_PCT = 0.80
 _TOKENS_PER_CHAR = 0.25
 PRUNED_STUB = "[pruned]"
+
+
 class Finding(BaseModel):
     """Structured extract finding captured during trace scanning."""
 
@@ -55,8 +57,12 @@ class ContextDeps:
     project_ids: list[str] | None = None
     trace_path: Path | None = None
     run_folder: Path | None = None
+    trace_total_lines: int = 0
+    read_ranges: list[tuple[int, int]] = field(default_factory=list)
     notes: list[Finding] = field(default_factory=list)
     pruned_offsets: set[int] = field(default_factory=set)
+    last_context_tokens: int = 0
+    last_context_fill_ratio: float = 0.0
 
 
 def _store(ctx: RunContext[ContextDeps]) -> ContextStore:
@@ -72,6 +78,54 @@ def _trace_lines(trace_path: Path) -> list[str]:
     return trace_path.read_text(encoding="utf-8").splitlines()
 
 
+def _read_offsets(ctx: RunContext[ContextDeps]) -> list[int]:
+    """Return unique trace-read offsets in order."""
+    return sorted({int(start) for start, _end in ctx.deps.read_ranges})
+
+
+def _older_read_offsets(ctx: RunContext[ContextDeps]) -> list[int]:
+    """Return older read offsets, keeping the newest chunk in context."""
+    offsets = _read_offsets(ctx)
+    if len(offsets) <= 1:
+        return []
+    return offsets[:-1]
+
+
+def _classify_context_pressure(fill_ratio: float) -> str:
+    """Convert current fill ratio into a user-facing pressure label."""
+    if fill_ratio >= CONTEXT_HARD_PRESSURE_PCT:
+        return "hard"
+    if fill_ratio >= CONTEXT_SOFT_PRESSURE_PCT:
+        return "soft"
+    return "normal"
+
+
+def _require_note_or_prune_before_trace_read(ctx: RunContext[ContextDeps], offset: int) -> None:
+    """Gate additional trace reads based on current context pressure."""
+    if offset <= 0:
+        return
+    fill_ratio = float(ctx.deps.last_context_fill_ratio or 0.0)
+    if fill_ratio < CONTEXT_SOFT_PRESSURE_PCT:
+        return
+    older_offsets = _older_read_offsets(ctx)
+    if not older_offsets:
+        return
+    pressure = _classify_context_pressure(fill_ratio)
+    if not ctx.deps.notes:
+        raise ModelRetry(
+            f"Context pressure is already {pressure} ({fill_ratio:.0%} of the configured window). "
+            "Call note first with the strongest durable and implementation findings from the chunks already read. "
+            "Then continue reading."
+        )
+    if not ctx.deps.pruned_offsets:
+        offsets_text = ", ".join(str(item) for item in older_offsets)
+        raise ModelRetry(
+            f"Context pressure is {pressure} ({fill_ratio:.0%} of the configured window). "
+            "Prune older trace_read results before reading more so the context stays focused. "
+            f"Call prune(trace_offsets=[{offsets_text}]) now, then continue reading."
+        )
+
+
 def trace_read(ctx: RunContext[ContextDeps], offset: int = 0, limit: int = 100) -> str:
     """Read normalized trace chunks with line numbers and bounded size."""
     trace_path = ctx.deps.trace_path
@@ -79,8 +133,10 @@ def trace_read(ctx: RunContext[ContextDeps], offset: int = 0, limit: int = 100) 
         return "Error: no trace path configured"
     if limit <= 0 or limit > TRACE_MAX_LINES_PER_READ:
         limit = TRACE_MAX_LINES_PER_READ
+    _require_note_or_prune_before_trace_read(ctx, int(offset))
     lines = _trace_lines(trace_path)
     total = len(lines)
+    ctx.deps.trace_total_lines = total
     chunk = lines[offset : offset + limit]
     safe_chunk: list[str] = []
     running_bytes = 0
@@ -95,6 +151,7 @@ def trace_read(ctx: RunContext[ContextDeps], offset: int = 0, limit: int = 100) 
         running_bytes += line_bytes
     numbered = [f"{offset + index + 1}\t{line}" for index, line in enumerate(safe_chunk)]
     last_line = offset + len(safe_chunk)
+    ctx.deps.read_ranges.append((int(offset), int(last_line)))
     header = f"[{total} lines, showing {offset + 1}-{last_line}]"
     if last_line < total:
         header += (
@@ -319,6 +376,53 @@ def _require_notes_before_long_trace_write(ctx: RunContext[ContextDeps]) -> None
     )
 
 
+def _first_uncovered_offset(read_ranges: list[tuple[int, int]], total_lines: int) -> int | None:
+    """Return the first unread trace offset, or None when coverage is complete."""
+    if total_lines <= 0:
+        return None
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(read_ranges):
+        start = max(0, int(start))
+        end = max(start, int(end))
+        if not merged or start > merged[-1][1]:
+            merged.append((start, end))
+            continue
+        merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+    expected = 0
+    for start, end in merged:
+        if start > expected:
+            return expected
+        expected = max(expected, end)
+        if expected >= total_lines:
+            return None
+    if expected < total_lines:
+        return expected
+    return None
+
+
+def _require_full_trace_coverage_before_write(ctx: RunContext[ContextDeps]) -> None:
+    """Require contiguous coverage of the full trace before any write."""
+    trace_path = ctx.deps.trace_path
+    if trace_path is None:
+        return
+    total_lines = int(ctx.deps.trace_total_lines)
+    if total_lines <= 0:
+        try:
+            total_lines = sum(1 for _ in trace_path.open("r", encoding="utf-8"))
+        except OSError:
+            return
+    if not ctx.deps.read_ranges:
+        return
+    next_offset = _first_uncovered_offset(ctx.deps.read_ranges, total_lines)
+    if next_offset is None:
+        return
+    raise ModelRetry(
+        "Unread trace lines remain. "
+        f"Continue reading with trace_read(offset={next_offset}, limit={TRACE_MAX_LINES_PER_READ}) "
+        "before you create or update records."
+    )
+
+
 def create_record(
     ctx: RunContext[ContextDeps],
     kind: str,
@@ -337,6 +441,7 @@ def create_record(
     change_reason: str = "",
 ) -> str:
     """Create one durable record with explicit typed fields."""
+    _require_full_trace_coverage_before_write(ctx)
     _require_notes_before_long_trace_write(ctx)
     store = _store(ctx)
     project_id = ctx.deps.project_identity.project_id
@@ -385,6 +490,7 @@ def update_record(
     change_reason: str = "",
 ) -> str:
     """Update one durable record with explicit typed fields."""
+    _require_full_trace_coverage_before_write(ctx)
     _require_notes_before_long_trace_write(ctx)
     changes: dict[str, Any] = {}
     for key, value in {
@@ -573,6 +679,19 @@ def notes_state_injector(
         )
         if top_themes:
             summary += f"\nTop themes: {top_themes}"
+    if ctx.deps.read_ranges:
+        next_uncovered = _first_uncovered_offset(ctx.deps.read_ranges, int(ctx.deps.trace_total_lines))
+        covered_chunks = len(
+            {
+                (int(start), int(end))
+                for start, end in ctx.deps.read_ranges
+            }
+        )
+        summary += (
+            f"\nTrace reads: {covered_chunks} chunk(s)"
+            f"\nNext unread offset: {next_uncovered if next_uncovered is not None else 'none'}"
+            f"\nPruned offsets: {sorted(ctx.deps.pruned_offsets) if ctx.deps.pruned_offsets else 'none'}"
+        )
     injected = list(history)
     injected.append(ModelRequest(parts=[SystemPromptPart(content=summary)]))
     return injected
@@ -583,7 +702,6 @@ def context_pressure_injector(
     history: list[ModelMessage],
 ) -> list[ModelMessage]:
     """Inject approximate context pressure information into the next model request."""
-    del ctx
     chars = 0
     for message in history:
         parts = getattr(message, "parts", []) or []
@@ -595,9 +713,9 @@ def context_pressure_injector(
                 chars += len(json.dumps(content, ensure_ascii=True))
     approx_tokens = math.ceil(chars * _TOKENS_PER_CHAR)
     pct = approx_tokens / MODEL_CONTEXT_TOKEN_LIMIT
-    pressure = "soft" if pct >= CONTEXT_SOFT_PRESSURE_PCT else "normal"
-    if pct >= CONTEXT_HARD_PRESSURE_PCT:
-        pressure = "hard"
+    pressure = _classify_context_pressure(pct)
+    ctx.deps.last_context_tokens = approx_tokens
+    ctx.deps.last_context_fill_ratio = pct
     summary = f"CONTEXT: {approx_tokens}/{MODEL_CONTEXT_TOKEN_LIMIT} ({pct:.0%}) [{pressure}]"
     injected = list(history)
     injected.append(ModelRequest(parts=[SystemPromptPart(content=summary)]))
