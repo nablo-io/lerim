@@ -68,6 +68,7 @@ Implementation details alone are not durable records.
 <tool_rules>
 - Use `trace_read` to read the trace in chunks.
 - Use `note` to capture findings from chunks you have already read.
+- If you need more than one `trace_read`, you must call `note` with the durable and implementation findings you want to keep before any `create_record` or `update_record`.
 - Use `prune` only when context pressure is high and the findings were already noted.
 - Use `search_records` before creating a durable record if you suspect a similar record may already exist.
 - Use `fetch_records` only for the few records you may update.
@@ -77,7 +78,10 @@ Implementation details alone are not durable records.
 
 <required_flow>
 1. Read the full trace with `trace_read`.
+   - Keep calling `trace_read` until you have covered the full trace. Do not start writing while unread trace lines remain.
 2. Use `note` throughout to preserve durable evidence and session themes. Classify findings into durable signal vs implementation evidence.
+   - If the trace requires a second chunk, stop and record a compact batch of findings with `note` before any write.
+   - Do not jump directly from repeated `trace_read` calls to `create_record` or `update_record`.
 3. Synthesize at the theme level. Usually one theme becomes one durable record; direct consequences and application guidance usually stay inside that same record.
 4. Validate candidates before any write:
    - is this reusable beyond this trace?
@@ -96,6 +100,7 @@ Implementation details alone are not durable records.
 <efficiency_rules>
 - For traces that fit in one `trace_read`, do not read them again.
 - Use `note` in batches, not one finding per tool call.
+- For long traces, one or two `note` calls that preserve the strongest findings are preferred over writing directly from raw reads.
 - Search only when you are about to create or update a durable record.
 - Stop as soon as the episode and the clear durable records are written.
 - Usually you should finish in a handful of tool calls, not dozens.
@@ -415,6 +420,34 @@ Fact, preference, constraint, and reference records should usually only fill:
 - a trace can look busy and still contain no reusable memory
 </why_bad>
 </example>
+
+<example id="7">
+<label>Long trace: compress with note before writing</label>
+<expected_durable_extraction_count>`1`</expected_durable_extraction_count>
+<trace_snippet>
+- tool call: `trace_read(offset=0, limit=100)`
+- tool return: `... first chunk shows restart failures, backoff drift, helper renames, and debug logs ...`
+- tool call: `trace_read(offset=100, limit=100)`
+- tool return: `... second chunk confirms the real rule: retry budget must live in persisted job metadata, not worker memory ...`
+- assistant: "The trace is long. I should preserve the durable findings before writing."
+- tool call: `note(findings=[decision evidence, implementation-only cleanup items])`
+- assistant: "Now I can write the compact episode and one decision."
+</trace_snippet>
+<good_extraction>
+- tool pattern: `trace_read`, `trace_read`, `note`, then writes
+- decision title: `Persist retry budget with job metadata`
+- decision body: `Authoritative retry budget must live in persisted job metadata, not worker memory. **Why:** restart and failover reset worker-local state. **How to apply:** all retry, backoff, and dead-letter logic should read and write the persisted job record.`
+- minimal episode body: `Investigated a long retry trace and confirmed the state-boundary decision while rejecting local cleanup noise.`
+</good_extraction>
+<bad_extraction>
+- tool pattern: `trace_read`, `trace_read`, then writes immediately
+- episode body: `Read a long trace and wrote the answer directly.`
+</bad_extraction>
+<why_bad>
+- on long traces, `note` is the compression step that preserves evidence before writing
+- skipping `note` after repeated reads makes the extract flow unstable and easier to regress
+</why_bad>
+</example>
 </few_shot_examples>
 
 <forbidden_focus>
@@ -459,6 +492,10 @@ def run_extraction(
 ):
     """Run the extract agent on one trace."""
     agent = build_extract_agent(model)
+    try:
+        trace_line_count = sum(1 for _ in trace_path.open("r", encoding="utf-8"))
+    except OSError:
+        trace_line_count = 0
     deps = ContextDeps(
         context_db_path=context_db_path,
         project_identity=project_identity,
@@ -470,7 +507,10 @@ def run_extraction(
         (
             "Read the trace, write exactly one episode record, and write only the strongest "
             "durable records with non-empty title and body. Store reusable rules and decisions, "
-            "not a polished recap of the meeting."
+            "not a polished recap of the meeting. "
+            f"This trace has {trace_line_count} lines. Read all chunks before writing. "
+            "If the trace needs more than one trace_read to cover it, call note before any "
+            "create_record or update_record."
         ),
         deps=deps,
         usage_limits=UsageLimits(request_limit=compute_request_budget(trace_path)),

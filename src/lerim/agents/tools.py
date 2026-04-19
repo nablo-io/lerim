@@ -301,6 +301,24 @@ def _maybe_raise_record_retry(exc: ValueError) -> None:
         raise ModelRetry(message) from exc
 
 
+def _require_notes_before_long_trace_write(ctx: RunContext[ContextDeps]) -> None:
+    """Require one note step before writes on traces that exceed one read chunk."""
+    trace_path = ctx.deps.trace_path
+    if trace_path is None or ctx.deps.notes:
+        return
+    try:
+        line_count = sum(1 for _ in trace_path.open("r", encoding="utf-8"))
+    except OSError:
+        return
+    if line_count <= TRACE_MAX_LINES_PER_READ:
+        return
+    raise ModelRetry(
+        "This trace is longer than one trace_read chunk. "
+        "Call note first with the strongest durable and implementation findings, "
+        "then create or update records."
+    )
+
+
 def create_record(
     ctx: RunContext[ContextDeps],
     kind: str,
@@ -319,6 +337,7 @@ def create_record(
     change_reason: str = "",
 ) -> str:
     """Create one durable record with explicit typed fields."""
+    _require_notes_before_long_trace_write(ctx)
     store = _store(ctx)
     project_id = ctx.deps.project_identity.project_id
     session_id = ctx.deps.session_id
@@ -366,6 +385,7 @@ def update_record(
     change_reason: str = "",
 ) -> str:
     """Update one durable record with explicit typed fields."""
+    _require_notes_before_long_trace_write(ctx)
     changes: dict[str, Any] = {}
     for key, value in {
         "title": title,
