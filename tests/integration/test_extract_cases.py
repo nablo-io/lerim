@@ -89,3 +89,86 @@ def test_extract_clear_decision_ignores_implementation_noise(
     assert fts_count == len(record_ids)
     assert_clean_context_schema(live_config.context_db_path)
     assert_quality_metrics(audit_context_db(live_config.context_db_path))
+
+
+@pytest.mark.integration
+@pytest.mark.llm
+@pytest.mark.agent
+def test_extract_updates_existing_memory_instead_of_creating_duplicate(
+    live_config,
+    live_repo_root,
+) -> None:
+    """Extract should revise one seeded durable record instead of duplicating it."""
+    expectation = load_extract_expectation("duplicate_existing_memory")["expected"]
+    outcome = run_extract_case(
+        case_name="duplicate_existing_memory",
+        live_config=live_config,
+        live_repo_root=live_repo_root,
+        seed_records=[
+            {
+                "record_id": "rec_existing_storage_split",
+                "kind": "decision",
+                "title": "Keep product state and queue state separate",
+                "body": (
+                    "Keep product state and queue-processing state separate. "
+                    "Why: they should not share one persistence path."
+                ),
+                "decision": "Separate product state from queue-processing state.",
+                "why": "They should not share one persistence path.",
+            }
+        ],
+    )
+
+    tool_names = outcome.tool_names
+    assert set(tool_names).issubset(EXTRACT_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
+    assert_no_legacy_tools(tool_names)
+    for tool_name in expectation["must_use_tools"]:
+        assert tool_name in tool_names
+    for tool_name in expectation["must_not_use_tools"]:
+        assert tool_name not in tool_names
+
+    created_rows = outcome.rows
+    created_episode_rows = [row for row in created_rows if row["kind"] == "episode"]
+    created_durable_rows = [row for row in created_rows if row["kind"] != "episode"]
+    changed_records = outcome.changed_records
+    changed_decisions = [record for record in changed_records if record["kind"] == "decision"]
+
+    assert outcome.result.completion_summary.strip()
+    assert len(created_episode_rows) == expectation["episode_count"]
+    assert len(created_durable_rows) == expectation["created_durable_count"]
+    assert len(changed_records) == expectation["changed_record_count"]
+    assert len(changed_decisions) == expectation["changed_decision_count"]
+
+    updated_decision = next(record for record in changed_decisions if record["record_id"] == "rec_existing_storage_split")
+    assert len(updated_decision["versions"]) >= 2
+    latest_change_kinds = {str(version["change_kind"]) for version in updated_decision["versions"][:2]}
+    assert "update" in latest_change_kinds
+
+    updated_text = " ".join(
+        str(updated_decision.get(field) or "")
+        for field in ("title", "body", "decision", "why", "consequences")
+    ).lower()
+    for token in expectation["updated_decision_text_must_include_all"]:
+        assert token in updated_text
+    assert any(token in updated_text for token in expectation["updated_decision_text_must_include_any"])
+    for token in expectation["updated_decision_text_must_not_include"]:
+        assert token not in updated_text
+
+    with connect_context_db(live_config.context_db_path) as conn:
+        durable_total = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM records WHERE kind != 'episode' AND project_id = ?",
+                (outcome.project_id,),
+            ).fetchone()[0]
+        )
+        seeded_version_count = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM record_versions WHERE record_id = ?",
+                ("rec_existing_storage_split",),
+            ).fetchone()[0]
+        )
+
+    assert durable_total == 1
+    assert seeded_version_count >= 2
+    assert_clean_context_schema(live_config.context_db_path)
+    assert_quality_metrics(audit_context_db(live_config.context_db_path))
