@@ -1,0 +1,27 @@
+case: recap_temptation_trace
+summary: A report-like trace should still yield one compact durable decision instead of a session-style memory.
+
+expected:
+  episode_count: 1
+  durable_count: 1
+  decision_count: 1
+  must_use_tools:
+    - trace_read
+    - create_record
+  must_not_use_tools:
+    - update_record
+    - prune
+  decision_text_must_include_all:
+    - append-only
+    - event
+    - source of truth
+  decision_text_must_include_any:
+    - frontmatter
+    - derived
+    - regenerate
+  decision_text_must_not_include:
+    - walkthrough
+    - timeline
+    - migration report
+    - helper rename
+    - debug branch

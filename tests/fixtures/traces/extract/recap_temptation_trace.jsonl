@@ -1,0 +1,8 @@
+{"role":"user","content":"Please review the whole context-graph upgrade and tell me the lasting rule, not a polished recap. The trace has many implementation steps, but I only want the durable memory."}
+{"role":"assistant","content":"I will read through the migration notes, storage changes, and cleanup details, then keep only the reusable decision."}
+{"role":"assistant","content":"I compared two approaches: patching frontmatter in place versus treating an append-only events.jsonl log as the source of truth and rebuilding derived views from it."}
+{"role":"assistant","content":"The rest of the session was full of report-like detail: prompt_loaded events, tool_call rows, replay debugging, graph-node naming, and step-by-step migration notes."}
+{"role":"assistant","content":"I also checked temporary cleanup items like renaming one helper, shortening a log line, and removing a one-off debug branch. Those are not durable memory."}
+{"role":"user","content":"The durable point is clear: use the append-only event log as the source of truth. Frontmatter patching is derived state and can be regenerated. Do not store the review story."}
+{"role":"assistant","content":"Agreed. The durable memory is one storage decision: append-only event log is canonical, and frontmatter or index documents are derived artifacts."}
+{"role":"assistant","content":"I should not turn the session into a walkthrough, timeline, or migration report. The memory should stay compact and operational."}
