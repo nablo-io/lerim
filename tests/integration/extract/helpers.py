@@ -3,17 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
 import json
 from pathlib import Path
 from typing import Any
-
-import yaml
 
 from lerim.agents.extract import ExtractionResult, run_extraction
 from lerim.config.providers import build_pydantic_model
 from lerim.context import ContextStore, resolve_project_identity
 from tests.conftest import EXTRACT_EXPECTATIONS_DIR, EXTRACT_TRACES_DIR
+from tests.integration.common_helpers import extract_tool_calls, load_yaml_expectation, seed_session
 from tests.live_helpers import dump_messages, extract_tool_names
 
 
@@ -23,6 +21,7 @@ class ExtractCaseOutcome:
 
     result: ExtractionResult
     tool_names: list[str]
+    tool_calls: list[dict[str, Any]]
     rows: list[dict[str, Any]]
     records: list[dict[str, Any]]
     changed_version_rows: list[dict[str, Any]]
@@ -32,8 +31,7 @@ class ExtractCaseOutcome:
 
 def load_extract_expectation(case_name: str) -> dict[str, Any]:
     """Load one YAML expectation file for an extract case."""
-    path = EXTRACT_EXPECTATIONS_DIR / f"{case_name}.yaml"
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
+    return load_yaml_expectation(EXTRACT_EXPECTATIONS_DIR, case_name)
 
 
 def _build_very_long_prune_trace(trace_path: Path) -> None:
@@ -126,6 +124,75 @@ def _build_very_long_prune_trace(trace_path: Path) -> None:
     )
 
 
+def _build_late_disambiguation_trace(trace_path: Path) -> None:
+    """Materialize a long trace whose final chunk overturns an earlier lure."""
+    messages: list[dict[str, str]] = [
+        {
+            "role": "user",
+            "content": (
+                "Figure out the durable lesson from this debugging session. "
+                "Keep only one durable memory if there is one."
+            ),
+        },
+        {
+            "role": "assistant",
+            "content": (
+                "I will read the full trace before writing memory because the early sections may be misleading."
+            ),
+        },
+    ]
+    for index in range(1, 151):
+        if index % 25 == 0:
+            filler = (
+                "This chunk repeats noisy discussion about worker-local budget handling, helper renames, debug labels, "
+                "and temporary metrics. It still sounds like the issue might be the worker-local budget theory, "
+                "but the evidence is incomplete."
+            )
+        else:
+            filler = (
+                "This chunk repeats noisy discussion about worker-local counters, helper renames, debug labels, "
+                "log formatting, temporary metrics, and backoff tuning. "
+                "The evidence is still incomplete and these observations may be a distraction."
+            )
+        messages.append(
+            {
+                "role": "assistant",
+                "content": (
+                    f"Chunk {index}: {filler} "
+                    "Several local comments mention retry budget, attempt count, and backoff tuning."
+                ),
+            }
+        )
+    messages.extend(
+        [
+            {
+                "role": "user",
+                "content": (
+                    "Important clarification from the final investigation: the earlier budget theory was a distraction. "
+                    "The real durable rule is that authoritative lease ownership must live in the persisted queue row."
+                ),
+            },
+            {
+                "role": "assistant",
+                "content": (
+                    "Understood. The durable boundary is queue-row lease ownership, not retry budget tuning."
+                ),
+            },
+            {
+                "role": "assistant",
+                "content": (
+                    "Everything before this point was noisy debugging context. "
+                    "The lasting memory is one lease-ownership rule for restart and failover recovery."
+                ),
+            },
+        ]
+    )
+    trace_path.write_text(
+        "\n".join(json.dumps(message, ensure_ascii=True) for message in messages) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _resolve_trace_path(case_name: str, run_folder: Path) -> Path:
     """Return the case trace path, materializing generated traces when needed."""
     static_path = EXTRACT_TRACES_DIR / f"{case_name}.jsonl"
@@ -135,31 +202,11 @@ def _resolve_trace_path(case_name: str, run_folder: Path) -> Path:
         generated = run_folder / f"{case_name}.jsonl"
         _build_very_long_prune_trace(generated)
         return generated
+    if case_name == "late_disambiguation_at_end_of_trace":
+        generated = run_folder / f"{case_name}.jsonl"
+        _build_late_disambiguation_trace(generated)
+        return generated
     raise FileNotFoundError(f"no extract trace fixture found for case {case_name!r}")
-
-
-def _seed_session(
-    store: ContextStore,
-    *,
-    project_id: str,
-    session_id: str,
-    repo_root: Path,
-    trace_path: Path,
-) -> None:
-    """Insert the provenance row required before extract writes records."""
-    store.upsert_session(
-        project_id=project_id,
-        session_id=session_id,
-        agent_type="integration-extract",
-        source_trace_ref=str(trace_path),
-        repo_path=str(repo_root),
-        cwd=str(repo_root),
-        started_at=datetime.now(timezone.utc).isoformat(),
-        model_name="integration-test",
-        instructions_text=None,
-        prompt_text=None,
-        metadata={},
-    )
 
 
 def run_extract_case(
@@ -181,12 +228,13 @@ def run_extract_case(
     store.initialize()
     store.register_project(identity)
     if seed_records:
-        _seed_session(
+        seed_session(
             store,
             project_id=identity.project_id,
             session_id=seed_session_id,
             repo_root=live_repo_root,
-            trace_path=trace_path,
+            agent_type="integration-extract",
+            source_trace_ref=str(trace_path),
         )
         for seed in seed_records:
             store.create_record(
@@ -195,12 +243,13 @@ def run_extract_case(
                 change_reason="integration_seed",
                 **seed,
             )
-    _seed_session(
+    seed_session(
         store,
         project_id=identity.project_id,
         session_id=session_id,
         repo_root=live_repo_root,
-        trace_path=trace_path,
+        agent_type="integration-extract",
+        source_trace_ref=str(trace_path),
     )
 
     model = build_pydantic_model("agent", config=live_config)
@@ -246,9 +295,11 @@ def run_extract_case(
         for record_id in changed_record_ids
     ]
 
+    payload = dump_messages(messages)
     return ExtractCaseOutcome(
         result=result,
-        tool_names=extract_tool_names(dump_messages(messages)),
+        tool_names=extract_tool_names(payload),
+        tool_calls=extract_tool_calls(payload),
         rows=rows,
         records=[record for record in records if record is not None],
         changed_version_rows=version_rows,
