@@ -2,13 +2,15 @@
 
 ## Summary
 
-The maintained test surface is DB-only.
+The maintained test surface is DB-first.
 
 What we test:
 
 - unit tests for config, adapters, store, tools, CLI, API, daemon, and runtime
 - smoke tests for quick real-LLM extract sanity
-- integration tests for real extract, maintain, and semantic ask flows
+- integration tests for real extract, maintain, semantic ask, cloud sync state, and multi-project scope flows
+- integration tests for runtime orchestration behavior like workspace artifact layout, ask debug trace ordering, and mutation count reporting
+- e2e surface tests for CLI/API rendering and deterministic query behavior
 
 What we do not keep anymore:
 
@@ -29,6 +31,47 @@ For live QA after runtime changes:
 tests/run_tests.sh smoke
 tests/run_tests.sh integration
 ```
+
+## Case-based integration suites
+
+The new live integration suites are behavior-first.
+
+Shape:
+
+- one folder per cluster under `tests/integration/`, for example:
+  - `tests/integration/extract/`
+  - `tests/integration/maintain/`
+  - `tests/integration/ask/`
+  - `tests/integration/runtime/`
+  - `tests/integration/scope/`
+  - `tests/integration/cloud/`
+  - `tests/integration/queue/`
+- one or more behavior-grouped test files inside each cluster folder
+- one `helpers.py` per cluster when that cluster needs a runner/harness
+- one expectation YAML per case under `tests/fixtures/expectations/<cluster>/`
+- trace fixtures under `tests/fixtures/traces/extract/` only when the agent truly works from a trace
+
+Design rule:
+
+- `extract` cases are trace-driven
+- `ask` and `maintain` cases are mostly seeded-state-driven
+- scope/runtime/cloud/queue clusters use the smallest real setup that exercises that behavior
+
+Some extract pressure cases generate a long trace dynamically instead of checking in a giant fixture. That is intentional. Use a generated trace when the test is about context pressure or pruning, not about exact transcript wording.
+
+## Stability rule
+
+Real-agent behavior cases are not done when they pass once.
+
+Rule:
+
+- add one behavior case
+- run it against the real agent
+- if it fails, fix the system or the test shape at the right abstraction level
+- once green, rerun the new case at least `3x`
+- if it is still flaky, keep iterating before adding the next case
+
+For grouped live suites, rerun the affected cluster after the focused case is stable.
 
 ## Unit test structure
 
@@ -88,3 +131,18 @@ They audit:
 - dead forbidden tables
 - agent tool use from `agent_trace.json`
 - DB quality after sync and maintain
+
+## Expectation files
+
+Expectation YAML files are part of the contract for case-based suites.
+
+Use them for:
+
+- required and forbidden tools
+- expected record counts or kinds
+- answer or record content checks
+- lifecycle expectations like archive vs supersede
+
+Keep them behavior-shaped.
+
+Do not encode accidental wording or prompt internals unless the behavior truly depends on that distinction.
