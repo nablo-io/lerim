@@ -9,16 +9,18 @@ from pydantic_ai import Agent
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 
+from lerim.agents.history_processors import (
+    context_pressure_injector,
+    notes_state_injector,
+    prune_history_processor,
+)
 from lerim.agents.tools import (
     ContextDeps,
     compute_request_budget,
-    context_pressure_injector,
     create_record,
     fetch_records,
     note,
-    notes_state_injector,
     prune,
-    prune_history_processor,
     search_records,
     trace_read,
     update_record,
