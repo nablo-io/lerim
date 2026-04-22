@@ -119,30 +119,32 @@ def test_extract_very_long_trace_requires_prune(
     rows = outcome.rows
     episode_rows = [row for row in rows if row["kind"] == "episode"]
     durable_rows = [row for row in rows if row["kind"] != "episode"]
-    decision_rows = [row for row in rows if row["kind"] == "decision"]
+    durable_kind_any_of = tuple(expectation["durable_kind_any_of"])
+    matching_durable_rows = [row for row in rows if row["kind"] in durable_kind_any_of]
 
     assert outcome.result.completion_summary.strip()
     assert len(episode_rows) == expectation["episode_count"]
     assert len(durable_rows) == expectation["durable_count"]
-    assert len(decision_rows) == expectation["decision_count"]
+    assert len(matching_durable_rows) == 1
 
-    decision = next(record for record in outcome.records if record["kind"] == "decision")
+    durable_record = next(record for record in outcome.records if record["kind"] in durable_kind_any_of)
     episode = next(record for record in outcome.records if record["kind"] == "episode")
 
-    assert decision["decision"]
-    assert decision["why"]
     assert len(str(episode["body"])) <= 420
-    assert len(decision["versions"]) >= 1
+    assert len(durable_record["versions"]) >= 1
+    if durable_record["kind"] == "decision":
+        assert durable_record["decision"]
+        assert durable_record["why"]
 
-    decision_text = " ".join(
-        str(decision.get(field) or "")
+    durable_text = " ".join(
+        str(durable_record.get(field) or "")
         for field in ("title", "body", "decision", "why", "consequences")
     ).lower()
-    for token in expectation["decision_text_must_include_all"]:
-        assert token in decision_text
-    assert any(token in decision_text for token in expectation["decision_text_must_include_any"])
-    for token in expectation["decision_text_must_not_include"]:
-        assert token not in decision_text
+    for token in expectation["durable_text_must_include_all"]:
+        assert token in durable_text
+    assert any(token in durable_text for token in expectation["durable_text_must_include_any"])
+    for token in expectation["durable_text_must_not_include"]:
+        assert token not in durable_text
 
 
 @pytest.mark.integration

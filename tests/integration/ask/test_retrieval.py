@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from tests.integration.ask.helpers import load_ask_expectation, run_ask_case
@@ -352,7 +354,9 @@ def test_ask_mixed_time_topic_no_in_window_match_stays_negative(
         if token in answer:
             break
     else:
-        has_time_anchor = any(token in answer for token in ("2026-04-20", "yesterday", "time window"))
+        has_time_anchor = any(token in answer for token in ("yesterday", "time window")) or bool(
+            re.search(r"\b20\d{2}-\d{2}-\d{2}\b", answer)
+        )
         has_negative_signal = any(token in answer for token in ("nothing", "no records", "no evidence"))
         if not (has_time_anchor and has_negative_signal):
             raise AssertionError(f"answer missing expected negative phrasing: {answer}")

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -85,6 +85,29 @@ def _apply_seed_timestamps(
             )
 
 
+def _resolve_relative_timestamp(raw: str | None) -> str | None:
+    """Resolve simple UTC-relative timestamp placeholders used by live ask fixtures."""
+    if not raw:
+        return raw
+    value = str(raw).strip()
+    if not value.startswith("{{"):
+        return value
+
+    today = datetime.now(timezone.utc).date()
+    replacements = {
+        "{{today}}": today.isoformat(),
+        "{{yesterday}}": (today - timedelta(days=1)).isoformat(),
+        "{{days_ago:2}}": (today - timedelta(days=2)).isoformat(),
+        "{{days_ago:3}}": (today - timedelta(days=3)).isoformat(),
+        "{{days_ago:4}}": (today - timedelta(days=4)).isoformat(),
+        "{{days_ago:5}}": (today - timedelta(days=5)).isoformat(),
+    }
+    for marker, date_text in replacements.items():
+        if marker in value:
+            return value.replace(marker, date_text)
+    return value
+
+
 def run_ask_case(
     *,
     case_name: str,
@@ -120,8 +143,8 @@ def run_ask_case(
             title=str(seed["title"]),
             body=str(seed["body"]),
             status=str(seed.get("status") or "active"),
-            valid_from=str(seed.get("valid_from") or "").strip() or None,
-            valid_until=str(seed.get("valid_until") or "").strip() or None,
+            valid_from=_resolve_relative_timestamp(str(seed.get("valid_from") or "").strip()) or None,
+            valid_until=_resolve_relative_timestamp(str(seed.get("valid_until") or "").strip()) or None,
             superseded_by_record_id=str(seed.get("superseded_by_record_id") or "").strip() or None,
             decision=str(seed.get("decision") or "").strip() or None,
             why=str(seed.get("why") or "").strip() or None,
@@ -136,8 +159,8 @@ def run_ask_case(
         _apply_seed_timestamps(
             store,
             record_id=str(record["record_id"]),
-            created_at=str(seed.get("created_at") or "").strip() or None,
-            updated_at=str(seed.get("updated_at") or "").strip() or None,
+            created_at=_resolve_relative_timestamp(str(seed.get("created_at") or "").strip()) or None,
+            updated_at=_resolve_relative_timestamp(str(seed.get("updated_at") or "").strip()) or None,
         )
 
     model = build_pydantic_model("agent", config=live_config)

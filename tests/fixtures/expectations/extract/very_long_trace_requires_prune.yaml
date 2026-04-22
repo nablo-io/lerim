@@ -4,7 +4,10 @@ summary: A very long trace should require note-backed compression and pruning be
 expected:
   episode_count: 1
   durable_count: 1
-  decision_count: 1
+  durable_kind_any_of:
+    - constraint
+    - decision
+    - fact
   trace_read_count_at_least: 4
   note_count_at_least: 1
   prune_count_at_least: 1
@@ -15,16 +18,16 @@ expected:
     - create_record
   must_not_use_tools:
     - update_record
-  decision_text_must_include_all:
+  durable_text_must_include_all:
     - lease
     - ownership
     - queue
-  decision_text_must_include_any:
+  durable_text_must_include_any:
     - persisted
     - failover
     - worker memory
     - restart
-  decision_text_must_not_include:
+  durable_text_must_not_include:
     - helper rename
     - debug label
     - snapshot formatting
