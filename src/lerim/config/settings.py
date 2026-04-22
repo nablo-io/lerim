@@ -361,6 +361,8 @@ _PROVIDER_KEYS = {
     "auto_unload",
 }
 _CLOUD_KEYS = {"endpoint", "token"}
+_LEGACY_TOP_LEVEL_KEYS = {"openrouter_provider_order"}
+_LEGACY_ROLE_KEYS = {"thinking"}
 
 
 def _raise_unknown_keys(section: str, raw: dict[str, Any], allowed: set[str]) -> None:
@@ -369,6 +371,34 @@ def _raise_unknown_keys(section: str, raw: dict[str, Any], allowed: set[str]) ->
     if unknown:
         joined = ", ".join(unknown)
         raise ValueError(f"unknown config key(s) in [{section}]: {joined}")
+
+
+def _normalize_legacy_config_shape(toml_data: dict[str, Any]) -> dict[str, Any]:
+    """Drop known legacy keys before strict validation for upgrade safety."""
+    normalized = _deep_merge({}, toml_data)
+    for key in _LEGACY_TOP_LEVEL_KEYS:
+        normalized.pop(key, None)
+    roles = _ensure_dict(normalized, "roles")
+    for role_payload in roles.values():
+        if isinstance(role_payload, dict):
+            for key in _LEGACY_ROLE_KEYS:
+                role_payload.pop(key, None)
+    return normalized
+
+
+def _platform_agents_fallback(platforms_path: Path) -> dict[str, str]:
+    """Load connected platform paths for installs that still rely on platforms.json."""
+    from lerim.adapters.registry import load_platforms
+
+    fallback: dict[str, str] = {}
+    for name, info in load_platforms(platforms_path).get("platforms", {}).items():
+        raw_path = str((info or {}).get("path") or "").strip()
+        if not raw_path:
+            continue
+        path = Path(raw_path).expanduser().resolve()
+        if path.exists():
+            fallback[str(name).strip()] = str(path)
+    return fallback
 
 
 def _validate_config_shape(toml_data: dict[str, Any]) -> None:
@@ -411,6 +441,7 @@ def load_config() -> Config:
         load_dotenv(_lerim_env)
     ensure_user_config_exists()
     toml_data, sources = _load_layers()
+    toml_data = _normalize_legacy_config_shape(toml_data)
     _validate_config_shape(toml_data)
 
     global _LAST_CONFIG_SOURCES
@@ -438,10 +469,12 @@ def load_config() -> Config:
 
     cloud = _ensure_dict(toml_data, "cloud")
 
-    agents = _parse_string_table(_ensure_dict(toml_data, "agents"))
-    projects = _parse_string_table(_ensure_dict(toml_data, "projects"))
-
     platforms_path = global_data_dir / "platforms.json"
+    agents = {
+        **_platform_agents_fallback(platforms_path),
+        **_parse_string_table(_ensure_dict(toml_data, "agents")),
+    }
+    projects = _parse_string_table(_ensure_dict(toml_data, "projects"))
 
     cloud_endpoint = (
         _to_non_empty_string(os.environ.get("LERIM_CLOUD_ENDPOINT"))

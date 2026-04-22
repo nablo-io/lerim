@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 
@@ -188,3 +189,53 @@ def test_config_rejects_unknown_role_keys(tmp_path, monkeypatch):
 
     with pytest.raises(ValueError, match="roles.agent"):
         reload_config()
+
+
+def test_config_accepts_known_legacy_keys(tmp_path, monkeypatch):
+    """Known legacy config keys should be tolerated during upgrade loading."""
+    config_path = tmp_path / "legacy_config.toml"
+    monkeypatch.setattr(
+        "lerim.config.settings.USER_CONFIG_PATH", tmp_path / "user-config.toml"
+    )
+    config_path.write_text(
+        'openrouter_provider_order = ["openrouter"]\n'
+        "[data]\n"
+        f'dir = "{tmp_path}"\n'
+        "\n[roles.agent]\n"
+        'provider = "minimax"\n'
+        'model = "MiniMax-M2.7"\n'
+        "thinking = true\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LERIM_CONFIG", str(config_path))
+    cfg = reload_config()
+    assert cfg.global_data_dir == tmp_path
+    assert cfg.agent_role.provider == "minimax"
+    assert cfg.agent_role.model == "MiniMax-M2.7"
+
+
+def test_config_derives_agents_from_connected_platforms(tmp_path, monkeypatch):
+    """Connected platform registry should still populate effective agent paths."""
+    config_path = tmp_path / "config.toml"
+    monkeypatch.setattr(
+        "lerim.config.settings.USER_CONFIG_PATH", tmp_path / "user-config.toml"
+    )
+    sessions_path = tmp_path / "claude-sessions"
+    sessions_path.mkdir(parents=True)
+    (tmp_path / "platforms.json").write_text(
+        json.dumps(
+            {
+                "platforms": {
+                    "claude": {
+                        "path": str(sessions_path),
+                        "connected_at": "2026-04-22T00:00:00+00:00",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    config_path.write_text(f'[data]\ndir = "{tmp_path}"\n', encoding="utf-8")
+    monkeypatch.setenv("LERIM_CONFIG", str(config_path))
+    cfg = reload_config()
+    assert cfg.agents["claude"] == str(sessions_path.resolve())

@@ -7,12 +7,14 @@ Docker-unavailable and missing-Dockerfile scenarios gracefully.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
 import pytest
 
 from lerim import __version__
+from lerim.config.settings import reload_config as settings_reload_config
 from lerim.server.api import (
     GHCR_IMAGE,
     _generate_compose_yml,
@@ -171,3 +173,35 @@ def test_compose_agent_dirs_read_only(tmp_path, monkeypatch) -> None:
 
     content = _generate_compose_yml(build_local=False)
     assert f"{agent_path}:{agent_path}:ro" in content
+
+
+def test_compose_mounts_connected_platform_dirs_from_platforms_registry(
+    tmp_path, monkeypatch
+) -> None:
+    """Compose should still mount connected platform paths when [agents] is empty."""
+    monkeypatch.setattr(
+        "lerim.config.settings.USER_CONFIG_PATH", tmp_path / "user-config.toml"
+    )
+    sessions_path = tmp_path / "codex-sessions"
+    sessions_path.mkdir(parents=True)
+    (tmp_path / "platforms.json").write_text(
+        json.dumps(
+            {
+                "platforms": {
+                    "codex": {
+                        "path": str(sessions_path),
+                        "connected_at": "2026-04-22T00:00:00+00:00",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(f'[data]\ndir = "{tmp_path}"\n', encoding="utf-8")
+    monkeypatch.setenv("LERIM_CONFIG", str(config_path))
+    monkeypatch.setattr("lerim.server.api.reload_config", settings_reload_config)
+
+    content = _generate_compose_yml(build_local=False)
+    resolved = str(sessions_path.resolve())
+    assert f"{resolved}:{resolved}:ro" in content

@@ -1120,10 +1120,10 @@ class ContextStore:
             params.extend(project_ids)
         if created_since:
             clauses.append("created_at >= ?")
-            params.append(created_since)
+            params.append(_normalize_datetime_filter_bound(created_since, upper=False))
         if created_until:
             clauses.append("created_at <= ?")
-            params.append(created_until)
+            params.append(_normalize_datetime_filter_bound(created_until, upper=True))
         filter_sql = " AND ".join(clauses)
         with self.connect() as conn:
             total = None

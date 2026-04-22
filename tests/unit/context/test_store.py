@@ -1108,6 +1108,31 @@ class TestQuery:
         assert result["entity"] == "sessions"
         assert result["count"] >= 1
 
+    def test_sessions_date_only_window_includes_same_day_rows(self, mock_seeded):
+        store, pid = mock_seeded
+        midday = "2026-04-22T12:00:00+00:00"
+        with store.connect() as conn:
+            conn.execute(
+                "UPDATE sessions SET created_at = ? WHERE session_id = ?",
+                (midday, "sess_test"),
+            )
+        listed = store.query(
+            entity="sessions",
+            mode="list",
+            project_ids=[pid],
+            created_since="2026-04-22",
+            created_until="2026-04-22",
+        )
+        counted = store.query(
+            entity="sessions",
+            mode="count",
+            project_ids=[pid],
+            created_since="2026-04-22",
+            created_until="2026-04-22",
+        )
+        assert listed["count"] == 1
+        assert counted["count"] == 1
+
     def test_versions_count(self, mock_seeded):
         store, pid = mock_seeded
         _make_decision(store, pid)
