@@ -125,13 +125,33 @@ def _to_fallback_models(value: Any) -> tuple[str, ...]:
 
 
 def get_user_config_path() -> Path:
-    """Return canonical user config path."""
+    """Return the effective writable config path.
+
+    When ``LERIM_CONFIG`` is set, writes should target that explicit override
+    file rather than silently mutating the default user config.
+    """
+    explicit = os.getenv("LERIM_CONFIG")
+    if explicit:
+        return Path(explicit).expanduser()
     return USER_CONFIG_PATH
+
+
+def get_global_data_dir_path() -> Path:
+    """Return the effective global data root from layered TOML config."""
+    toml_data, _sources = _load_layers()
+    toml_data = _normalize_legacy_config_shape(toml_data)
+    data = _ensure_dict(toml_data, "data")
+    return _expand(data.get("dir"), GLOBAL_DATA_DIR)
+
+
+def get_user_env_path() -> Path:
+    """Return the effective ``.env`` path under the active global data dir."""
+    return get_global_data_dir_path() / ".env"
 
 
 def ensure_user_config_exists() -> Path:
     """Create user config scaffold outside pytest if it does not exist."""
-    path = USER_CONFIG_PATH
+    path = get_user_config_path()
     if path.exists() or os.getenv("PYTEST_CURRENT_TEST"):
         return path
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -435,10 +455,6 @@ def _ensure_global_infrastructure(global_data_dir: Path) -> None:
 @lru_cache(maxsize=1)
 def load_config() -> Config:
     """Load effective config from TOML layers plus env API keys."""
-    # Always load ~/.lerim/.env. Lerim does not load cwd-local env files.
-    _lerim_env = Path.home() / ".lerim" / ".env"
-    if _lerim_env.is_file():
-        load_dotenv(_lerim_env)
     ensure_user_config_exists()
     toml_data, sources = _load_layers()
     toml_data = _normalize_legacy_config_shape(toml_data)
@@ -452,6 +468,9 @@ def load_config() -> Config:
     roles = _ensure_dict(toml_data, "roles")
     semantic_search = _ensure_dict(toml_data, "semantic_search")
     global_data_dir = _expand(data.get("dir"), GLOBAL_DATA_DIR)
+    env_path = global_data_dir / ".env"
+    if env_path.is_file():
+        load_dotenv(env_path)
     context_db_path = _expand(
         data.get("context_db_path"),
         _default_context_db_path(global_data_dir),
@@ -586,7 +605,7 @@ def save_config_patch(patch: dict[str, Any]) -> Config:
     Reads existing ~/.lerim/config.toml, deep-merges the patch, writes back,
     then reloads the cached config.
     """
-    user_path = USER_CONFIG_PATH
+    user_path = get_user_config_path()
     user_path.parent.mkdir(parents=True, exist_ok=True)
 
     existing: dict[str, Any] = {}
@@ -599,7 +618,7 @@ def save_config_patch(patch: dict[str, Any]) -> Config:
 
 def _write_config_full(data: dict[str, Any]) -> Config:
     """Write complete config dict to user TOML and return reloaded Config."""
-    user_path = USER_CONFIG_PATH
+    user_path = get_user_config_path()
     user_path.parent.mkdir(parents=True, exist_ok=True)
     lines = ["# Lerim user config\n"]
     _toml_write_dict(lines, data, prefix="")

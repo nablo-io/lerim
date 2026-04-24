@@ -18,13 +18,14 @@ from pathlib import Path
 from typing import Any
 
 from loguru import logger as _BASE_LOGGER
+from lerim.config.settings import get_global_data_dir_path
 
 
 _logger = _BASE_LOGGER
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 
-LOG_DIR: Path = Path.home() / ".lerim" / "logs"
+LOG_DIR: Path = get_global_data_dir_path() / "logs"
 """Default directory for persistent log files."""
 
 

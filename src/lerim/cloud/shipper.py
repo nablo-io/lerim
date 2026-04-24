@@ -13,6 +13,7 @@ import asyncio
 import json
 import sqlite3
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -20,13 +21,13 @@ from pathlib import Path
 from typing import Any
 
 from lerim.config.logging import LOG_DIR, logger
-from lerim.config.settings import Config
+from lerim.config.settings import Config, get_global_data_dir_path
 from lerim.context import ContextStore, resolve_project_identity
 from lerim.context.spec import ALLOWED_KINDS, RECORD_KIND_SPECS
 
 # ── constants ────────────────────────────────────────────────────────────────
 
-_STATE_PATH = Path.home() / ".lerim" / "cloud_shipper_state.json"
+_STATE_PATH = get_global_data_dir_path() / "cloud_shipper_state.json"
 
 _BATCH_LOGS = 500
 _BATCH_SESSIONS = 100
@@ -51,19 +52,21 @@ class _ShipperState:
     service_runs_shipped_at: str = ""
     jobs_shipped_at: str = ""
 
-    def save(self) -> None:
+    def save(self, path: Path | None = None) -> None:
         """Write state to disk."""
-        _STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _STATE_PATH.write_text(
+        state_path = path or _STATE_PATH
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(
             json.dumps(asdict(self), ensure_ascii=True, indent=2) + "\n",
             encoding="utf-8",
         )
 
     @classmethod
-    def load(cls) -> "_ShipperState":
+    def load(cls, path: Path | None = None) -> "_ShipperState":
         """Load state from disk, returning defaults on any error."""
+        state_path = path or _STATE_PATH
         try:
-            raw = json.loads(_STATE_PATH.read_text(encoding="utf-8"))
+            raw = json.loads(state_path.read_text(encoding="utf-8"))
             if not isinstance(raw, dict):
                 return cls()
             return cls(
@@ -132,7 +135,7 @@ def _get_json_sync(
     endpoint: str, path: str, token: str, params: dict[str, str]
 ) -> dict[str, Any] | None:
     """Synchronous GET request returning parsed JSON."""
-    qs = "&".join(f"{k}={v}" for k, v in params.items()) if params else ""
+    qs = urllib.parse.urlencode(params) if params else ""
     url = f"{endpoint.rstrip('/')}{path}{'?' + qs if qs else ''}"
     req = urllib.request.Request(
         url,
@@ -203,10 +206,22 @@ def _upsert_pulled_record(
     identity = resolve_project_identity(project_path)
     store.register_project(identity)
     kind = _normalize_cloud_kind(str(record.get("record_kind") or ""))
+    if kind == "episode":
+        logger.warning(
+            "skipping pulled episode record {} because cloud sync only supports durable records",
+            record_id,
+        )
+        return False
     summary = str(record.get("description") or "").strip()
     body = str(record.get("body") or "").strip() or summary or str(record.get("title") or "").strip()
     typed_fields = _typed_fields_from_cloud_record(record, kind=kind)
     cloud_edited = str(record.get("cloud_edited_at") or "").strip() or datetime.now(timezone.utc).isoformat()
+    created_at_raw = str(record.get("created_at") or "").strip()
+    created_at = created_at_raw or cloud_edited
+    valid_from_raw = str(record.get("valid_from") or "").strip()
+    valid_until_present = "valid_until" in record
+    valid_until_raw = str(record.get("valid_until") or "").strip()
+    valid_until = valid_until_raw or None
     with store.connect() as conn:
         row = conn.execute(
             "SELECT record_id FROM records WHERE record_id = ? AND project_id = ?",
@@ -221,23 +236,31 @@ def _upsert_pulled_record(
             title=str(record.get("title") or record.get("name") or record_id).strip(),
             body=body,
             status=str(record.get("status") or "active").strip() or "active",
-            valid_from=cloud_edited,
+            created_at=created_at,
+            updated_at=cloud_edited,
+            valid_from=valid_from_raw or created_at,
+            valid_until=valid_until,
             change_reason="cloud_pull",
             **typed_fields,
         )
         return True
+    changes: dict[str, Any] = {
+        "kind": kind,
+        "title": str(record.get("title") or record.get("name") or record_id).strip(),
+        "body": body,
+        "status": str(record.get("status") or "active").strip() or "active",
+        "updated_at": cloud_edited,
+        **typed_fields,
+    }
+    if valid_from_raw:
+        changes["valid_from"] = valid_from_raw
+    if valid_until_present:
+        changes["valid_until"] = valid_until
     store.update_record(
         record_id=record_id,
         session_id=None,
         project_ids=[identity.project_id],
-        changes={
-            "kind": kind,
-            "title": str(record.get("title") or record.get("name") or record_id).strip(),
-            "body": body,
-            "status": str(record.get("status") or "active").strip() or "active",
-            "valid_from": cloud_edited,
-            **typed_fields,
-        },
+        changes=changes,
         change_reason="cloud_pull",
     )
     return True
@@ -269,13 +292,17 @@ async def _pull_records(
         cloud_edited = record.get("cloud_edited_at", "")
         if not cloud_edited:
             continue
+        if cloud_edited > latest_edited:
+            latest_edited = cloud_edited
 
         project_name = record.get("project")
         if not project_name or project_name not in (config.projects or {}):
-            if config.projects:
-                project_name = next(iter(config.projects))
-            else:
-                continue
+            logger.warning(
+                "skipping pulled record {} because project {} is not configured locally",
+                record.get("record_id", ""),
+                project_name,
+            )
+            continue
 
         try:
             project_path = Path(config.projects[project_name]).expanduser().resolve()
@@ -288,9 +315,6 @@ async def _pull_records(
                 pulled += 1
         except OSError as exc:
             logger.warning("failed to persist pulled record {}: {}", record.get("record_id", ""), exc)
-
-        if cloud_edited > latest_edited:
-            latest_edited = cloud_edited
 
     if latest_edited and latest_edited != state.records_pulled_at:
         state.records_pulled_at = latest_edited
@@ -512,9 +536,9 @@ def _query_context_records(
     }
     placeholders = ", ".join("?" for _ in selected_ids)
     sql = (
-        "SELECT record_id, project_id, kind, title, body, status, updated_at, "
+        "SELECT record_id, project_id, kind, title, body, status, created_at, updated_at, valid_from, valid_until, "
         "decision, why, alternatives, consequences, user_intent, what_happened, outcomes "
-        f"FROM records WHERE project_id IN ({placeholders})"
+        f"FROM records WHERE project_id IN ({placeholders}) AND kind != 'episode'"
     )
     params: list[Any] = list(selected_ids.keys())
     if since_iso:
@@ -580,7 +604,11 @@ async def _ship_records(
                 "user_intent": record.get("user_intent", ""),
                 "what_happened": record.get("what_happened", ""),
                 "outcomes": record.get("outcomes", ""),
+                "created_at": record.get("created_at", ""),
+                "valid_from": record.get("valid_from", ""),
+                "valid_until": record.get("valid_until"),
                 "updated": record.get("updated_at", ""),
+                "cloud_edited_at": record.get("updated_at", ""),
             }
             batch.append(entry)
         ok = await _post_batch(
@@ -787,7 +815,8 @@ async def ship_once(config: Config) -> dict[str, int]:
 
     endpoint = config.cloud_endpoint
     token = config.cloud_token or ""
-    state = _ShipperState.load()
+    state_path = config.global_data_dir / "cloud_shipper_state.json"
+    state = _ShipperState.load(path=state_path)
 
     # Phase 1: Pull (cloud -> local)
     records_pulled = await _pull_records(endpoint, token, config, state)
@@ -805,7 +834,7 @@ async def ship_once(config: Config) -> dict[str, int]:
     )
     records_shipped = await _ship_records(endpoint, token, config, state)
 
-    state.save()
+    state.save(path=state_path)
 
     return {
         "logs": logs_shipped,
