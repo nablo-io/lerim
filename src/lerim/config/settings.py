@@ -382,7 +382,7 @@ _PROVIDER_KEYS = {
 }
 _CLOUD_KEYS = {"endpoint", "token"}
 _LEGACY_TOP_LEVEL_KEYS = {"openrouter_provider_order"}
-_LEGACY_ROLE_KEYS = {"thinking"}
+_LEGACY_ROLE_KEYS = {"thinking", "openrouter_provider_order"}
 
 
 def _raise_unknown_keys(section: str, raw: dict[str, Any], allowed: set[str]) -> None:

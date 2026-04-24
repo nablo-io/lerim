@@ -38,6 +38,7 @@ from lerim.config.settings import (
     get_config,
     get_global_data_dir_path,
     get_user_config_path,
+    get_user_env_path,
     load_toml_file,
     reload_config,
     save_config_patch,
@@ -1181,6 +1182,28 @@ def _generate_compose_yml(build_local: bool = False) -> str:
     lerim_dir = str(config.global_data_dir)
     volumes = [f"      - {lerim_dir}:{lerim_dir}"]
 
+    # If the active config or env file lives outside the global data dir, mount
+    # it too. Otherwise custom [data].dir / LERIM_CONFIG installs boot the
+    # container with package defaults and ignore the mounted state.
+    global_data_dir = config.global_data_dir.expanduser().resolve()
+
+    def _covered_by_global_data(path: Path) -> bool:
+        try:
+            path.expanduser().resolve().relative_to(global_data_dir)
+        except ValueError:
+            return False
+        return True
+
+    active_config_path = get_user_config_path()
+    if active_config_path.is_file() and not _covered_by_global_data(active_config_path):
+        resolved = str(active_config_path.expanduser().resolve())
+        volumes.append(f"      - {resolved}:{resolved}:ro")
+
+    active_env_path = get_user_env_path()
+    if active_env_path.is_file() and not _covered_by_global_data(active_env_path):
+        resolved = str(active_env_path.expanduser().resolve())
+        volumes.append(f"      - {resolved}:{resolved}:ro")
+
     # Agent session dirs (read-only — agent reads traces but never modifies them)
     for _name, path_str in config.agents.items():
         resolved = str(Path(path_str).expanduser().resolve())
@@ -1195,6 +1218,10 @@ def _generate_compose_yml(build_local: bool = False) -> str:
         f"      - HOME={home}",
         "      - FASTEMBED_CACHE_PATH=/opt/lerim/models",
     ]
+    explicit_config = os.environ.get("LERIM_CONFIG")
+    if explicit_config:
+        resolved_config = str(Path(explicit_config).expanduser().resolve())
+        env_lines.append(f"      - LERIM_CONFIG={resolved_config}")
     for key in _API_KEY_ENV_NAMES:
         if os.environ.get(key):
             env_lines.append(f"      - {key}")

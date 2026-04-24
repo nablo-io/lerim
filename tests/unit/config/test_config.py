@@ -204,7 +204,8 @@ def test_config_accepts_known_legacy_keys(tmp_path, monkeypatch):
         "\n[roles.agent]\n"
         'provider = "minimax"\n'
         'model = "MiniMax-M2.7"\n'
-        "thinking = true\n",
+        "thinking = true\n"
+        'openrouter_provider_order = ["openrouter"]\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("LERIM_CONFIG", str(config_path))

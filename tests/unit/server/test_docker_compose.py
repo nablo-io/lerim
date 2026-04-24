@@ -139,9 +139,47 @@ def test_compose_mounts_only_global_lerim_and_agent_dirs(tmp_path, monkeypatch) 
     monkeypatch.setattr("lerim.server.api.reload_config", lambda: cfg)
 
     content = _generate_compose_yml(build_local=False)
-    assert f"{Path.home() / '.lerim'}:{Path.home() / '.lerim'}" in content
+    assert f"{cfg.global_data_dir}:{cfg.global_data_dir}" in content
     assert str(tmp_path / "myproject" / ".lerim") not in content
     assert str(tmp_path / "myproject") not in content
+
+
+def test_compose_mounts_explicit_config_outside_data_dir(
+    tmp_path, monkeypatch
+) -> None:
+    """Compose should preserve custom LERIM_CONFIG installs inside Docker."""
+    from dataclasses import replace
+
+    data_dir = tmp_path / "data-root"
+    config_path = tmp_path / "config-root" / "config.toml"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text("[data]\n", encoding="utf-8")
+    cfg = replace(make_config(data_dir), global_data_dir=data_dir)
+    monkeypatch.setattr("lerim.server.api.reload_config", lambda: cfg)
+    monkeypatch.setattr("lerim.server.api.get_user_config_path", lambda: config_path)
+    monkeypatch.setenv("LERIM_CONFIG", str(config_path))
+
+    content = _generate_compose_yml(build_local=False)
+    resolved = str(config_path.resolve())
+    assert f"{resolved}:{resolved}:ro" in content
+    assert f"LERIM_CONFIG={resolved}" in content
+
+
+def test_compose_mounts_env_file_outside_data_dir(tmp_path, monkeypatch) -> None:
+    """Compose should mount the active env file when it is not in global state."""
+    from dataclasses import replace
+
+    data_dir = tmp_path / "data-root"
+    env_path = tmp_path / "config-root" / ".env"
+    env_path.parent.mkdir(parents=True)
+    env_path.write_text("OPENROUTER_API_KEY=secret\n", encoding="utf-8")
+    cfg = replace(make_config(data_dir), global_data_dir=data_dir)
+    monkeypatch.setattr("lerim.server.api.reload_config", lambda: cfg)
+    monkeypatch.setattr("lerim.server.api.get_user_env_path", lambda: env_path)
+
+    content = _generate_compose_yml(build_local=False)
+    resolved = str(env_path.resolve())
+    assert f"{resolved}:{resolved}:ro" in content
 
 
 def test_compose_does_not_set_project_local_working_dir(tmp_path, monkeypatch) -> None:
