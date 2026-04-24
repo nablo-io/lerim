@@ -7,6 +7,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
 
 from lerim.agents.tools import (
@@ -69,6 +70,7 @@ Your job is to keep the context store healthy over time.
 - Do not mutate a record directly from `list_records` preview text alone.
 - Before `archive_record`, `update_record`, or `supersede_record`, fetch the full record you intend to change.
 - For duplicate resolution, fetch both the weaker record and the stronger record before you supersede.
+- If `list_records` reveals two active durable rows on the same topic and one appears to operationalize, concretize, or restate the same guarantee as the other, do not stop at the preview stage. Treat them as duplicate candidates and inspect them.
 - When resolving a duplicate pair, prefer changing only the weaker record. Leave the stronger record untouched unless it independently has a concrete problem you would fix even without the duplicate.
 - Before any mutation, identify the concrete problem you are fixing: duplicate, obsolete truth, routine low-value episode, report-style wording, or clearly weak/verbose memory shape.
 - If you cannot name a concrete problem after inspection, stop without mutating the record.
@@ -81,6 +83,7 @@ Your job is to keep the context store healthy over time.
 - Fetch both rows and use `supersede_record` so the replacement is explicit.
 - If you supersede a duplicate, stop there for that weaker row. Do not also archive it in the same pass.
 - Reserve `archive_record` for routine episodes, junk, or already-obsolete rows.
+- Two records can still be duplicates even if one is more abstract and the other is more concrete. If both encode the same enduring operational guarantee, keep the stronger one and supersede the weaker one.
 </lifecycle_rules>
 
 <episode_policy>
@@ -97,7 +100,11 @@ Your job is to keep the context store healthy over time.
 <rewrite_policy>
 - If a durable record body reads like meeting minutes, rewrite it into a compact reusable memory.
 - Rewrite reusable durable fields together so the final title/body pair matches the same direct memory shape.
+- Rewritten durable title/body text should read as a present-tense rule or fact, not as how the session reached the rule.
+- For decision records, put the selected approach in `decision` and write `body` as the durable rule plus why/application; do not narrate the comparison or selection event.
 - Do not rewrite only the title when the body still narrates the session that produced the memory.
+- Good typed fields do not make a record healthy when `title` or `body` still read like comparison notes, review notes, task recaps, or session-origin narration.
+- If a decision's `decision` and `why` are already good but its title/body are report-style, update only the weak title/body and preserve the good typed fields.
 - If a fetched record is already concise, correctly typed, and reusable, leave it unchanged.
 - Do not rewrite a healthy durable record only to paraphrase wording or make a minor stylistic swap.
 - Empty optional decision fields alone are not a reason to update an otherwise healthy decision record.
@@ -122,6 +129,7 @@ Your job is to keep the context store healthy over time.
 - `what_happened` should summarize the session path in one short recap sentence.
 - `outcomes` should state the session result in one short sentence.
 - Prefer titles that name the lasting memory directly.
+- Prefer body text that starts from the current rule or truth directly.
 - Bad titles: "Review of X", "Task audit", "Full migration session".
 - Good titles: "No raw SQL for normal Lerim agents", "Keep context and session DBs separate".
 </target_shapes>
@@ -145,6 +153,19 @@ Your job is to keep the context store healthy over time.
   - keep the original long `user_intent`
   - rewrite only `body` while leaving the other episode fields in review-note wording
 </episode_rewrite>
+
+<duplicate_resolution>
+- Candidate A: "Keep retry handoff restart-safe"
+- Candidate B: "Persist retry budget in job metadata so restarts and failover preserve retry state across workers"
+- Good handling:
+  - notice they are likely the same enduring guarantee at different abstraction levels
+  - fetch both records
+  - keep the stronger, more actionable record
+  - supersede the weaker one
+- Bad handling:
+  - stop after list preview with no action because the titles are not literal duplicates
+  - keep both active when one only restates the same restart-survival rule more weakly
+</duplicate_resolution>
 </example>
 """
 
@@ -163,6 +184,7 @@ def build_maintain_agent(model: Model) -> Agent[ContextDeps, MaintainResult]:
         output_type=MaintainResult,
         system_prompt=MAINTAIN_SYSTEM_PROMPT,
         tools=[list_records, search_records, fetch_records, update_record, archive_record, supersede_record],
+        model_settings=ModelSettings(temperature=0.0, top_p=0.9),
         retries=5,
         output_retries=2,
     )
@@ -190,7 +212,8 @@ def run_maintain(
             "keeping valuable recent learnings active, archiving only clear junk or obsolete rows, "
             "superseding duplicates when justified, leaving healthy fresh records alone, "
             "preserving meaningful episodes even when a durable neighbor exists, and rewriting "
-            "report-style records into compact reusable memories."
+            "report-style records into present-tense reusable rules, facts, decisions, "
+            "constraints, preferences, or references."
         ),
         deps=deps,
         usage_limits=UsageLimits(request_limit=max(1, int(request_limit))),

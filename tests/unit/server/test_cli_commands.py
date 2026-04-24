@@ -726,6 +726,25 @@ class TestCmdConnect:
 		assert code == 0
 		assert "auto connected" in buf.getvalue().lower()
 
+	def test_connect_auto_restarts_running_container(self, monkeypatch: pytest.MonkeyPatch) -> None:
+		"""Connect auto restarts Docker when mounts changed."""
+		cfg = make_config(Path("/tmp/fake"))
+		monkeypatch.setattr(cli, "get_config", lambda: cfg)
+		monkeypatch.setattr(
+			cli, "connect_platform",
+			lambda _p, _n, custom_path=None: {"status": "connected"},
+		)
+		monkeypatch.setattr(cli, "is_container_running", lambda: True)
+		up_calls = []
+		monkeypatch.setattr(cli, "api_up", lambda **kw: up_calls.append(1) or {})
+
+		args = _ns(command="connect", platform_name="auto")
+		buf = io.StringIO()
+		with redirect_stdout(buf):
+			code = cli._cmd_connect(args)
+		assert code == 0
+		assert len(up_calls) == 1
+
 	def test_connect_remove_no_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
 		"""Connect remove without a name returns exit code 2."""
 		cfg = make_config(Path("/tmp/fake"))
@@ -749,6 +768,22 @@ class TestCmdConnect:
 			code = cli._cmd_connect(args)
 		assert code == 0
 		assert "removed" in buf.getvalue().lower()
+
+	def test_connect_remove_restarts_running_container(self, monkeypatch: pytest.MonkeyPatch) -> None:
+		"""Removing a connected platform restarts Docker mounts when needed."""
+		cfg = make_config(Path("/tmp/fake"))
+		monkeypatch.setattr(cli, "get_config", lambda: cfg)
+		monkeypatch.setattr(cli, "remove_platform", lambda _p, _n: True)
+		monkeypatch.setattr(cli, "is_container_running", lambda: True)
+		up_calls = []
+		monkeypatch.setattr(cli, "api_up", lambda **kw: up_calls.append(1) or {})
+
+		args = _ns(command="connect", platform_name="remove", extra_arg="claude")
+		buf = io.StringIO()
+		with redirect_stdout(buf):
+			code = cli._cmd_connect(args)
+		assert code == 0
+		assert len(up_calls) == 1
 
 	def test_connect_remove_not_found(self, monkeypatch: pytest.MonkeyPatch) -> None:
 		"""Connect remove with unknown name returns 0 but says 'not connected'."""
@@ -793,6 +828,28 @@ class TestCmdConnect:
 			code = cli._cmd_connect(args)
 		assert code == 0
 		assert "connected" in buf.getvalue().lower()
+
+	def test_connect_known_platform_restarts_running_container_when_path_changes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+		"""Connecting a platform with a changed path should restart Docker mounts."""
+		cfg = make_config(Path("/tmp/fake"))
+		monkeypatch.setattr(cli, "get_config", lambda: cfg)
+		monkeypatch.setattr(cli, "load_platforms", lambda _p: {"platforms": {}})
+		monkeypatch.setattr(
+			cli, "connect_platform",
+			lambda _p, _n, custom_path=None: {
+				"status": "connected", "path": "/home/.claude", "session_count": 5,
+			},
+		)
+		monkeypatch.setattr(cli, "is_container_running", lambda: True)
+		up_calls = []
+		monkeypatch.setattr(cli, "api_up", lambda **kw: up_calls.append(1) or {})
+
+		args = _ns(command="connect", platform_name="claude", path=None)
+		buf = io.StringIO()
+		with redirect_stdout(buf):
+			code = cli._cmd_connect(args)
+		assert code == 0
+		assert len(up_calls) == 1
 
 	def test_connect_path_not_found(self, monkeypatch: pytest.MonkeyPatch) -> None:
 		"""Connect returns 1 when the platform path does not exist."""

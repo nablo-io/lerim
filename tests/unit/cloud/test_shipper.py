@@ -138,7 +138,7 @@ def _insert_context_record(
 	record_id: str,
 	*,
 	kind: str = "fact",
-		title: str = "Test Record",
+	title: str = "Test Record",
 	summary: str = "Test summary",
 	content: str = "content",
 ) -> None:
@@ -561,6 +561,46 @@ class TestQueryContextRecords:
 		assert len(results) == 1
 		assert results[0]["project"] == "project_a"
 		assert results[0]["record_id"] == "rec-001"
+		assert results[0]["created_at"]
+		assert results[0]["valid_from"]
+
+	def test_excludes_episode_records(self, tmp_path):
+		"""Episode rows are not shipped through cloud record sync."""
+		project_dir = tmp_path / "project_a"
+		project_dir.mkdir()
+		context_db_path = tmp_path / "context.sqlite3"
+		store = ContextStore(context_db_path)
+		store.initialize()
+		identity = resolve_project_identity(project_dir)
+		store.register_project(identity)
+		store.upsert_session(
+			project_id=identity.project_id,
+			session_id="sess_episode",
+			agent_type="test",
+			source_trace_ref="seed:episode",
+			repo_path=str(project_dir),
+			cwd=str(project_dir),
+			started_at="2026-04-20T00:00:00+00:00",
+			model_name="test-model",
+			instructions_text=None,
+			prompt_text=None,
+			metadata={},
+		)
+		store.create_record(
+			project_id=identity.project_id,
+			session_id="sess_episode",
+			record_id="ep-001",
+			kind="episode",
+			title="Episode title",
+			body="Episode body",
+			user_intent="Fix bug",
+			what_happened="Fixed bug",
+		)
+
+		results = _query_context_records(
+			context_db_path, {"project_a": str(project_dir)}, "", 100
+		)
+		assert results == []
 
 	def test_respects_watermark(self, tmp_path):
 		"""Records with updated_at <= watermark are skipped."""
@@ -624,6 +664,9 @@ class TestShipRecords:
 		assert len(captured) == 1
 		assert "records" in captured[0]
 		assert captured[0]["records"][0]["record_id"] == "mem-1"
+		assert captured[0]["records"][0]["created_at"]
+		assert captured[0]["records"][0]["valid_from"]
+		assert "valid_until" in captured[0]["records"][0]
 
 
 # ---------------------------------------------------------------------------
@@ -776,6 +819,64 @@ class TestPullRecords:
 		assert row["title"] == "Cloud Record"
 		assert row["body"] == "Edited body text"
 
+	def test_pull_update_preserves_existing_valid_from(self, tmp_path):
+		"""Cloud edits update content without rewriting the validity start."""
+		proj_dir = tmp_path / "proj"
+		proj_dir.mkdir()
+		cfg = replace(make_config(tmp_path), projects={"proj": str(proj_dir)})
+		state = _ShipperState()
+		store = ContextStore(cfg.context_db_path)
+		store.initialize()
+		identity = resolve_project_identity(proj_dir)
+		store.register_project(identity)
+		store.create_record(
+			project_id=identity.project_id,
+			session_id=None,
+			record_id="cloud-existing-validity",
+			kind="fact",
+			title="Original title",
+			body="Original body",
+			valid_from="2026-03-01T00:00:00Z",
+		)
+		with store.connect() as conn:
+			original_created_at = conn.execute(
+				"SELECT created_at FROM records WHERE record_id = ?",
+				("cloud-existing-validity",),
+			).fetchone()["created_at"]
+
+		cloud_data = {
+			"records": [
+				{
+					"record_id": "cloud-existing-validity",
+					"record_kind": "decision",
+					"title": "Updated title",
+					"body": "Updated body",
+					"status": "active",
+					"project": "proj",
+					"cloud_edited_at": "2026-04-01T12:00:00Z",
+				}
+			]
+		}
+
+		async def mock_to_thread(fn, *args, **kwargs):
+			return cloud_data
+
+		with patch("lerim.cloud.shipper.asyncio.to_thread", side_effect=mock_to_thread):
+			pulled = asyncio.run(
+				_pull_records("https://api.test", "tok", cfg, state)
+			)
+
+		assert pulled == 1
+		with store.connect() as conn:
+			row = conn.execute(
+				"SELECT title, created_at, updated_at, valid_from FROM records WHERE record_id = ?",
+				("cloud-existing-validity",),
+			).fetchone()
+		assert row["title"] == "Updated title"
+		assert row["created_at"] == original_created_at
+		assert row["updated_at"] == "2026-04-01T12:00:00Z"
+		assert row["valid_from"] == "2026-03-01T00:00:00Z"
+
 	def test_skips_missing_record_id(self, tmp_path):
 		"""Records without record_id are skipped."""
 		proj_dir = tmp_path / "proj"
@@ -803,6 +904,73 @@ class TestPullRecords:
 			)
 
 		assert pulled == 0
+
+	def test_skips_unresolved_project_name(self, tmp_path):
+		"""Unknown cloud project names do not fall back to another local project."""
+		proj_dir = tmp_path / "alpha"
+		proj_dir.mkdir()
+		cfg = replace(make_config(tmp_path), projects={"alpha": str(proj_dir)})
+		state = _ShipperState()
+
+		cloud_data = {
+			"records": [
+				{
+					"record_id": "cloud-unknown-project",
+					"title": "Should be skipped",
+					"body": "Unknown project should not be remapped.",
+					"cloud_edited_at": "2026-04-01T12:00:00Z",
+					"project": "beta",
+				}
+			]
+		}
+
+		async def mock_to_thread(fn, *args, **kwargs):
+			return cloud_data
+
+		with patch("lerim.cloud.shipper.asyncio.to_thread", side_effect=mock_to_thread):
+			pulled = asyncio.run(
+				_pull_records("https://api.test", "tok", cfg, state)
+			)
+
+		assert pulled == 0
+		store = ContextStore(cfg.context_db_path)
+		store.initialize()
+		with store.connect() as conn:
+			row = conn.execute(
+				"SELECT 1 FROM records WHERE record_id = ?",
+				("cloud-unknown-project",),
+			).fetchone()
+		assert row is None
+
+	def test_skip_unknown_project_still_advances_watermark(self, tmp_path):
+		"""Skipped unknown-project rows should still advance the pull watermark."""
+		alpha_dir = tmp_path / "alpha"
+		alpha_dir.mkdir()
+		cfg = replace(make_config(tmp_path), projects={"alpha": str(alpha_dir)})
+		state = _ShipperState(records_pulled_at="2026-03-01T00:00:00Z")
+
+		cloud_data = {
+			"records": [
+				{
+					"record_id": "cloud-unknown-project",
+					"title": "Should be skipped",
+					"body": "Unknown project should not be remapped.",
+					"cloud_edited_at": "2026-04-01T12:00:00Z",
+					"project": "beta",
+				}
+			]
+		}
+
+		async def mock_to_thread(fn, *args, **kwargs):
+			return cloud_data
+
+		with patch("lerim.cloud.shipper.asyncio.to_thread", side_effect=mock_to_thread):
+			pulled = asyncio.run(
+				_pull_records("https://api.test", "tok", cfg, state)
+			)
+
+		assert pulled == 0
+		assert state.records_pulled_at == "2026-04-01T12:00:00Z"
 
 
 # ---------------------------------------------------------------------------

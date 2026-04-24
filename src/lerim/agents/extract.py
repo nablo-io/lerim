@@ -5,8 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.models import Model
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
 
 from lerim.agents.history_processors import (
@@ -46,6 +47,8 @@ Read one coding-agent trace, compress its signal, and write DB-backed context re
 - Create zero or more durable records only when the trace contains durable signal.
 - The episode record is mandatory for every session, even if you also create or update durable records.
 - Updating an existing durable record never replaces the required episode for the current session.
+- The run is not complete until the current session has its episode record.
+- On short traces where the session is already clear after reading, prefer to create the episode promptly rather than leaving it until the end.
 </outputs>
 
 <durable_signal>
@@ -61,6 +64,7 @@ Implementation detail alone is not durable signal.
 - Direct consequences and application guidance usually stay inside that same record.
 - Create the minimum number of durable records that preserves distinct durable meanings. Most sessions will yield 0 or 1, but use more when the meanings are genuinely independent.
 - Duplicates are worse than gaps. Skip uncertain candidates rather than spraying near-duplicates.
+- Never create a second durable record in the same run for the same core claim. If you realize the first draft needs improvement, update or refine that record instead of creating another one.
 - `constraint` and `reference` are first-class durable memories, not fallback categories.
 </quality_bar>
 
@@ -74,27 +78,39 @@ Implementation detail alone is not durable signal.
 <tool_flow>
 - Use `trace_read` to read the trace in chunks until the full trace is covered. Do not start writing while unread trace lines remain.
 - Use `note` as write-only working memory for findings from chunks you have already read. Notes are summarized back to you on later turns; do not re-note the same point unless you learned something new.
+- In `note`, keep the durable theme and its supporting implementation evidence together. Do not record a rejected lure or discarded explanation as its own durable finding/theme.
+- In `note`, if one apparent finding only applies, routes, or operationalizes another finding, keep them as one durable theme instead of separate durable themes.
 - If you need more than one `trace_read`, call `note` before any `create_record` or `update_record`.
 - If you read many chunks, call `prune` only after those chunks have already been captured in notes.
 - Use `search_records` before creating a durable record whenever the trace suggests an earlier memory, duplicate risk, or "same meaning vs new meaning" judgment.
 - The injected existing-record manifest is only a shortlist. It is never enough evidence for `update_record`.
 - Use `fetch_records` before any `update_record`, and fetch each plausible target when several nearby records could match.
 - Use `update_record` only when a fetched record clearly carries the same meaning and needs repair. If the core claim differs, create a new record instead.
+- Do not use `update_record` to polish a record you created earlier in the same run. Draft fresh records carefully and create them once.
 </tool_flow>
 
 <selection_rules>
 - First separate findings into durable signal and implementation evidence.
 - Synthesize at the theme level. Usually one theme becomes one durable record.
+- Merge candidates when one only states how to apply the other in local operations, routing, or ownership.
 - If two candidates share the same core claim, merge them.
+- If the difference is only evidence framing, symptom wording, or local-vs-CI phrasing around the same durable fact, keep one record and fold the extra context into it.
 - If one candidate is only the direct application or routing consequence of another, keep it inside the stronger record.
+- Storage boundary plus per-component routing is one decision, not two. Keep the boundary as the record and fold the routing guidance into the same title/body.
+- If one candidate only says how different local components should apply the same project rule, keep that guidance inside the main record rather than creating a second durable record.
 - If one candidate only restates where local project components live or how an internal architecture is applied, keep it inside the stronger decision, fact, or constraint instead of creating a separate reference.
 - If the trace gives one durable rule plus examples of local noise or discarded details, store only the durable rule. The filtering guidance is evidence, not a second memory.
+- Do not create a durable record whose whole point is that some local details from this trace were noise, low value, or should not be remembered. That is extraction guidance for this run, not project memory.
 - Store memory only when the lesson is likely reusable beyond this trace.
 - If a candidate is mainly about this trace's commands, files, or timeline, reject it.
 - Trace-local instructions about what to ignore in this session are not preferences unless they clearly express a broader standing workflow rule for future sessions.
 - If the trace explicitly says the rationale is unknown or says not to invent one, do not create a `decision`; use `fact` instead.
+- A stable setup, dependency, or environment requirement without a durable why is a `fact` even if it sounds like the current chosen setup.
 - The instruction "do not invent a why" is extraction guidance, not project memory.
+- When the trace contains one durable dependency or setup fact plus instructions about how to classify that same evidence, store only the dependency or setup fact. Do not turn the classification guidance into a separate `preference`.
 - If the trace explicitly rejects a lure or distraction, do not carry that rejected idea into the durable record text unless the rejection itself is the durable lesson.
+- If a long noisy investigation resolves into one source-of-truth boundary, store only that boundary. Keep discarded lures at the category level or leave them out entirely; do not list trace-local counters, timers, labels, or tuning knobs inside the durable memory just to contrast them.
+- When a discarded lure matters as evidence, keep it attached to the main durable theme as implementation context rather than storing it as a second durable theme.
 - If the episode summary contains a clearly reusable {durable_kind_text}, that learning should usually also exist as its own durable record.
 - Durable records are additional memory, not a substitute for the session episode. Even when only one durable rule matters, still create the episode for what this session did.
 </selection_rules>
@@ -108,9 +124,16 @@ Implementation detail alone is not durable signal.
   3. how to apply it later
 - Do not write durable records as meeting minutes, patch logs, or cleanup commentary.
 - Do not preserve trace-local commands, negotiation phrasing, or "this is not about X" sentences in final memory text.
+- Do not write a durable record whose body is mainly a warning that certain local details, cleanups, or implementation noise should be ignored.
+- When the durable lesson is a source-of-truth rule, write the authoritative rule directly. Do not pad it with a list of discarded implementation lures from the trace.
+- If a short contrast is still helpful, keep it abstract, such as "not worker-local state" or "not ephemeral local state". Do not enumerate examples in parentheses or comma-separated lists.
 - When updating an existing record, keep the durable meaning but rewrite it into canonical project memory language.
 - Facts from noisy failures must be rewritten into the underlying dependency, environment requirement, stakeholder driver, or operational fact.
-- If a fact still reads like stderr, an exception, or copied command output, rewrite it again before writing.
+- If a fact still reads like stderr, an exception symptom, or copied command output, rewrite it again before writing.
+- When the durable lesson is an environment or dependency requirement, do not center the fact on the observed failure symptom. Name the requirement directly and mention the symptom only if it is needed as brief supporting context.
+- If brief supporting context is useful, lead with the requirement and keep the symptom generic. Do not lead with an exception class name or copied failure string.
+- When no durable rationale exists, do not spend the fact body explaining that the rationale is absent. Just state the stable dependency, setup requirement, or operational truth directly.
+- Do not quote or paraphrase trace instructions about how to classify the evidence inside the final fact body. Final fact text should describe the underlying truth, not the extraction rule you followed.
 - References must answer both "where should future sessions look?" and "when should they consult it?"
 - Do not use `reference` for internal file mappings, local storage boundaries, or repo architecture notes when the durable lesson is the project rule itself rather than "consult this external source next time."
 - Keep the episode concise: short title, short body, concise `user_intent`, `what_happened`, and `outcomes`.
@@ -134,12 +157,14 @@ Do not use `preference` for one-session extraction guidance such as "that detail
 </type>
 <type name="decision">
 A chosen approach or project rule that future work should follow and that is not obvious from code alone.
+If the trace does not support a durable why, do not use `decision`.
 </type>
 <type name="constraint">
 A durable invariant, limit, or must/cannot rule that future work must respect.
 </type>
 <type name="fact">
 A durable project fact such as a dependency, environment requirement, stakeholder driver, or other non-obvious truth.
+Use `fact` for stable setup or dependency truths when the trace explicitly says not to invent decision rationale.
 </type>
 <type name="reference">
 A pointer to an external dashboard, document, ticket system, or other source of truth outside the repo.
@@ -170,10 +195,24 @@ Store the file edit itself, or treat the correction as only a one-session note w
 - the follow-on routing guidance is just how to apply that boundary
 </trace_excerpt>
 <good>
-Create one decision record for the storage boundary. Keep the routing guidance inside the same record instead of splitting it into a second memory.
+Create the required episode for the session and one decision record for the storage boundary. Keep the routing guidance inside the same record instead of splitting it into a second memory.
 </good>
 <bad>
-Store the refactor noise, or split one architectural choice into two near-duplicate memories.
+Store the refactor noise, split one architectural choice into two near-duplicate memories such as one decision for the boundary and a second local-use record for which component reads which store, or create a separate durable memory whose only message is that the refactors and debug edits were noise.
+</bad>
+</example>
+
+<example id="decision_with_explicit_noise_filter">
+<trace_excerpt>
+- the user makes one architectural choice, such as keeping durable context and hot operational state in separate stores
+- the trace also mentions variable renames, label tweaks, temporary debug prints, and similar low-value cleanups
+- the user explicitly says those local edits should not become durable memory
+</trace_excerpt>
+<good>
+Create the required episode and one durable record for the architectural choice only. Treat the explicit "those edits are just noise" instruction as extraction guidance for this run, not as its own memory.
+</good>
+<bad>
+Create a second durable record whose message is that renames, label tweaks, or temporary debug code are non-durable, or let that noise-filtering instruction replace the required episode.
 </bad>
 </example>
 
@@ -184,10 +223,51 @@ Store the refactor noise, or split one architectural choice into two near-duplic
 - the stable conclusion is operational: environments that run this workflow need a specific system dependency installed
 </trace_excerpt>
 <good>
-Create one fact record for the dependency requirement in clean operational language.
+Create one fact record for the dependency requirement in clean operational language. Lead with the missing dependency or environment requirement, and if you mention the failure at all, keep it generic rather than naming the exact exception class or copied command output. Still create the required episode for this session.
 </good>
 <bad>
-Store the raw exception text, the command history, or the debugging timeline instead of the underlying environment fact.
+Store the raw exception text, center the record on the failure symptom, split one operational lesson into separate local-vs-CI facts, create a second durable record whose message is "do not invent a rationale here," keep the command history or debugging timeline, or write only the fact and skip the episode.
+</bad>
+</example>
+
+<example id="classification_guidance_is_not_memory">
+<trace_excerpt>
+- the user states one stable dependency or setup truth
+- nearby turns add extraction guidance such as "this is a fact, not a decision" or "do not invent a why beyond the dependency"
+- no broader workflow rule for future sessions is established
+</trace_excerpt>
+<good>
+Create the required episode and one fact record for the stable dependency or setup truth only.
+</good>
+<bad>
+Create a second durable preference whose whole point is how to classify this trace, or store the meta-instruction instead of the underlying dependency fact.
+</bad>
+</example>
+
+<example id="fact_without_meta_commentary">
+<trace_excerpt>
+- the trace says image-enabled workflows require a system dependency in the environment
+- the user also says not to invent policy rationale beyond that dependency fact
+</trace_excerpt>
+<good>
+Write a fact such as: "Image-enabled workflows require libvips in the environment." Keep the body on the requirement and its effect.
+</good>
+<bad>
+Write a fact body such as: "Do not invent a policy reason here" or "No decision rationale was supplied." Those are meta comments about classification, not durable project memory.
+</bad>
+</example>
+
+<example id="late_clarification">
+<trace_excerpt>
+- early chunks are noisy and keep circling local counters, timers, labels, and temporary tuning
+- the final chunk clarifies that those were distractions
+- the real durable lesson is a source-of-truth boundary: authoritative state must live in one persisted place that survives restart and failover
+</trace_excerpt>
+<good>
+Create one durable record for the source-of-truth boundary. Mention restart or failover if it explains why the boundary matters, but keep any contrast abstract, such as "not worker-local state," rather than listing local counters or timers.
+</good>
+<bad>
+Write a durable record that carries over the rejected lure by naming worker-local counters, attempt counts, backoff knobs, or other trace-local artifacts as a contrast list.
 </bad>
 </example>
 
@@ -239,6 +319,8 @@ Update from a shortlist or search preview alone, force an update when the new cl
 <finalization>
 - End the run with the `final_result` tool.
 - Put the plain-text completion summary in `completion_summary`.
+- Before `final_result`, ensure the current session already has exactly one episode record.
+- If you have created durable records but no episode yet, stop and create the episode before `final_result`.
 - Do not end with free-form assistant text outside `final_result`.
 </finalization>
 
@@ -259,12 +341,13 @@ class ExtractionResult(BaseModel):
 
 def build_extract_agent(model: Model) -> Agent[ContextDeps, ExtractionResult]:
     """Build the extract agent with semantic DB tools."""
-    return Agent(
+    agent = Agent(
         model,
         deps_type=ContextDeps,
         output_type=ExtractionResult,
         system_prompt=SYSTEM_PROMPT,
         tools=[trace_read, search_records, fetch_records, create_record, update_record, note, prune],
+        model_settings=ModelSettings(temperature=0.0, top_p=0.9),
         history_processors=[
             context_pressure_injector,
             notes_state_injector,
@@ -273,6 +356,31 @@ def build_extract_agent(model: Model) -> Agent[ContextDeps, ExtractionResult]:
         retries=5,
         output_retries=4,
     )
+
+    @agent.output_validator
+    def _require_session_episode(
+        ctx: RunContext[ContextDeps], data: ExtractionResult
+    ) -> ExtractionResult:
+        store = ContextStore(ctx.deps.context_db_path)
+        store.initialize()
+        store.register_project(ctx.deps.project_identity)
+        rows = store.query(
+            entity="records",
+            mode="list",
+            project_ids=[ctx.deps.project_identity.project_id],
+            source_session_id=ctx.deps.session_id,
+            include_total=False,
+            include_archived=True,
+            limit=20,
+        )["rows"]
+        episode_count = sum(1 for row in rows if str(row.get("kind") or "") == "episode")
+        if episode_count != 1:
+            raise ModelRetry(
+                "The run is not complete yet. Create exactly one episode record for the current session before final_result."
+            )
+        return data
+
+    return agent
 
 
 def _format_existing_record_manifest(
@@ -340,12 +448,16 @@ def run_extraction(
         session_id=session_id,
         trace_path=trace_path,
         run_folder=run_folder,
+        require_episode_before_durable_write=True,
     )
     result = agent.run_sync(
         (
             "Read the trace, write exactly one episode record, and write only the strongest "
             "durable records with non-empty title and body. Store reusable rules and decisions, "
             "not a polished recap of the meeting. "
+            "Durable records must be positive canonical memory: when trace text combines a "
+            "durable point with cleanup/noise/ignore guidance, exclude that guidance entirely "
+            "from the durable record. "
             f"This trace has {trace_line_count} lines. Read all chunks before writing. "
             "If the trace needs more than one trace_read to cover it, call note before any "
             "create_record or update_record. "

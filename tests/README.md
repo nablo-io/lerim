@@ -21,15 +21,15 @@ What we do not keep anymore:
 ## Quick reference
 
 ```bash
-tests/run_tests.sh unit
+uv run tests/run_tests.sh unit
 uv run pytest tests/unit -q
 ```
 
 For live QA after runtime changes:
 
 ```bash
-tests/run_tests.sh smoke
-tests/run_tests.sh integration
+uv run tests/run_tests.sh smoke
+uv run tests/run_tests.sh integration
 ```
 
 ## Case-based integration suites

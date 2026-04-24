@@ -31,6 +31,9 @@ expected:
     - ci
     - transforms
     - dependency
+    - environment
+    - require
+    - missing
   fact_text_must_not_include:
     - debug print
     - helper variable

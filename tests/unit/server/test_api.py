@@ -107,7 +107,9 @@ def test_write_init_config_saves_agents(monkeypatch, tmp_path) -> None:
 	monkeypatch.setattr(
 		api_mod, "save_config_patch", lambda patch: saved.append(patch)
 	)
-	monkeypatch.setattr(api_mod, "USER_CONFIG_PATH", tmp_path / "config.toml")
+	monkeypatch.setattr(
+		api_mod, "get_user_config_path", lambda: tmp_path / "config.toml"
+	)
 
 	selected = {"claude": "/home/user/.claude/projects", "codex": "/home/user/.codex"}
 	write_init_config(selected)
@@ -120,7 +122,7 @@ def test_write_init_config_returns_path(monkeypatch, tmp_path) -> None:
 	"""write_init_config returns the USER_CONFIG_PATH."""
 	expected_path = tmp_path / "config.toml"
 	monkeypatch.setattr(api_mod, "save_config_patch", lambda patch: None)
-	monkeypatch.setattr(api_mod, "USER_CONFIG_PATH", expected_path)
+	monkeypatch.setattr(api_mod, "get_user_config_path", lambda: expected_path)
 
 	result = write_init_config({"claude": "/path"})
 	assert result == expected_path
@@ -491,6 +493,25 @@ def test_api_project_add_registers_project_in_context_db(monkeypatch, tmp_path) 
 	assert "newproject" in saved[0]["projects"]
 
 
+def test_api_project_add_disambiguates_duplicate_basenames(monkeypatch, tmp_path) -> None:
+	"""api_project_add should not overwrite an existing project with the same basename."""
+	first = tmp_path / "apps" / "service"
+	second = tmp_path / "packages" / "service"
+	first.mkdir(parents=True)
+	second.mkdir(parents=True)
+	cfg = replace(make_config(tmp_path), projects={"service": str(first)})
+
+	saved: list[dict] = []
+	monkeypatch.setattr(api_mod, "save_config_patch", lambda patch: saved.append(patch))
+	monkeypatch.setattr(api_mod, "get_config", lambda: cfg)
+
+	result = api_project_add(str(second))
+
+	assert result["name"] != "service"
+	assert result["name"].startswith("service-")
+	assert saved[0]["projects"][result["name"]] == str(second.resolve())
+
+
 def test_api_status_reports_projects_and_unscoped(monkeypatch, tmp_path) -> None:
 	"""api_status includes per-project payloads and unscoped counts."""
 	project_a = tmp_path / "proj-a"
@@ -560,7 +581,7 @@ def test_api_project_remove_success(monkeypatch, tmp_path) -> None:
 	config_file.write_text(
 		'[projects]\nmyproject = "/tmp/myproject"\n', encoding="utf-8"
 	)
-	monkeypatch.setattr(api_mod, "USER_CONFIG_PATH", config_file)
+	monkeypatch.setattr(api_mod, "get_user_config_path", lambda: config_file)
 	monkeypatch.setattr(api_mod, "_write_config_full", lambda data: None)
 
 	result = api_project_remove("myproject")
@@ -737,6 +758,17 @@ def test_api_up_success(monkeypatch, tmp_path) -> None:
 	result = api_mod.api_up()
 	assert result["status"] == "started"
 	assert compose_path.exists()
+
+
+def test_generate_compose_mounts_effective_global_data_dir(monkeypatch, tmp_path) -> None:
+	"""Compose generation should mount the configured global data dir, not ~/.lerim."""
+	cfg = make_config(tmp_path / "custom-root")
+	monkeypatch.setattr(api_mod, "reload_config", lambda: cfg)
+
+	compose = api_mod._generate_compose_yml()
+
+	assert str(cfg.global_data_dir) in compose
+	assert f"{Path.home()}/.lerim:{Path.home()}/.lerim" not in compose
 
 
 def test_api_down_no_compose_file(monkeypatch, tmp_path) -> None:

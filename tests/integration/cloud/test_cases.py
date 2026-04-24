@@ -152,6 +152,7 @@ def test_pull_records_updates_existing_record_and_appends_version(
         kind="fact",
         title="Original title",
         body="Original body",
+        valid_from="2026-03-01T00:00:00Z",
     )
 
     monkeypatch.setattr(
@@ -183,7 +184,7 @@ def test_pull_records_updates_existing_record_and_appends_version(
     assert record["body"] == "They keep cloud pull and local reads aligned."
     assert record["decision"] == "Prefer typed sync contracts"
     assert record["why"] == "They keep cloud pull and local reads aligned."
-    assert record["valid_from"] == "2026-04-20T11:00:00Z"
+    assert record["valid_from"] == "2026-03-01T00:00:00Z"
     assert len(record["versions"]) == int(expectation["version_count"])
     assert record["versions"][0]["version_no"] == 2
     assert record["versions"][0]["change_kind"] == expectation["latest_change_kind"]
@@ -248,6 +249,44 @@ def test_pull_records_preserves_named_project_scope(
 
 
 @pytest.mark.integration
+def test_pull_records_skips_unresolved_project_scope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    inline_cloud_calls: None,
+    stable_git_roots: None,
+) -> None:
+    """Pull should skip remote records whose project name is unknown locally."""
+    alpha_root = tmp_path / "projects" / "alpha"
+    alpha_root.mkdir(parents=True)
+    config = _make_cloud_config(tmp_path, projects={"alpha": alpha_root})
+    state = _ShipperState()
+
+    monkeypatch.setattr(
+        "lerim.cloud.shipper._get_json_sync",
+        lambda *args, **kwargs: {
+            "records": [
+                {
+                    "record_id": "cloud-missing-project",
+                    "record_kind": "fact",
+                    "title": "Should be skipped",
+                    "body": "Unknown project names must not fall back.",
+                    "status": "active",
+                    "project": "beta",
+                    "cloud_edited_at": "2026-04-20T12:30:00Z",
+                }
+            ]
+        },
+    )
+
+    pulled = asyncio.run(_pull_records("https://api.test", "tok-test", config, state))
+
+    assert pulled == 0
+    store = ContextStore(config.context_db_path)
+    alpha_id = _project_id_for(alpha_root)
+    assert store.fetch_record("cloud-missing-project", project_ids=[alpha_id]) is None
+
+
+@pytest.mark.integration
 def test_ship_and_pull_round_trip_core_fields(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -275,6 +314,10 @@ def test_ship_and_pull_round_trip_core_fields(
         title="Cloud sync contract",
         body="Round trips should keep the durable body intact.",
         status="archived",
+        created_at="2026-03-01T00:00:00Z",
+        updated_at="2026-04-01T00:00:00Z",
+        valid_from="2026-03-01T00:00:00Z",
+        valid_until="2026-04-10T00:00:00Z",
     )
 
     captured_payloads: list[dict[str, Any]] = []
@@ -326,4 +369,8 @@ def test_ship_and_pull_round_trip_core_fields(
     assert target_record["title"] == "Cloud sync contract"
     assert target_record["body"] == "Round trips should keep the durable body intact."
     assert target_record["status"] == expectation["status"]
+    assert target_record["created_at"] == "2026-03-01T00:00:00Z"
+    assert target_record["updated_at"] == "2026-04-01T00:00:00Z"
+    assert target_record["valid_from"] == "2026-03-01T00:00:00Z"
+    assert target_record["valid_until"] == "2026-04-10T00:00:00Z"
     assert len(target_record["versions"]) == 1

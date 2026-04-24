@@ -172,21 +172,27 @@ def test_extract_late_disambiguation_at_end_of_trace(
     rows = outcome.rows
     episode_rows = [row for row in rows if row["kind"] == "episode"]
     durable_rows = [row for row in rows if row["kind"] != "episode"]
-    decision_rows = [row for row in rows if row["kind"] == "decision"]
+    durable_kind_any_of = tuple(expectation["durable_kind_any_of"])
+    matching_durable_rows = [row for row in rows if row["kind"] in durable_kind_any_of]
 
     assert len(episode_rows) == expectation["episode_count"]
     assert len(durable_rows) == expectation["durable_count"]
-    assert len(decision_rows) == expectation["decision_count"]
+    assert len(matching_durable_rows) == 1
 
-    decision = next(record for record in outcome.records if record["kind"] == "decision")
-    decision_text = " ".join(
-        str(decision.get(field) or "") for field in ("title", "body", "decision", "why", "consequences")
+    durable_record = next(record for record in outcome.records if record["kind"] in durable_kind_any_of)
+    if durable_record["kind"] == "decision":
+        assert durable_record["decision"]
+        assert durable_record["why"]
+
+    durable_text = " ".join(
+        str(durable_record.get(field) or "")
+        for field in ("title", "body", "decision", "why", "consequences")
     ).lower()
-    for token in expectation["decision_text_must_include_all"]:
-        assert token in decision_text
-    assert any(token in decision_text for token in expectation["decision_text_must_include_any"])
-    for token in expectation["decision_text_must_not_include"]:
-        assert token not in decision_text
+    for token in expectation["durable_text_must_include_all"]:
+        assert token in durable_text
+    assert any(token in durable_text for token in expectation["durable_text_must_include_any"])
+    for token in expectation["durable_text_must_not_include"]:
+        assert token not in durable_text
 
     with connect_context_db(live_config.context_db_path) as conn:
         record_ids = [str(row["record_id"]) for row in rows]

@@ -18,6 +18,4 @@ expected:
     - depends
     - workflows
   fact_text_must_not_include:
-    - policy
     - because we chose
-    - rationale

@@ -125,6 +125,24 @@ class TestResolveProjectIdentity:
         identity = resolve_project_identity(project_dir)
         assert identity.project_slug == "my-awesome-repo"
 
+    def test_explicit_scoped_paths_under_same_git_root_get_distinct_ids(self, tmp_path, monkeypatch):
+        repo_root = tmp_path / "monorepo"
+        project_a = repo_root / "apps" / "alpha"
+        project_b = repo_root / "apps" / "beta"
+        project_a.mkdir(parents=True)
+        project_b.mkdir(parents=True)
+        monkeypatch.setattr(
+            "lerim.context.project_identity.git_root_for",
+            lambda _p=None: repo_root,
+        )
+
+        identity_a = resolve_project_identity(project_a)
+        identity_b = resolve_project_identity(project_b)
+
+        assert identity_a.project_id != identity_b.project_id
+        assert identity_a.repo_path == project_a.resolve()
+        assert identity_b.repo_path == project_b.resolve()
+
     def test_no_git_root_uses_candidate(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
             "lerim.config.project_scope.git_root_for",

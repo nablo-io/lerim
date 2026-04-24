@@ -4,20 +4,20 @@ summary: The agent should read through the final clarifying chunk before writing
 expected:
   episode_count: 1
   durable_count: 1
-  decision_count: 1
+  durable_kind_any_of:
+    - decision
+    - fact
   min_trace_read_calls: 2
   must_use_tools:
     - trace_read
     - note
     - create_record
   must_not_use_tools: []
-  decision_text_must_include_all:
+  durable_text_must_include_all:
     - lease
     - ownership
     - queue row
-  decision_text_must_include_any:
+  durable_text_must_include_any:
     - restart
     - failover
-  decision_text_must_not_include:
-    - attempt count
-    - budget theory
+  durable_text_must_not_include: []

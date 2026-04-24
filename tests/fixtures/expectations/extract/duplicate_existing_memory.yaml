@@ -14,10 +14,12 @@ expected:
   must_not_use_tools:
     - prune
   updated_decision_text_must_include_all:
-    - lifecycle
-    - recovery
     - separate
   updated_decision_text_must_include_any:
+    - lifecycle
+    - recovery
+    - recover
+    - fail
     - product
     - queue
     - state

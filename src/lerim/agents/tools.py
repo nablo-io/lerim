@@ -44,7 +44,10 @@ class Finding(BaseModel):
     quote: str = Field(description="Short verbatim evidence snippet from the trace.")
     level: str = Field(
         description=(
-            "Signal level: "
+            "Signal level: use durable levels only for reusable project memory. "
+            "Use `implementation` for dead ends, discarded hypotheses, trace-local noise, "
+            "and supporting evidence that should not become its own durable theme. "
+            "Allowed levels: "
             f"{format_allowed_finding_levels()}."
         )
     )
@@ -76,6 +79,7 @@ class ContextDeps:
     pruned_offsets: set[int] = field(default_factory=set)
     last_context_tokens: int = 0
     last_context_fill_ratio: float = 0.0
+    require_episode_before_durable_write: bool = False
 
 
 def _store(ctx: RunContext[ContextDeps]) -> ContextStore:
@@ -198,7 +202,9 @@ def search_records(
     those are better served by `context_query` or `list_records` first. For
     current-vs-historical questions, semantic search is only a follow-up aid
     after archived-capable exact retrieval has already surfaced the current and
-    historical candidates.
+    historical candidates. If an exact time-window narrowing step already
+    returned zero rows, do not use this tool to widen scope unless the user
+    explicitly asks for broader history.
     """
     store = _store(ctx)
     trimmed_query = str(query or "").strip()
@@ -259,9 +265,19 @@ def list_records(
     exact date-window, current-vs-historical, and mixed time-plus-topic
     questions, prefer this or `context_query` before any semantic search. Use
     `include_archived=True` when the question asks for historical truth or a
-    before-vs-now comparison.
+    before-vs-now comparison. The rows are previews; fetch the records you
+    will rely on before answering from them. If a requested time window returns
+    zero rows, answer from that zero result rather than widening scope.
     """
     store = _store(ctx)
+    if kind_filters and len(kind_filters) > 1:
+        raise ModelRetry(
+            "list_records currently supports at most one kind filter. Narrow to one kind or use repeated calls."
+        )
+    if status_filters and len(status_filters) > 1:
+        raise ModelRetry(
+            "list_records currently supports at most one status filter. Narrow to one status or use repeated calls."
+        )
     order = str(order_by or "updated_at").strip().lower()
     if order not in {"created_at", "updated_at", "valid_from"}:
         raise ModelRetry(
@@ -457,6 +473,32 @@ def _require_full_trace_coverage_before_write(ctx: RunContext[ContextDeps]) -> N
     )
 
 
+def _require_episode_before_durable_write(
+    ctx: RunContext[ContextDeps], store: ContextStore, kind: str | None = None
+) -> None:
+    """Optionally require extract runs to write their session episode first."""
+    if not ctx.deps.require_episode_before_durable_write:
+        return
+    if kind == "episode":
+        return
+    rows = store.query(
+        entity="records",
+        mode="list",
+        project_ids=[ctx.deps.project_identity.project_id],
+        source_session_id=ctx.deps.session_id,
+        include_total=False,
+        include_archived=True,
+        limit=20,
+    )["rows"]
+    episode_count = sum(1 for row in rows if str(row.get("kind") or "") == "episode")
+    if episode_count == 1:
+        return
+    raise ModelRetry(
+        "Create exactly one episode record for the current session before writing "
+        "or updating durable fact, decision, preference, or constraint records."
+    )
+
+
 def create_record(
     ctx: RunContext[ContextDeps],
     kind: str,
@@ -474,17 +516,30 @@ def create_record(
     outcomes: str = "",
     change_reason: str = "",
 ) -> str:
-    """Create one durable record with explicit typed fields."""
+    """Create one durable record with explicit typed fields.
+
+    Durable fact, decision, preference, constraint, and reference records
+    should be canonical project memory, not trace recaps. Do not include
+    comma-separated or parenthetical lists of discarded implementation lures;
+    if contrast matters, use one broad category such as ephemeral local state.
+    Do not append sentences whose main purpose is to say which cleanup,
+    test, logging, or implementation details are not memory; those exclusions
+    are extraction evidence, not durable project memory.
+    For dependency or environment facts, name the requirement directly rather
+    than copying exception classes, stderr, commands, or log fragments.
+    """
     _require_full_trace_coverage_before_write(ctx)
     _require_notes_before_long_trace_write(ctx)
+    normalized_kind = _normalize_kind(kind)
     store = _store(ctx)
+    _require_episode_before_durable_write(ctx, store, normalized_kind)
     project_id = ctx.deps.project_identity.project_id
     session_id = ctx.deps.session_id
     try:
         result = store.create_record(
             project_id=project_id,
             session_id=session_id,
-            kind=_normalize_kind(kind),
+            kind=normalized_kind,
             title=title,
             body=body,
             status=_normalize_status(status),
@@ -528,6 +583,13 @@ def update_record(
     Call this only after you have already inspected the canonical existing
     record with `fetch_records`. Shortlist summaries, search hits, and injected
     manifests are not sufficient evidence for an update by themselves.
+    Preserve canonical project memory wording: avoid trace recaps and lists of
+    discarded implementation lures in updated durable records.
+    Do not append sentences whose main purpose is to say which cleanup,
+    test, logging, or implementation details are not memory; those exclusions
+    are extraction evidence, not durable project memory.
+    For dependency or environment facts, name the requirement directly rather
+    than copying exception classes, stderr, commands, or log fragments.
     """
     _require_full_trace_coverage_before_write(ctx)
     _require_notes_before_long_trace_write(ctx)
@@ -552,6 +614,7 @@ def update_record(
     if str(status or "").strip():
         changes["status"] = _normalize_status(status)
     store = _store(ctx)
+    _require_episode_before_durable_write(ctx, store)
     try:
         result = store.update_record(
             record_id=str(record_id or "").strip(),
@@ -634,7 +697,11 @@ def context_query(
     the default; `valid_at` is the way to include historical rows that were
     true at the requested time. For before-vs-now or current-vs-historical
     comparisons, use `list_records(include_archived=True)` when you need to
-    inspect both current and retired candidates explicitly.
+    inspect both current and retired candidates explicitly. In record `list`
+    mode, the returned rows are shortlist previews, not final evidence; fetch
+    the records you will rely on before answering from them. If an exact
+    time-window query returns zero rows, treat that as the answer for that
+    window unless the user explicitly asks to broaden scope.
     """
     store = _store(ctx)
     entity_name = str(entity or "").strip().lower()
@@ -671,11 +738,34 @@ def context_query(
                 "context_query order_by must be one of: created_at, updated_at, valid_from."
             ) from exc
         raise
+    if entity_name in {"records", "memories", "learnings"} and str(mode or "").strip().lower() == "list":
+        payload["rows"] = [
+            {
+                "record_id": row["record_id"],
+                "project_id": row["project_id"],
+                "kind": row["kind"],
+                "title": row["title"],
+                "body_preview": str(row["body"])[:280],
+                "status": row["status"],
+                "source_session_id": row["source_session_id"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+                "valid_from": row["valid_from"],
+                "valid_until": row["valid_until"],
+                "superseded_by_record_id": row["superseded_by_record_id"],
+            }
+            for row in payload["rows"]
+        ]
     return json.dumps(payload, ensure_ascii=True, indent=2)
 
 
 def note(ctx: RunContext[ContextDeps], findings: list[Finding]) -> str:
-    """Record structured findings from the trace chunks just read."""
+    """Record structured findings from the trace chunks just read.
+
+    Use durable levels only for reusable project memory. Keep dead ends,
+    discarded hypotheses, and trace-local noise at `implementation` level so
+    they support the main theme without becoming their own durable memory.
+    """
     if not findings:
         return "No findings recorded."
     ctx.deps.notes.extend(findings)

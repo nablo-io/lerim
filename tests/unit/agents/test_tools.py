@@ -506,6 +506,16 @@ class TestListRecords:
         with pytest.raises(ModelRetry, match="order_by must be one of"):
             list_records(ctx, order_by="invalid_field")
 
+    def test_multiple_kind_filters_raise_retry(self, deps):
+        ctx = make_run_context(deps)
+        with pytest.raises(ModelRetry, match="at most one kind filter"):
+            list_records(ctx, kind_filters=["decision", "fact"])
+
+    def test_multiple_status_filters_raise_retry(self, deps):
+        ctx = make_run_context(deps)
+        with pytest.raises(ModelRetry, match="at most one status filter"):
+            list_records(ctx, status_filters=["active", "archived"])
+
     def test_valid_order_by(self, deps):
         ctx = make_run_context(deps)
         for order in ("created_at", "updated_at", "valid_from"):
@@ -707,6 +717,27 @@ class TestCreateRecord:
                 what_happened="Tried to write a second episode.",
             )
 
+    def test_extract_requires_episode_before_durable_create(
+        self, deps_with_session, mock_embeddings
+    ):
+        deps_with_session.require_episode_before_durable_write = True
+        ctx = make_run_context(deps_with_session)
+
+        with pytest.raises(ModelRetry, match="episode record"):
+            create_record(ctx, kind="fact", title="Fact", body="Reusable fact.")
+
+        create_record(
+            ctx,
+            kind="episode",
+            title="Session summary",
+            body="The extractor read the trace and captured useful context.",
+            user_intent="Capture memory from a coding session.",
+            what_happened="Read the trace and prepared durable records.",
+        )
+        result = create_record(ctx, kind="fact", title="Fact", body="Reusable fact.")
+
+        assert json.loads(result)["ok"] is True
+
 # ---------------------------------------------------------------------------
 # update_record
 # ---------------------------------------------------------------------------
@@ -735,6 +766,25 @@ class TestUpdateRecord:
         deps_with_trace.read_ranges = [(0, 5)]
         with pytest.raises(ModelRetry, match="Unread trace lines"):
             update_record(ctx, record_id="rec_1", title="t")
+
+    def test_extract_requires_episode_before_update(
+        self, deps_with_session, mock_embeddings
+    ):
+        ctx = make_run_context(deps_with_session)
+        store = ContextStore(deps_with_session.context_db_path)
+        store.initialize()
+        store.register_project(deps_with_session.project_identity)
+        rec = store.create_record(
+            project_id=deps_with_session.project_identity.project_id,
+            session_id="sess_test",
+            kind="fact",
+            title="Old title",
+            body="Old body",
+        )
+        deps_with_session.require_episode_before_durable_write = True
+
+        with pytest.raises(ModelRetry, match="episode record"):
+            update_record(ctx, record_id=rec["record_id"], title="New title")
 
 
 # ---------------------------------------------------------------------------

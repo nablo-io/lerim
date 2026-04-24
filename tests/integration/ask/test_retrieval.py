@@ -23,6 +23,21 @@ def _normalize_answer_text(text: str) -> str:
     )
 
 
+def _has_time_anchor(answer: str) -> bool:
+    """Return whether an answer anchors a date-window response."""
+    if any(token in answer for token in ("yesterday", "time window")):
+        return True
+    if re.search(r"\b20\d{2}-\d{2}-\d{2}\b", answer):
+        return True
+    return bool(
+        re.search(
+            r"\b(?:january|february|march|april|may|june|july|august|"
+            r"september|october|november|december)\s+\d{1,2},\s+20\d{2}\b",
+            answer,
+        )
+    )
+
+
 def _find_first_tool_call(tool_calls: list[dict[str, object]], tool_name: str) -> dict[str, object]:
     """Return the first call for one tool name."""
     return next(call for call in tool_calls if call["tool_name"] == tool_name)
@@ -354,9 +369,7 @@ def test_ask_mixed_time_topic_no_in_window_match_stays_negative(
         if token in answer:
             break
     else:
-        has_time_anchor = any(token in answer for token in ("yesterday", "time window")) or bool(
-            re.search(r"\b20\d{2}-\d{2}-\d{2}\b", answer)
-        )
+        has_time_anchor = _has_time_anchor(answer)
         has_negative_signal = any(token in answer for token in ("nothing", "no records", "no evidence"))
         if not (has_time_anchor and has_negative_signal):
             raise AssertionError(f"answer missing expected negative phrasing: {answer}")

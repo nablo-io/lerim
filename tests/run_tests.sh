@@ -141,9 +141,18 @@ print_kv "OPENCODE_API_KEY" "$(key_status OPENCODE_API_KEY)"
 # Only API keys are read from env (ANTHROPIC_API_KEY, OPENROUTER_API_KEY, ZAI_API_KEY).
 # Tests use LERIM_CONFIG env var to point at tests/test_config.toml (auto-applied by conftest.py).
 
-# --- Ensure pytest is available ---
-if ! command -v pytest >/dev/null 2>&1; then
-  echo "ERROR: pytest not found. Activate venv or install: uv pip install -e '.[dev]'"
+# --- Build pytest command ---
+PYTEST_CMD=()
+if [[ -n "${VIRTUAL_ENV:-}" ]] && command -v python >/dev/null 2>&1; then
+  PYTEST_CMD=(python -m pytest)
+elif command -v uv >/dev/null 2>&1; then
+  PYTEST_CMD=(uv run pytest)
+elif command -v python >/dev/null 2>&1; then
+  PYTEST_CMD=(python -m pytest)
+elif command -v python3 >/dev/null 2>&1; then
+  PYTEST_CMD=(python3 -m pytest)
+else
+  echo "ERROR: no pytest runner found. Activate a venv or install uv."
   exit 1
 fi
 
@@ -152,7 +161,7 @@ cd "$ROOT_DIR"
 
 run_unit() {
   print_section "Unit tests"
-  python -m pytest tests/unit/ -x -q
+  "${PYTEST_CMD[@]}" tests/unit/ -x -q
 }
 
 run_integration() {
@@ -160,19 +169,19 @@ run_integration() {
   export LERIM_INTEGRATION=1
   export LERIM_LLM_INTEGRATION=1
   export LERIM_EMBEDDINGS_INTEGRATION=1
-  python -m pytest tests/integration/ -q -n 1
+  "${PYTEST_CMD[@]}" tests/integration/ -q -n 1
 }
 
 run_e2e() {
   print_section "End-to-end tests"
   export LERIM_E2E=1
-  python -m pytest tests/e2e/ -q -n 1
+  "${PYTEST_CMD[@]}" tests/e2e/ -q -n 1
 }
 
 run_smoke() {
   print_section "Smoke tests"
   export LERIM_SMOKE=1
-  python -m pytest tests/smoke/ -q -n 1
+  "${PYTEST_CMD[@]}" tests/smoke/ -q -n 1
 }
 
 run_lint() {

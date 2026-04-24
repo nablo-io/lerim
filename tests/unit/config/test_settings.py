@@ -18,6 +18,9 @@ from lerim.config.settings import (
     _toml_value,
     _toml_write_dict,
     _build_role,
+    get_global_data_dir_path,
+    get_user_config_path,
+    get_user_env_path,
     load_toml_file,
     save_config_patch,
     reload_config,
@@ -251,6 +254,28 @@ def test_save_config_patch_deep_merges(tmp_path, monkeypatch):
     cfg = save_config_patch({"server": {"port": 9999}})
     assert cfg.server_host == "0.0.0.0"
     assert cfg.server_port == 9999
+
+
+def test_explicit_config_path_is_the_writable_target(tmp_path, monkeypatch):
+    """Writes should target the explicit override file when LERIM_CONFIG is set."""
+    explicit = tmp_path / "explicit.toml"
+    monkeypatch.setenv("LERIM_CONFIG", str(explicit))
+
+    assert get_user_config_path() == explicit
+
+    cfg = save_config_patch({"server": {"port": 9876}})
+    assert cfg.server_port == 9876
+    assert explicit.exists()
+
+
+def test_user_env_path_tracks_effective_data_dir(tmp_path, monkeypatch):
+    """The active .env path should follow the configured global data dir."""
+    explicit = tmp_path / "config.toml"
+    explicit.write_text(f'[data]\ndir = "{tmp_path / "custom-root"}"\n', encoding="utf-8")
+    monkeypatch.setenv("LERIM_CONFIG", str(explicit))
+
+    assert get_global_data_dir_path() == tmp_path / "custom-root"
+    assert get_user_env_path() == tmp_path / "custom-root" / ".env"
 
 
 # ---------------------------------------------------------------------------
