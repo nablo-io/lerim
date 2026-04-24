@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from lerim.config.project_scope import match_session_project
-from lerim.config.settings import get_config, reload_config
+from lerim.config.settings import get_config, get_global_data_dir_path, reload_config
 from lerim.server.runtime import LerimRuntime
 from lerim.sessions.catalog import (
     DEFAULT_RUNNING_JOB_LEASE_SECONDS,
@@ -29,7 +29,7 @@ from lerim.sessions.catalog import (
 )
 
 
-ACTIVITY_LOG_PATH = Path.home() / ".lerim" / "logs" / "activity.log"
+ACTIVITY_LOG_PATH = get_global_data_dir_path() / "logs" / "activity.log"
 
 
 def log_activity(

@@ -47,7 +47,7 @@ from lerim.server.daemon import (
 )
 from lerim.config.logging import configure_logging
 from lerim.cloud.auth import cmd_auth, cmd_auth_logout, cmd_auth_status
-from lerim.config.settings import get_config, USER_CONFIG_PATH
+from lerim.config.settings import get_config, get_user_config_path, get_user_env_path
 from lerim.config.tracing import configure_tracing
 
 
@@ -154,6 +154,10 @@ def _cmd_connect(args: argparse.Namespace) -> int:
             if result.get("status") == "connected":
                 connected += 1
         _emit(f"Auto connected: {connected}")
+        if connected > 0 and is_container_running():
+            _emit("Restarting Lerim to mount connected platform paths...")
+            api_up()
+            _emit("Done.")
         return 0
 
     if action == "remove":
@@ -163,6 +167,10 @@ def _cmd_connect(args: argparse.Namespace) -> int:
             return 2
         removed = remove_platform(platforms_path, name)
         _emit(f"Removed: {name}" if removed else f"Platform not connected: {name}")
+        if removed and is_container_running():
+            _emit("Restarting Lerim...")
+            api_up()
+            _emit("Done.")
         return 0
 
     name = action
@@ -189,6 +197,10 @@ def _cmd_connect(args: argparse.Namespace) -> int:
     _emit(f"- Sessions: {result.get('session_count')}")
     if existing_path and existing_path == result.get("path"):
         _emit("- Path unchanged, no initial reindex trigger.")
+    elif is_container_running():
+        _emit("Restarting Lerim to mount connected platform path...")
+        api_up()
+        _emit("Done.")
     return 0
 
 
@@ -682,8 +694,8 @@ _PROVIDERS = [
 
 
 def _setup_api_keys() -> None:
-    """Interactive API key setup — saves to ~/.lerim/.env."""
-    env_path = Path.home() / ".lerim" / ".env"
+    """Interactive API key setup — saves to the active Lerim .env file."""
+    env_path = get_user_env_path()
 
     # Load existing keys if any
     existing: dict[str, str] = {}
@@ -698,7 +710,7 @@ def _setup_api_keys() -> None:
     _emit("")
     _emit("  Lerim needs an LLM provider to extract context records from your sessions.")
     _emit("  Select your provider(s) and enter API keys. You can change these")
-    _emit("  later in ~/.lerim/.env and ~/.lerim/config.toml.")
+    _emit(f"  later in {env_path} and {get_user_config_path()}.")
     _emit("")
     _emit("  Available providers:")
     _emit("")
@@ -712,7 +724,7 @@ def _setup_api_keys() -> None:
         if existing:
             _emit(f"  Keeping existing keys in {env_path}")
         else:
-            _emit("  Skipped. Set API keys later in ~/.lerim/.env")
+            _emit(f"  Skipped. Set API keys later in {env_path}")
         return
 
     # Parse selections
@@ -779,11 +791,11 @@ def _cmd_init(args: argparse.Namespace) -> int:
 
     if selected:
         write_init_config(selected)
-        _emit(f"\n  Config written to {USER_CONFIG_PATH}")
+        _emit(f"\n  Config written to {get_user_config_path()}")
         _emit(f"  Agents: {', '.join(selected.keys())}")
     else:
         _emit("\n  No agents selected. Add them later in:")
-        _emit(f"  {USER_CONFIG_PATH}")
+        _emit(f"  {get_user_config_path()}")
 
     # Step 2: API keys
     _setup_api_keys()
