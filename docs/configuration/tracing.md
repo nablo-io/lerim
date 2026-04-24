@@ -62,11 +62,11 @@ Then navigate to [http://localhost:5000](http://localhost:5000). You'll see:
 - **Spans** -- nested spans show the call hierarchy from the top-level
   orchestration down to individual LM calls and tool invocations.
 
-Lerim stores trace data in `~/.lerim/mlflow.db` (SQLite).
+Lerim stores trace data in `~/.lerim/observability/mlflow.db` (SQLite).
 If you run `mlflow ui` from any directory, you can point it explicitly:
 
 ```bash
-mlflow ui --backend-store-uri sqlite:///$HOME/.lerim/mlflow.db
+mlflow ui --backend-store-uri sqlite:///$HOME/.lerim/observability/mlflow.db
 ```
 
 !!! tip "Filtering"
@@ -75,5 +75,5 @@ mlflow ui --backend-store-uri sqlite:///$HOME/.lerim/mlflow.db
 
 ## Notes
 
-- Lerim configures MLflow tracking to a local SQLite store (`~/.lerim/mlflow.db`).
+- Lerim configures MLflow tracking to a local SQLite store (`~/.lerim/observability/mlflow.db`).
 - `LERIM_MLFLOW=true` is the main switch to enable or disable tracing.

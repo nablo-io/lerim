@@ -1,6 +1,6 @@
 # lerim serve
 
-Start the HTTP API server and daemon loop in a single process. Dashboard UI is not bundled and is not released yet.
+Start the HTTP API server and daemon loop in a single process. This repo does not bundle the full dashboard UI; the hosted product surface lives on Lerim Cloud.
 
 ## Overview
 
@@ -68,7 +68,7 @@ lerim serve
 ```
 
 !!! tip
-    When running `lerim serve` directly (not via Docker), make sure your config exists at `~/.lerim/config.toml`. Run `lerim init` first if needed.
+    When running `lerim serve` directly (not via Docker), make sure your config exists. Run `lerim init` first if needed.
 
 ## What it starts
 
@@ -78,7 +78,7 @@ lerim serve
 | Root | Stub HTML or optional assets | `http://<host>:<port>/` |
 | Daemon loop | Background sync/maintain on intervals | — (internal) |
 
-The daemon loop uses `sync_interval_minutes` and `maintain_interval_minutes` from `~/.lerim/config.toml` (defaults are in the shipped `default.toml`).
+The daemon loop uses `sync_interval_minutes` and `maintain_interval_minutes` from your active Lerim config (defaults are in the shipped `default.toml`).
 
 ## Exit codes
 
@@ -111,7 +111,7 @@ The daemon loop uses `sync_interval_minutes` and `maintain_interval_minutes` fro
 
     ---
 
-    Print temporary dashboard notice + CLI alternatives
+    Print the dashboard transition message + CLI alternatives
 
     [:octicons-arrow-right-24: lerim dashboard](dashboard.md)
 

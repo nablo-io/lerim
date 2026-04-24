@@ -12,6 +12,12 @@ These work on local files, Docker, or config:
 - `lerim up`
 - `lerim down`
 - `lerim logs`
+- `lerim query`
+- `lerim queue`
+- `lerim retry`
+- `lerim skip`
+- `lerim skill`
+- `lerim auth`
 
 ## Server-backed commands
 
@@ -21,6 +27,7 @@ These talk to the running Lerim service:
 - `lerim maintain`
 - `lerim ask`
 - `lerim status`
+- `lerim unscoped`
 
 ## Durable context
 

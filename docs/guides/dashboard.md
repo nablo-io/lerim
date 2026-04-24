@@ -1,8 +1,14 @@
-# Dashboard (Coming Soon)
+# Dashboard
 
-The dashboard UI is not released yet.
+Lerim's hosted dashboard lives on Lerim Cloud.
 
-For now, use the CLI and local API directly:
+This repo does not ship a full local web UI. The local runtime exposes:
+
+- the CLI
+- the local JSON API from `lerim serve`
+- a small transition page at `/` when no bundled static assets are present
+
+For local work, use the CLI and local API directly:
 
 ```bash
 lerim status
@@ -20,5 +26,5 @@ curl http://localhost:8765/api/health
 ## Related
 
 - [CLI: lerim serve](../cli/serve.md) — local API + daemon loop
-- [CLI: lerim dashboard](../cli/dashboard.md) — prints CLI alternatives
+- [CLI: lerim dashboard](../cli/dashboard.md) — prints the current transition message
 - [CLI: lerim status](../cli/status.md) — runtime overview

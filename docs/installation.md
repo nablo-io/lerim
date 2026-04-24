@@ -14,7 +14,7 @@ pip install lerim
 lerim init
 ```
 
-This writes user config to `~/.lerim/config.toml`.
+This writes user config to the active Lerim config path (by default `~/.lerim/config.toml`).
 
 ## Connect agents
 
@@ -49,3 +49,6 @@ Or run the server directly:
 ```bash
 lerim serve
 ```
+
+If you run `lerim serve` directly instead of `lerim up`, restart it after
+changing registered projects or config that affects scope or runtime mounts.
