@@ -49,17 +49,36 @@ def _normalize(vector: np.ndarray) -> np.ndarray:
 class EmbeddingProvider:
     """Small local embedding provider backed by ONNX Runtime."""
 
-    def __init__(self, *, model_id: str, cache_dir: Path, onnx_file: str = DEFAULT_ONNX_FILE) -> None:
-        self.model_id = str(model_id).strip() or DEFAULT_EMBEDDING_MODEL_NAME
+    def __init__(self, *, model_id: str | None, cache_dir: Path, onnx_file: str = DEFAULT_ONNX_FILE) -> None:
+        self.model_id = str(model_id or "").strip() or DEFAULT_EMBEDDING_MODEL_NAME
         self.cache_dir = Path(cache_dir).expanduser().resolve()
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+        except PermissionError as exc:
+            raise RuntimeError(f"embedding_cache_dir_not_writable:{self.cache_dir}") from exc
         self.onnx_file = onnx_file
         self.model_dir = self.cache_dir / _safe_model_dir_name(self.model_id)
-        self.model_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self.model_dir.mkdir(parents=True, exist_ok=True)
+        except PermissionError as exc:
+            raise RuntimeError(f"embedding_model_dir_not_writable:{self.model_dir}") from exc
         self._tokenizer: Tokenizer | None = None
         self._session: ort.InferenceSession | None = None
         self._embedding_dims: int | None = None
         self._tokenizer_config: dict[str, Any] | None = None
+
+    def close(self) -> None:
+        """Release cached tokenizer/session references held by this provider."""
+        self._tokenizer = None
+        self._session = None
+
+    def __enter__(self) -> "EmbeddingProvider":
+        """Return this provider when used as a context manager."""
+        return self
+
+    def __exit__(self, *_exc_info: object) -> None:
+        """Release cached runtime objects on context-manager exit."""
+        self.close()
 
     @property
     def embedding_dims(self) -> int:

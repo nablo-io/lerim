@@ -34,6 +34,11 @@ class TestAskSystemPrompt:
         assert "search_records" in ASK_SYSTEM_PROMPT
         assert "fetch_records" in ASK_SYSTEM_PROMPT
 
+    def test_mentions_currentness_safety_rules(self):
+        assert "current-state" in ASK_SYSTEM_PROMPT
+        assert "updated_at" in ASK_SYSTEM_PROMPT
+        assert "newer direct active durable support" in ASK_SYSTEM_PROMPT
+
 
 class TestFormatAskHints:
     """Tests for format_ask_hints helper."""
@@ -64,6 +69,22 @@ class TestFormatAskHints:
         hits = [{"kind": "fact", "title": "T", "body_preview": "B"}]
         result = format_ask_hints(hits, [{"some": "doc"}])
         assert "[fact] T: B" in result
+
+    def test_hints_include_currentness_metadata(self):
+        hits = [
+            {
+                "kind": "fact",
+                "title": "Current risk",
+                "body_preview": "preview",
+                "status": "archived",
+                "updated_at": "2026-04-23T15:00:00+00:00",
+                "superseded_by_record_id": "rec_new",
+            }
+        ]
+        result = format_ask_hints(hits, [])
+        assert "status=archived" in result
+        assert "updated_at=2026-04-23T15:00:00+00:00" in result
+        assert "superseded_by=rec_new" in result
 
 
 class TestRunAskSignature:

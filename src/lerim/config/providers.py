@@ -25,7 +25,7 @@ from typing import Literal
 from anthropic import AsyncAnthropic
 from httpx import AsyncClient, HTTPStatusError
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
-from pydantic_ai.models import Model, ModelSettings
+from pydantic_ai.models import Model, ModelSettings, cached_async_http_client
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
@@ -37,6 +37,7 @@ from tenacity import retry_if_exception_type, stop_after_attempt, wait_exponenti
 from lerim.config.settings import Config, get_config
 
 RoleName = Literal["agent"]
+MINIMAX_TEMPERATURE_FLOOR = 0.01
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +237,8 @@ def _build_minimax_anthropic_model(
 
 	Uses ``AsyncAnthropic(max_retries=5)`` for HTTP-level retries —
 	the Anthropic SDK handles 429/5xx natively.
+	Passes PydanticAI's cached HTTPX client explicitly so the SDK does not
+	allocate per-run ``AsyncHttpxClientWrapper`` instances with noisy finalizers.
 
 	The Anthropic base URL is resolved from ``[providers].minimax_anthropic``
 	in config, falling back to ``https://api.minimax.io/anthropic``.
@@ -253,11 +256,12 @@ def _build_minimax_anthropic_model(
 		api_key=api_key,
 		base_url=base_url,
 		max_retries=5,
+		http_client=cached_async_http_client(provider="minimax-anthropic"),
 	)
 	anthropic_provider = AnthropicProvider(anthropic_client=client)
 	canonical_model = normalize_model_name("minimax", model)
 	role_cfg = cfg.agent_role
-	temperature = max(0.01, min(1.0, role_cfg.temperature))
+	temperature = max(MINIMAX_TEMPERATURE_FLOOR, min(1.0, role_cfg.temperature))
 	settings = ModelSettings(
 		temperature=temperature,
 		max_tokens=role_cfg.max_tokens,

@@ -1,0 +1,10 @@
+case: old_capability_gap_superseded_by_newer_support
+summary: Supersede an older active capability-gap fact when newer durable support contradicts it.
+
+expected:
+  must_use_tools:
+    - list_records
+    - fetch_records
+    - supersede_record
+  must_not_use_tools:
+    - archive_record

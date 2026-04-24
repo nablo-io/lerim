@@ -221,6 +221,65 @@ def test_maintain_obsolete_fact_replaced_by_new_truth(
     assert_clean_context_schema(live_config.context_db_path)
     assert_quality_metrics(audit_context_db(live_config.context_db_path))
 
+
+@pytest.mark.integration
+@pytest.mark.llm
+@pytest.mark.agent
+def test_maintain_old_capability_gap_superseded_by_newer_support(
+    live_config,
+    live_repo_root,
+) -> None:
+    """Maintain should retire older missing-capability claims when newer records contradict them."""
+    expectation = load_maintain_expectation("old_capability_gap_superseded_by_newer_support")["expected"]
+    outcome = run_maintain_case(
+        case_name="old_capability_gap_superseded_by_newer_support",
+        live_config=live_config,
+        live_repo_root=live_repo_root,
+        seed_records=[
+            {
+                "record_id": "rec_old_replay_gap",
+                "kind": "fact",
+                "title": "Batch replay lacks persistent recovery support",
+                "body": (
+                    "The batch replay path does not yet persist enough recovery state, so restart recovery "
+                    "cannot safely resume interrupted work."
+                ),
+                "backdate_hours": 168,
+            },
+            {
+                "record_id": "rec_new_replay_support",
+                "kind": "fact",
+                "title": "Batch replay persists recovery state",
+                "body": (
+                    "The batch replay path persists recovery state so interrupted work can resume safely "
+                    "after restart or failover."
+                ),
+                "backdate_hours": 12,
+            },
+        ],
+    )
+
+    tool_names = outcome.tool_names
+    assert set(tool_names).issubset(MAINTAIN_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
+    assert_no_removed_tools(tool_names)
+    for tool_name in expectation["must_use_tools"]:
+        assert tool_name in tool_names
+    for tool_name in expectation["must_not_use_tools"]:
+        assert tool_name not in tool_names
+
+    old_record = next(record for record in outcome.records if record["record_id"] == "rec_old_replay_gap")
+    new_record = next(record for record in outcome.records if record["record_id"] == "rec_new_replay_support")
+    assert outcome.result.completion_summary.strip()
+    assert old_record["superseded_by_record_id"] == new_record["record_id"]
+    assert old_record["valid_until"]
+    assert new_record["status"] == "active"
+    assert new_record["superseded_by_record_id"] in (None, "")
+
+    latest_change_kinds = {str(version["change_kind"]) for version in old_record["versions"][:2]}
+    assert "supersede" in latest_change_kinds
+    assert_clean_context_schema(live_config.context_db_path)
+    assert_quality_metrics(audit_context_db(live_config.context_db_path))
+
 @pytest.mark.integration
 @pytest.mark.llm
 @pytest.mark.agent

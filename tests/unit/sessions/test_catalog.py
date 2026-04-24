@@ -620,6 +620,45 @@ class TestJobQueueClaim:
         jobs = claim_session_jobs(limit=3)
         assert len(jobs) == 3
 
+    def test_claim_default_backlog_order_is_newest_per_project(self, sessions_db):
+        _seed_and_enqueue(
+            "cl-newest-old",
+            repo_path="/tmp/newest-proj",
+            start_time="2026-04-01T08:00:00+00:00",
+        )
+        _seed_and_enqueue(
+            "cl-newest-mid",
+            repo_path="/tmp/newest-proj",
+            start_time="2026-04-01T10:00:00+00:00",
+        )
+        _seed_and_enqueue(
+            "cl-newest-new",
+            repo_path="/tmp/newest-proj",
+            start_time="2026-04-01T12:00:00+00:00",
+        )
+
+        jobs = claim_session_jobs(limit=10)
+
+        assert len(jobs) == 1
+        assert jobs[0]["run_id"] == "cl-newest-new"
+
+    def test_claim_chronological_replay_order_is_explicit(self, sessions_db):
+        _seed_and_enqueue(
+            "cl-replay-old",
+            repo_path="/tmp/replay-proj",
+            start_time="2026-04-01T08:00:00+00:00",
+        )
+        _seed_and_enqueue(
+            "cl-replay-new",
+            repo_path="/tmp/replay-proj",
+            start_time="2026-04-01T12:00:00+00:00",
+        )
+
+        jobs = claim_session_jobs(limit=10, claim_order="oldest")
+
+        assert len(jobs) == 1
+        assert jobs[0]["run_id"] == "cl-replay-old"
+
     def test_claim_empty_db(self, sessions_db):
         assert claim_session_jobs(limit=10) == []
 
@@ -632,20 +671,35 @@ class TestJobQueueClaim:
         run_ids = {j["run_id"] for j in jobs}
         assert "cl-done" not in run_ids
 
-    def test_claim_per_project_oldest_only(self, sessions_db):
+    def test_claim_per_project_returns_one_job_per_project(self, sessions_db):
         _seed_and_enqueue(
-            "cl-po-old",
+            "cl-po-a-old",
             repo_path="/tmp/pp-proj",
-            start_time="2026-04-01T08:00:00+00:00",
+            start_time="2026-04-01T11:00:00+00:00",
         )
         _seed_and_enqueue(
-            "cl-po-new",
+            "cl-po-a-new",
             repo_path="/tmp/pp-proj",
             start_time="2026-04-01T12:00:00+00:00",
         )
-        jobs = claim_session_jobs(limit=10)
-        assert len(jobs) == 1
-        assert jobs[0]["run_id"] == "cl-po-old"
+        _seed_and_enqueue(
+            "cl-po-b-old",
+            repo_path="/tmp/pp-other",
+            start_time="2026-04-01T07:00:00+00:00",
+        )
+        _seed_and_enqueue(
+            "cl-po-b-new",
+            repo_path="/tmp/pp-other",
+            start_time="2026-04-01T09:00:00+00:00",
+        )
+        jobs = claim_session_jobs(limit=2)
+        claimed_ids = {job["run_id"] for job in jobs}
+        assert claimed_ids == {"cl-po-a-new", "cl-po-b-new"}
+
+    def test_invalid_claim_order_rejected(self, sessions_db):
+        _seed_and_enqueue("cl-bad-order")
+        with pytest.raises(ValueError, match="claim_order"):
+            claim_session_jobs(limit=10, claim_order="sideways")
 
 
 class TestJobQueueDeadLetter:
@@ -732,6 +786,25 @@ class TestJobQueueDeadLetter:
         claimed_ids = {j["run_id"] for j in jobs}
         assert "dl-blocked" not in claimed_ids
 
+    def test_dead_letter_blocks_project_even_when_not_claim_candidate(
+        self, sessions_db
+    ):
+        _seed_and_enqueue(
+            "dl-target",
+            repo_path="/tmp/bl-target-proj",
+            start_time="2026-04-01T08:00:00+00:00",
+        )
+        _seed_and_enqueue(
+            "dl-newer-blocker",
+            repo_path="/tmp/bl-target-proj",
+            start_time="2026-04-01T12:00:00+00:00",
+        )
+        _set_job_status("dl-newer-blocker", "dead_letter")
+
+        jobs = claim_session_jobs(limit=10, run_ids=["dl-target"])
+
+        assert jobs == []
+
     def test_retry_unblocks_project(self, sessions_db):
         _seed_and_enqueue(
             "dl-ub", repo_path="/tmp/ub-proj", start_time="2026-04-01T08:00:00+00:00"
@@ -743,7 +816,7 @@ class TestJobQueueDeadLetter:
         retry_session_job("dl-ub")
         jobs = claim_session_jobs(limit=10)
         claimed_ids = {j["run_id"] for j in jobs}
-        assert "dl-ub" in claimed_ids
+        assert "dl-ub2" in claimed_ids
 
     def test_skip_unblocks_project(self, sessions_db):
         _seed_and_enqueue(
@@ -1103,8 +1176,8 @@ class TestJobQueueAdvanced:
         jobs = claim_session_jobs(limit=10)
         claimed_ids = {j["run_id"] for j in jobs}
         assert not any(rid.startswith("pa-") for rid in claimed_ids)
-        assert "pb-j1" in claimed_ids
-        assert "pc-j1" in claimed_ids
+        assert "pb-j3" in claimed_ids
+        assert "pc-j3" in claimed_ids
         assert len(claimed_ids) == 2
 
     def test_mixed_statuses_across_projects(self, sessions_db):
@@ -1126,8 +1199,8 @@ class TestJobQueueAdvanced:
         jobs = claim_session_jobs(limit=10)
         claimed_ids = {j["run_id"] for j in jobs}
         assert "ma-pend" in claimed_ids
-        assert "mb-fail" in claimed_ids
-        assert "mb-pend" not in claimed_ids
+        assert "mb-pend" in claimed_ids
+        assert "mb-fail" not in claimed_ids
         assert "mc-dead" not in claimed_ids
         assert "mc-pend" not in claimed_ids
 
@@ -1137,7 +1210,7 @@ class TestJobQueueAdvanced:
         _seed_and_enqueue("lc-next", "/tmp/proj-lc", start_time="2026-03-01T10:00:00Z")
 
         for attempt in range(1, 4):
-            jobs = claim_session_jobs(limit=10)
+            jobs = claim_session_jobs(limit=10, claim_order="oldest")
             matched = [j for j in jobs if j["run_id"] == "lc-job"]
             assert len(matched) == 1, f"attempt {attempt}: job should be claimable"
             assert matched[0]["status"] == "running"
@@ -1160,7 +1233,7 @@ class TestJobQueueAdvanced:
                     "after 3 attempts: should be dead_letter"
                 )
 
-        jobs_blocked = claim_session_jobs(limit=10)
+        jobs_blocked = claim_session_jobs(limit=10, claim_order="oldest")
         blocked_ids = {j["run_id"] for j in jobs_blocked}
         assert "lc-job" not in blocked_ids
         assert "lc-next" not in blocked_ids
@@ -1174,7 +1247,7 @@ class TestJobQueueAdvanced:
         assert row["status"] == "pending"
         assert row["attempts"] == 0
 
-        jobs_after = claim_session_jobs(limit=10)
+        jobs_after = claim_session_jobs(limit=10, claim_order="oldest")
         after_ids = {j["run_id"] for j in jobs_after}
         assert "lc-job" in after_ids
 
@@ -1184,7 +1257,7 @@ class TestJobQueueAdvanced:
         _seed_and_enqueue("sk-new", "/tmp/proj-sk", start_time="2026-03-01T10:00:00Z")
 
         for i in range(3):
-            claim_session_jobs(limit=10)
+            claim_session_jobs(limit=10, claim_order="oldest")
             fail_session_job("sk-old", error="boom", retry_backoff_seconds=0)
             if i < 2:
                 _make_available_now("sk-old")
@@ -1195,12 +1268,12 @@ class TestJobQueueAdvanced:
             ).fetchone()
         assert row["status"] == "dead_letter"
 
-        jobs = claim_session_jobs(limit=10)
+        jobs = claim_session_jobs(limit=10, claim_order="oldest")
         assert all(j["run_id"] not in ("sk-old", "sk-new") for j in jobs)
 
         assert skip_session_job("sk-old") is True
 
-        jobs2 = claim_session_jobs(limit=10)
+        jobs2 = claim_session_jobs(limit=10, claim_order="oldest")
         claimed_ids = {j["run_id"] for j in jobs2}
         assert "sk-new" in claimed_ids
 

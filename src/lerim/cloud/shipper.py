@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from lerim.config.logging import LOG_DIR, logger
+from lerim.config.project_scope import match_session_project
 from lerim.config.settings import Config, get_global_data_dir_path
 from lerim.context import ContextStore, resolve_project_identity
 from lerim.context.spec import ALLOWED_KINDS, RECORD_KIND_SPECS
@@ -470,12 +471,35 @@ def _read_transcript(session_path: str | None) -> str | None:
     return None
 
 
+def _resolve_session_project(
+    repo_path: str | None,
+    projects: dict[str, str],
+) -> str | None:
+    """Resolve a session repo path to a configured project name."""
+    if not repo_path or not projects:
+        return None
+    try:
+        match = match_session_project(repo_path, projects)
+    except OSError as exc:
+        logger.debug("cloud shipper: failed resolving session project {}: {}", repo_path, exc)
+        return None
+    if match is None:
+        return None
+    project_name, _project_path = match
+    return project_name
+
+
 async def _ship_sessions(
-    endpoint: str, token: str, state: _ShipperState, db_path: Path
+    endpoint: str,
+    token: str,
+    state: _ShipperState,
+    db_path: Path,
+    projects: dict[str, str] | None = None,
 ) -> int:
     """Ship new/updated sessions from SQLite, including cached transcripts."""
     shipped = 0
     latest_indexed_at = state.sessions_shipped_at
+    configured_projects = projects or {}
 
     while True:
         rows = await asyncio.to_thread(
@@ -494,6 +518,11 @@ async def _ship_sessions(
         sessions_payload = []
         for row in rows:
             entry = {k: v for k, v in row.items() if k in _API_FIELDS and v is not None}
+            project_name = _resolve_session_project(
+                row.get("repo_path"), configured_projects
+            )
+            if project_name is not None:
+                entry["project"] = project_name
             # Attach transcript from cached JSONL file
             transcript = _read_transcript(row.get("session_path"))
             if transcript:
@@ -830,7 +859,7 @@ async def ship_once(config: Config) -> dict[str, int]:
     # Phase 2: Push (local -> cloud)
     logs_shipped = await _ship_logs(endpoint, token, state)
     sessions_shipped = await _ship_sessions(
-        endpoint, token, state, config.sessions_db_path
+        endpoint, token, state, config.sessions_db_path, config.projects
     )
     service_runs_shipped = await _ship_service_runs(
         endpoint, token, state, config.sessions_db_path

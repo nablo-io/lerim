@@ -160,6 +160,60 @@ def test_ask_latest_question_prefers_exact_listing(
     for token in expectation["answer_must_include_all"]:
         assert token in answer
 
+
+@pytest.mark.integration
+@pytest.mark.llm
+@pytest.mark.agent
+def test_ask_current_readiness_prefers_newer_support(
+    live_config,
+    live_repo_root,
+) -> None:
+    """Current readiness questions should not answer from older contradicted support."""
+    case = load_ask_expectation("current_readiness_prefers_newer_support")
+    expectation = case["expected"]
+    outcome = run_ask_case(
+        case_name="current_readiness_prefers_newer_support",
+        live_config=live_config,
+        live_repo_root=live_repo_root,
+    )
+
+    answer = _normalize_answer_text(outcome.result.answer.strip())
+    tool_names = outcome.tool_names
+
+    assert outcome.result.answer.strip()
+    assert set(tool_names).issubset(ASK_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
+    assert_no_removed_tools(tool_names)
+
+    exact_calls = _find_all_tool_calls(
+        outcome.tool_calls, "list_records"
+    ) + _find_all_tool_calls(outcome.tool_calls, "context_query")
+    assert exact_calls, "expected exact current-row inspection before synthesis"
+    first_exact_name = min(
+        ("list_records", "context_query"),
+        key=lambda name: tool_names.index(name) if name in tool_names else len(tool_names),
+    )
+    first_exact = _find_first_tool_call(outcome.tool_calls, first_exact_name)
+    first_exact_args = first_exact["args"] or {}
+    assert str(first_exact_args.get("order_by") or "updated_at").strip().lower() == "updated_at"
+    first_exact_index = tool_names.index(first_exact_name)
+    if "search_records" in tool_names:
+        assert first_exact_index < tool_names.index("search_records")
+
+    fetch_calls = _find_all_tool_calls(outcome.tool_calls, "fetch_records")
+    assert fetch_calls, "expected full current support to be fetched"
+    fetched_ids: set[str] = set()
+    for call in fetch_calls:
+        fetch_args = call["args"] or {}
+        fetched_ids.update(str(record_id) for record_id in (fetch_args.get("record_ids") or []))
+    assert expectation["required_current_record_id"] in fetched_ids
+
+    for token in expectation["answer_must_include_all"]:
+        assert token in answer
+    assert any(token in answer for token in expectation["answer_must_include_any_provenance"])
+    for token in expectation["answer_must_not_include"]:
+        assert token not in answer
+
+
 @pytest.mark.integration
 @pytest.mark.llm
 @pytest.mark.agent

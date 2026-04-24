@@ -1,4 +1,4 @@
-"""Canonical Lerim memory and finding specifications."""
+"""Canonical Lerim context and finding specifications."""
 
 from __future__ import annotations
 
@@ -227,7 +227,7 @@ def record_validation_message(code: str) -> str | None:
         "title_required": "Every record needs a non-empty title.",
         "body_required": "Every record needs a non-empty body.",
         "title_too_long": (
-            f"Title is too long. Use one short specific memory title under "
+            f"Title is too long. Use one short specific context title under "
             f"{MAX_RECORD_TITLE_CHARS} characters."
         ),
         "decision_requires_decision_and_why": (

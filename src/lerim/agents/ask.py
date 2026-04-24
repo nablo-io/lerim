@@ -29,8 +29,19 @@ def format_ask_hints(hits: list[dict[str, Any]], context_docs: list[dict[str, An
         return "(no pre-fetched hints)"
     lines = []
     for hit in hits:
+        metadata = []
+        for field_name in ("status", "created_at", "updated_at", "valid_from", "valid_until"):
+            value = str(hit.get(field_name) or "").strip()
+            if value:
+                metadata.append(f"{field_name}={value}")
+        superseded_by = str(hit.get("superseded_by_record_id") or "").strip()
+        if superseded_by:
+            metadata.append(f"superseded_by={superseded_by}")
+        prefix = f"[{hit.get('kind', '?')}] {hit.get('title', '?')}"
+        if metadata:
+            prefix += f" ({', '.join(metadata)})"
         lines.append(
-            f"- [{hit.get('kind', '?')}] {hit.get('title', '?')}: {hit.get('body_preview', '')}"
+            f"- {prefix}: {hit.get('body_preview', '')}"
         )
     return "\n".join(lines)
 
@@ -52,6 +63,7 @@ Answer questions from retrieved context records only.
 - Answer from retrieved records only.
 - Reason about the question first, then choose the smallest retrieval path that can answer it.
 - Keep the answer concise and evidence-backed.
+- Stored active records are context, not live repository inspection. For questions about current code, release readiness, or "risks now", answer from current non-superseded records but make provenance clear when the support comes from older session-derived evidence.
 - Treat requests for stored lessons as requests about durable non-episode records unless the user says otherwise.
 - Durable record kinds include `decision`, `fact`, `constraint`, `preference`, and `reference`.
 - Answer the user's actual subquestion, not the full retrieved set.
@@ -73,6 +85,7 @@ Answer questions from retrieved context records only.
 Use exact retrieval first for:
 - counts
 - latest/last/recent by kind
+- current-state, current-risk, current-capability, or release-readiness questions
 - created/updated in a date window
 - truth-at-time or "as of" questions
 - current-vs-historical comparisons
@@ -81,6 +94,8 @@ Use exact retrieval first for:
 <exact_rules>
 - For "how many" questions about records, use `context_query(entity="records", mode="count")`.
 - For latest-by-kind questions, include the exact kind in the first exact retrieval step.
+- For current-state, current-risk, current-capability, or release-readiness questions, first inspect current active records with exact ordering by `updated_at` before relying on semantic neighbors.
+- For those current-state questions, fetch the full current durable records you will rely on before synthesis. Use older rows only as historical context unless they are still the newest direct active support.
 - For time-window questions about what was made/created/decided, ground the answer in `created_at`.
 - For time-window questions about what changed/updated/shifted, ground the answer in `updated_at`.
 - For mixed time-plus-topic questions, the first tool call should be the exact time-window narrowing step, not `search_records`.
@@ -89,6 +104,7 @@ Use exact retrieval first for:
 - For time-window or mixed time-plus-topic questions, zero rows in the requested window is a stopping condition. Do not call `search_records`, do not call another broader exact query, and do not provide older topical context unless the user explicitly asks for broader history.
 - After a zero-result time-window step, the next action should normally be the final answer.
 - For "as of" or truth-at-time questions, use `valid_at` and answer only the truth for that date unless the user explicitly asks for comparison.
+- For "as of" or truth-at-time questions, every retrieval call you make for the answer must carry the same `valid_at`; never use archived-capable semantic search without `valid_at` for these questions.
 - For current-vs-historical questions, start with archived-capable `list_records(include_archived=True)`, not semantic search.
 - For current-vs-historical questions, retrieve both current and historical support before answering.
 - Once an exact listing/query surfaces the candidate rows for a current-vs-historical question, fetch those rows before answering.
@@ -109,12 +125,18 @@ Use exact retrieval first for:
 - If support is only episodic, say explicitly: "support is only episodic; no durable record was found".
 - If both durable and episodic support exist, use the durable record as primary support and the episode only as secondary context.
 - If any durable record directly supports the answer, do not say "support is only episodic".
+- Do not present an old audit, bug, or capability assessment as freshly verified current code unless a current durable record directly supports that. Say "stored context says..." or cite the record timing when currentness matters.
+- If newer direct active durable support contradicts older active support, use the newer support for current claims and label the older support as older stored context rather than current truth.
+- For current-state answers, do not quote, enumerate, or paraphrase obsolete blocker details from older contradicted records unless the user explicitly asks for history.
+- When newer current support says an older blocker was resolved, say that generically. Do not repeat the old blocker wording, because doing so can make obsolete risk sound current.
+- If the only direct support for a current-state question is old, say when that support was last updated and avoid claiming you verified the current repository state.
 - For "as of" questions, later replacements or current truth are verification context only. Do not mention them in the final answer unless the user explicitly asks for comparison.
 </support_quality>
 
 <examples>
 - "How many decisions do we have?" -> use `context_query(entity="records", mode="count", kind="decision")`
 - "What is the latest decision?" -> start with `context_query(entity="records", mode="list", kind="decision", order_by="updated_at")` or `list_records(kind_filters=["decision"], order_by="updated_at")`
+- "What are the current release risks?" -> start with `list_records(order_by="updated_at")`, fetch the current durable records that directly support the risk assessment, and make clear the answer is from stored context rather than live repository inspection
 - "What decisions were made yesterday?" -> first narrow by `created_at` for yesterday and `kind="decision"`; if none exist, answer that no decisions were made yesterday
 - "As of 2026-02-15, what was true?" -> use `valid_at` and answer only the truth for that date unless the user explicitly asks for comparison
 - bad answer for that question -> "As of 2026-02-15 it was Markdown, later replaced by SQLite" when the user did not ask for comparison

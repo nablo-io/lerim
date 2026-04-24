@@ -18,8 +18,6 @@ from lerim.context.store import (
     MAX_EPISODE_USER_INTENT_CHARS,
     MAX_EPISODE_WHAT_HAPPENED_CHARS,
     MAX_RECORD_TITLE_CHARS,
-    QUERY_ENTITY_ALIASES,
-    QUERY_MODE_ALIASES,
     QUERY_ORDER_FIELDS,
     RRF_K,
     SCHEMA_VERSION,
@@ -216,12 +214,6 @@ class TestConstants:
     def test_max_episode_outcomes_chars(self):
         assert MAX_EPISODE_OUTCOMES_CHARS == 180
 
-    def test_query_entity_aliases(self):
-        assert QUERY_ENTITY_ALIASES == {}
-
-    def test_query_mode_aliases(self):
-        assert QUERY_MODE_ALIASES == {}
-
     def test_query_order_fields(self):
         assert QUERY_ORDER_FIELDS == ("created_at", "updated_at", "valid_from")
 
@@ -271,6 +263,14 @@ class TestContextStoreInit:
                 "SELECT value FROM schema_meta WHERE key='schema_version'"
             ).fetchone()
         assert ver is not None and ver[0] == SCHEMA_VERSION
+
+    def test_initialize_indexes_valid_until(self, mock_store):
+        with mock_store.connect() as conn:
+            indexes = {
+                row[1]
+                for row in conn.execute("PRAGMA index_list(records)").fetchall()
+            }
+        assert "idx_records_valid_until" in indexes
 
     def test_initialize_idempotent(self, mock_store):
         mock_store.initialize()
@@ -518,6 +518,34 @@ class TestCreateRecord:
         rec = _make_episode(store, pid, status="archived")
         assert rec["status"] == "archived"
         assert rec["valid_until"] == rec["updated_at"]
+
+    def test_create_rolls_back_when_derived_write_fails(self, mock_seeded, monkeypatch):
+        store, pid = mock_seeded
+
+        def fail_fts(*_args, **_kwargs):
+            raise RuntimeError("fts failed")
+
+        monkeypatch.setattr(store, "_upsert_fts", fail_fts)
+        with pytest.raises(RuntimeError, match="fts failed"):
+            store.create_record(
+                project_id=pid,
+                session_id="sess_test",
+                kind="fact",
+                title="Rollback fact",
+                body="This should not partially persist.",
+            )
+
+        with store.connect() as conn:
+            record_count = conn.execute(
+                "SELECT COUNT(*) FROM records WHERE title = ?",
+                ("Rollback fact",),
+            ).fetchone()[0]
+            version_count = conn.execute(
+                "SELECT COUNT(*) FROM record_versions WHERE title = ?",
+                ("Rollback fact",),
+            ).fetchone()[0]
+        assert record_count == 0
+        assert version_count == 0
 
     def test_invalid_kind(self, mock_seeded):
         store, pid = mock_seeded
@@ -810,6 +838,27 @@ class TestUpdateRecord:
         v2 = [v for v in updated["versions"] if v["version_no"] == 2][0]
         assert v2["change_reason"] == "correcting typo"
 
+    def test_update_rolls_back_when_derived_write_fails(self, mock_seeded, monkeypatch):
+        store, pid = mock_seeded
+        rec = _make_decision(store, pid)
+
+        def fail_fts(*_args, **_kwargs):
+            raise RuntimeError("fts failed")
+
+        monkeypatch.setattr(store, "_upsert_fts", fail_fts)
+        with pytest.raises(RuntimeError, match="fts failed"):
+            store.update_record(
+                record_id=rec["record_id"],
+                session_id="sess_test",
+                project_ids=[pid],
+                changes={"title": "Rolled back title"},
+            )
+
+        fetched = store.fetch_record(rec["record_id"], project_ids=[pid], include_versions=True)
+        assert fetched is not None
+        assert fetched["title"] == rec["title"]
+        assert len(fetched["versions"]) == 1
+
 
 class TestArchiveRecord:
     def test_recent_active_non_episode_raises(self, mock_seeded):
@@ -1087,6 +1136,28 @@ class TestQuery:
         result = store.query(entity="sessions", mode="count", project_ids=[pid])
         assert result["entity"] == "sessions"
         assert result["count"] >= 1
+
+    def test_sessions_source_session_id_filters_session_id(self, mock_seeded):
+        store, pid = mock_seeded
+        store.upsert_session(
+            project_id=pid,
+            session_id="sess_other",
+            agent_type="test",
+            source_trace_ref="other.jsonl",
+            repo_path="/tmp/other",
+            cwd="/tmp/other",
+            started_at="2026-01-02T00:00:00Z",
+            model_name="test-model",
+            instructions_text=None,
+            prompt_text=None,
+        )
+        result = store.query(
+            entity="sessions",
+            mode="list",
+            project_ids=[pid],
+            source_session_id="sess_other",
+        )
+        assert [row["session_id"] for row in result["rows"]] == ["sess_other"]
 
     def test_sessions_date_only_window_includes_same_day_rows(self, mock_seeded):
         store, pid = mock_seeded

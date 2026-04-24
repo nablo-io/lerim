@@ -18,6 +18,7 @@ from pydantic_ai.messages import (
 )
 
 from lerim.agents.history_processors import (
+    PRUNED_STUB,
     context_pressure_injector,
     notes_state_injector,
     prune_history_processor,
@@ -26,7 +27,6 @@ from lerim.agents.tools import (
     CONTEXT_HARD_PRESSURE_PCT,
     CONTEXT_SOFT_PRESSURE_PCT,
     MODEL_CONTEXT_TOKEN_LIMIT,
-    PRUNED_STUB,
     TRACE_MAX_LINE_BYTES,
     ContextDeps,
     Finding,
@@ -368,8 +368,22 @@ class TestRequireFullTraceCoverage:
         ctx = make_run_context(deps)
         _require_full_trace_coverage_before_write(ctx)
 
-    def test_no_read_ranges_passes(self, deps_with_trace):
+    def test_no_read_ranges_raises_from_trace_start(self, deps_with_trace):
         ctx = make_run_context(deps_with_trace)
+        with pytest.raises(ModelRetry, match=r"trace_read\(offset=0"):
+            _require_full_trace_coverage_before_write(ctx)
+
+    def test_empty_trace_passes_without_read_ranges(self, tmp_path, project_identity):
+        trace_path = tmp_path / "trace.jsonl"
+        trace_path.write_text("", encoding="utf-8")
+        deps = ContextDeps(
+            context_db_path=tmp_path / "context.sqlite3",
+            project_identity=project_identity,
+            session_id="sess_test",
+            trace_path=trace_path,
+            trace_total_lines=0,
+        )
+        ctx = make_run_context(deps)
         _require_full_trace_coverage_before_write(ctx)
 
     def test_full_coverage_passes(self, deps_with_trace):
@@ -637,6 +651,38 @@ class TestCreateRecord:
         parsed = json.loads(result)
         assert parsed["ok"] is True
 
+    def test_create_anchors_record_time_to_source_session(
+        self, deps_with_session, mock_embeddings
+    ):
+        ctx = make_run_context(deps_with_session)
+        result = create_record(
+            ctx,
+            kind="fact",
+            title="Historical source fact",
+            body="This fact was learned from a historical session.",
+        )
+        record = json.loads(result)["result"]
+
+        assert record["created_at"] == "2026-01-01T00:00:00Z"
+        assert record["updated_at"] == "2026-01-01T00:00:00Z"
+        assert record["valid_from"] == "2026-01-01T00:00:00Z"
+
+    def test_explicit_valid_from_overrides_source_session_time(
+        self, deps_with_session, mock_embeddings
+    ):
+        ctx = make_run_context(deps_with_session)
+        result = create_record(
+            ctx,
+            kind="fact",
+            title="Explicit validity fact",
+            body="This fact became valid at a specific time.",
+            valid_from="2026-02-01T00:00:00+00:00",
+        )
+        record = json.loads(result)["result"]
+
+        assert record["created_at"] == "2026-01-01T00:00:00Z"
+        assert record["valid_from"] == "2026-02-01T00:00:00+00:00"
+
     def test_missing_title_raises_retry(self, deps_with_session, mock_embeddings):
         ctx = make_run_context(deps_with_session)
         with pytest.raises(ModelRetry, match="non-empty title"):
@@ -658,6 +704,13 @@ class TestCreateRecord:
         with pytest.raises(ModelRetry, match="Unread trace lines"):
             create_record(ctx, kind="fact", title="t", body="b")
 
+    def test_guard_refuses_create_before_any_trace_read(
+        self, deps_with_trace, mock_embeddings
+    ):
+        ctx = make_run_context(deps_with_trace)
+        with pytest.raises(ModelRetry, match=r"trace_read\(offset=0"):
+            create_record(ctx, kind="fact", title="t", body="b")
+
     def test_guard_notes_before_long_trace(
         self, tmp_path, project_identity, mock_embeddings
     ):
@@ -673,6 +726,8 @@ class TestCreateRecord:
             project_identity=project_identity,
             session_id="sess_test",
             trace_path=trace_path,
+            trace_total_lines=200,
+            read_ranges=[(0, 200)],
         )
         ctx = make_run_context(deps)
         with pytest.raises(ModelRetry, match="trace_read chunk"):
@@ -763,6 +818,13 @@ class TestUpdateRecord:
         ctx = make_run_context(deps_with_trace)
         deps_with_trace.read_ranges = [(0, 5)]
         with pytest.raises(ModelRetry, match="Unread trace lines"):
+            update_record(ctx, record_id="rec_1", title="t")
+
+    def test_guard_refuses_update_before_any_trace_read(
+        self, deps_with_trace, mock_embeddings
+    ):
+        ctx = make_run_context(deps_with_trace)
+        with pytest.raises(ModelRetry, match=r"trace_read\(offset=0"):
             update_record(ctx, record_id="rec_1", title="t")
 
     def test_extract_requires_episode_before_update(
@@ -861,6 +923,28 @@ class TestSupersedeRecord:
         )
         parsed = json.loads(result)
         assert parsed["ok"] is True
+
+    def test_missing_replacement_raises_retry(self, deps, mock_embeddings):
+        ctx = make_run_context(deps)
+        store = ContextStore(deps.context_db_path)
+        store.initialize()
+        store.register_project(deps.project_identity)
+        _seed_session(store, deps.project_identity.project_id)
+        old = store.create_record(
+            project_id=deps.project_identity.project_id,
+            session_id="sess_test",
+            kind="fact",
+            title="Old fact",
+            body="Old body",
+        )
+
+        with pytest.raises(ModelRetry, match="replacement record"):
+            supersede_record(
+                ctx,
+                record_id=old["record_id"],
+                replacement_record_id="rec_missing",
+                reason="replaced",
+            )
 
 
 # ---------------------------------------------------------------------------

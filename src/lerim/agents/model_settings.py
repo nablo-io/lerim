@@ -6,8 +6,11 @@ from pydantic_ai.settings import ModelSettings
 
 
 # These agents do retrieval, classification, and store maintenance. We keep the
-# default sampling low-variance because release testing showed MiniMax M2.7 could
-# otherwise drift into valid-looking but unstable wording or tool sequencing.
-# If a provider behaves poorly at zero temperature, change this one constant and
-# rerun the agent integration suite instead of tuning each agent independently.
-LOW_VARIANCE_AGENT_MODEL_SETTINGS = ModelSettings(temperature=0.0, top_p=0.9)
+# default sampling low-variance without using zero-temperature. MiniMax rejects
+# exact zero and behaved poorly near-zero in live extraction, while fully
+# stochastic provider defaults made extraction wording too unstable.
+LOW_VARIANCE_AGENT_TEMPERATURE = 0.1
+LOW_VARIANCE_AGENT_MODEL_SETTINGS = ModelSettings(
+    temperature=LOW_VARIANCE_AGENT_TEMPERATURE,
+    top_p=0.9,
+)

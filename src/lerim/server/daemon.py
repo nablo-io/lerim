@@ -559,11 +559,10 @@ def _process_one_job(job: dict[str, Any]) -> dict[str, Any]:
 def _process_claimed_jobs(
     claimed: list[dict[str, Any]],
 ) -> tuple[int, int, int, float, dict[str, dict[str, Any]], list[dict[str, Any]]]:
-    """Process claimed jobs sequentially in chronological order.
+    """Process claimed jobs sequentially in the queue-selected order.
 
-    Jobs are already sorted oldest-first by ``claim_session_jobs``.
-    Sequential processing ensures that later sessions can correctly
-    update or supersede records created by earlier ones.
+    Normal sync claims newest-first to improve first-run backlog quality.  A
+    chronological replay caller can still ask the queue for oldest-first jobs.
 
     Returns
         (extracted, failed, skipped, cost_usd, projects_metrics, events).
@@ -752,7 +751,9 @@ def run_sync_once(
             skipped = len(target_run_ids)
         elif not dry_run:
             # Process up to max_sessions by claiming in a loop.
-            # Each claim returns 1 per project (chronological ordering).
+            # Each claim returns at most 1 job per project.  Normal backlog
+            # extraction is newest-first; explicit replay can request
+            # chronological order directly from the catalog API.
             # After processing, claim again to get the next session.
             total_processed = 0
             while total_processed < claim_limit:
@@ -763,6 +764,7 @@ def run_sync_once(
                 claimed = claim_session_jobs(
                     limit=claim_limit - total_processed,
                     run_ids=[run_id] if run_id else None,
+                    claim_order="newest",
                 )
                 if not claimed:
                     break  # no more pending jobs

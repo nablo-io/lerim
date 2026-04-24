@@ -48,6 +48,7 @@ Read one coding-agent trace, compress its signal, and write DB-backed context re
 - The episode record is mandatory for every session, even if you also create or update durable records.
 - Updating an existing durable record never replaces the required episode for the current session.
 - The run is not complete until the current session has its episode record.
+- Treat the trace as historical evidence from its source session time, not as live verification of current code.
 - On short traces where the session is already clear after reading, prefer to create the episode promptly rather than leaving it until the end.
 - Use `status="archived"` for the episode when the session is routine operational work with no durable signal. Use `status="active"` only when the episode itself remains useful context for future sessions.
 </outputs>
@@ -57,6 +58,7 @@ Durable signal means one of:
 {durable_signal_bullets}
 
 Implementation detail alone is not durable signal.
+A temporary code-state finding, audit observation, open task, or release-risk report is not durable by itself. Promote it only when the trace establishes a reusable project rule, unresolved constraint, stable dependency, or standing source of truth.
 </durable_signal>
 
 <quality_bar>
@@ -87,8 +89,16 @@ Implementation detail alone is not durable signal.
 - The injected existing-record manifest is only a shortlist. It is never enough evidence for `update_record`.
 - Use `fetch_records` before any `update_record`, and fetch each plausible target when several nearby records could match.
 - Use `update_record` only when a fetched record clearly carries the same meaning and needs repair. If the core claim differs, create a new record instead.
+- When the trace says an existing durable rule is correct but needs tightening, clarification, or a better why, fetch that record and update it rather than leaving the weaker wording unchanged.
 - Do not use `update_record` to polish a record you created earlier in the same run. Draft fresh records carefully and create them once.
+- `context_query` is intentionally not available in extraction. Extraction writes evidence-backed records; deterministic aggregate queries are reserved for ask.
 </tool_flow>
+
+<dashboards>
+- The system may inject `CONTEXT:` messages showing approximate context pressure. At soft or hard pressure, prune old trace chunks after their findings are captured.
+- The system may inject `NOTES:` messages summarizing findings and trace coverage. Use them as a progress dashboard, not as a replacement for reading unread trace lines.
+- `note` writes the findings dashboard for future turns; do not try to reread the dashboard with tools.
+</dashboards>
 
 <selection_rules>
 - First separate findings into durable signal and implementation evidence.
@@ -110,9 +120,11 @@ Implementation detail alone is not durable signal.
 - The instruction "do not invent a why" is extraction guidance, not project context.
 - When the trace contains one durable dependency or setup fact plus instructions about how to classify that same evidence, store only the dependency or setup fact. Do not turn the classification guidance into a separate `preference`.
 - If the trace explicitly rejects a lure or distraction, do not carry that rejected idea into the durable record text unless the rejection itself is the durable lesson.
+- If this older trace conflicts with newer existing active records, do not create a new active durable record for the older claim. Preserve the historical session in the episode and let the newer active record remain current.
 - If a long noisy investigation resolves into one source-of-truth boundary, store only that boundary. Keep discarded lures at the category level or leave them out entirely; do not list trace-local counters, timers, labels, or tuning knobs inside the durable record just to contrast them.
 - When a discarded lure matters as evidence, keep it attached to the main durable theme as implementation context rather than storing it as a second durable theme.
 - If the episode summary contains clearly reusable {durable_kind_text}, that point should usually also exist as its own durable record.
+- Do not leave a clearly reusable rule, invariant, dependency, source-of-truth pointer, or stable preference only inside the episode. The episode says what happened; the durable record stores what future sessions should reuse.
 - Durable records are additional project context, not a substitute for the session episode. Even when only one durable rule matters, still create the episode for what this session did.
 </selection_rules>
 
@@ -127,9 +139,11 @@ Implementation detail alone is not durable signal.
 - Do not write durable records as meeting minutes, patch logs, or cleanup commentary.
 - Do not preserve trace-local commands, negotiation phrasing, or "this is not about X" sentences in final record text.
 - Do not write a durable record whose body is mainly a warning that certain local details, cleanups, or implementation noise should be ignored.
+- Do not mention discarded implementation noise in durable record fields, including `consequences`. If details are non-durable, omit them entirely rather than saying they are non-durable.
 - When the durable lesson is a source-of-truth rule, write the authoritative rule directly. Do not pad it with a list of discarded implementation lures from the trace.
 - If a short contrast is still helpful, keep it abstract, such as "not worker-local state" or "not ephemeral local state". Do not enumerate examples in parentheses or comma-separated lists.
 - When updating an existing record, keep the durable meaning but rewrite it into canonical project-context language.
+- When writing from a historical trace, word durable records as source-backed context, not as freshly verified code inspection. Do not imply that a bug, missing capability, or release blocker is current unless the trace itself establishes that it remains unresolved as durable project context.
 - Facts from noisy failures must be rewritten into the underlying dependency, environment requirement, stakeholder driver, or operational fact.
 - If a fact still reads like stderr, an exception symptom, or copied command output, rewrite it again before writing.
 - When the durable lesson is an environment or dependency requirement, do not center the fact on the observed failure symptom. Name the requirement directly and mention the symptom only if it is needed as brief supporting context.
@@ -323,6 +337,7 @@ Update from a shortlist or search preview alone, force an update when the new cl
 - Put the plain-text completion summary in `completion_summary`.
 - Before `final_result`, ensure the current session already has exactly one episode record.
 - If you have created durable records but no episode yet, stop and create the episode before `final_result`.
+- If the episode contains the only copy of a reusable rule, invariant, dependency, source-of-truth pointer, or stable preference, stop and create the corresponding durable record before `final_result`.
 - Do not end with free-form assistant text outside `final_result`.
 </finalization>
 
@@ -383,6 +398,52 @@ def build_extract_agent(model: Model) -> Agent[ContextDeps, ExtractionResult]:
             raise ModelRetry(
                 "The run is not complete yet. Create exactly one episode record for the current session before final_result."
             )
+        durable_rows = [row for row in rows if str(row.get("kind") or "") != "episode"]
+        with store.connect() as conn:
+            changed_durable_count = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM record_versions
+                    WHERE changed_by_session_id = ?
+                      AND kind != 'episode'
+                    """,
+                    (ctx.deps.session_id,),
+                ).fetchone()[0]
+            )
+        if not durable_rows and changed_durable_count == 0:
+            episode_row = next(row for row in rows if str(row.get("kind") or "") == "episode")
+            episode_text = " ".join(
+                str(episode_row.get(field) or "")
+                for field in ("title", "body", "user_intent", "what_happened", "outcomes")
+            ).lower()
+            negative_markers = ("no durable", "not durable", "non-durable")
+            specific_durable_markers = (
+                "durable record",
+                "durable fact",
+                "durable decision",
+                "durable preference",
+                "durable constraint",
+                "durable reference",
+                "durable context",
+                "reusable pointer",
+                "standing preference",
+                "record created",
+            )
+            self_reported_durable = any(
+                marker in episode_text for marker in specific_durable_markers
+            ) or (
+                any(marker in episode_text for marker in ("durable", "reusable", "standing"))
+                and not any(marker in episode_text for marker in negative_markers)
+            )
+            if self_reported_durable:
+                raise ModelRetry(
+                    "The episode says the session produced durable or reusable context, "
+                    "but no durable record was created or updated. Create/update the "
+                    "corresponding durable fact, decision, preference, constraint, or "
+                    "reference before final_result; otherwise rewrite the episode so it "
+                    "truthfully says no durable context was preserved."
+                )
         return data
 
     return agent
@@ -404,7 +465,7 @@ def _format_existing_record_manifest(
         project_ids=[project_identity.project_id],
         status="active",
         order_by="updated_at",
-        limit=max(limit * 2, limit),
+        limit=max(1, limit * 2),
         include_total=False,
     )["rows"]
     durable_rows = [row for row in rows if str(row.get("kind") or "") != "episode"][:limit]
@@ -435,6 +496,7 @@ def run_extraction(
     trace_path: Path,
     model: Model,
     run_folder: Path,
+    session_started_at: str = "",
     return_messages: bool = False,
 ):
     """Run the extract agent on one trace."""
@@ -453,8 +515,10 @@ def run_extraction(
         session_id=session_id,
         trace_path=trace_path,
         run_folder=run_folder,
+        session_started_at=str(session_started_at or "").strip(),
         require_episode_before_durable_write=True,
     )
+    source_time_text = str(session_started_at or "").strip() or "unknown"
     result = agent.run_sync(
         (
             "Read the trace, write exactly one episode record, and write only the strongest "
@@ -463,6 +527,8 @@ def run_extraction(
             "Durable records must be positive canonical context: when trace text combines a "
             "durable point with cleanup/noise/ignore guidance, exclude that guidance entirely "
             "from the durable record. "
+            f"Source session started_at: {source_time_text}. Treat the trace as evidence from "
+            "that time, not as a fresh verification of the current repository. "
             f"This trace has {trace_line_count} lines. Read all chunks before writing. "
             "If the trace needs more than one trace_read to cover it, call note before any "
             "create_record or update_record. "
@@ -471,7 +537,7 @@ def run_extraction(
             + (f"\n\n{existing_record_manifest}" if existing_record_manifest else "")
         ),
         deps=deps,
-        usage_limits=UsageLimits(request_limit=compute_request_budget(trace_path)),
+        usage_limits=UsageLimits(request_limit=compute_request_budget(trace_path) + 4),
     )
     if return_messages:
         return result.output, list(result.all_messages())

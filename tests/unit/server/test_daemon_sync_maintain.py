@@ -300,6 +300,66 @@ def test_sync_runs_stale_reaper_before_claim(monkeypatch, tmp_path) -> None:
     assert len(reaper_calls) >= 1
 
 
+def test_sync_fresh_backlog_extracts_recent_sessions_first(
+    monkeypatch, tmp_path
+) -> None:
+    """Normal sync prioritizes recent sessions when backlog exceeds max_sessions."""
+    _setup(tmp_path, monkeypatch)
+    from lerim.sessions.catalog import IndexedSession
+
+    sessions_dir = tmp_path / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    items = [
+        ("run-old", "2026-02-20T08:00:00Z"),
+        ("run-mid", "2026-02-20T10:00:00Z"),
+        ("run-new", "2026-02-20T12:00:00Z"),
+    ]
+    for run_id, _start_time in items:
+        (sessions_dir / f"{run_id}.jsonl").write_text(
+            '{"role":"assistant","content":"ok"}\n',
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(
+        "lerim.server.daemon.index_new_sessions",
+        lambda **kw: [
+            IndexedSession(
+                run_id=run_id,
+                agent_type="codex",
+                session_path=str(sessions_dir / f"{run_id}.jsonl"),
+                start_time=start_time,
+                repo_path=str(tmp_path),
+                changed=False,
+            )
+            for run_id, start_time in items
+        ],
+    )
+    extracted_order: list[str] = []
+
+    def _fake_sync(self, *args, **kwargs):
+        extracted_order.append(str(kwargs.get("session_id") or ""))
+        return {"counts": {"add": 1, "update": 0, "no_op": 0}}
+
+    monkeypatch.setattr("lerim.server.runtime.LerimRuntime.sync", _fake_sync)
+
+    code, summary = daemon.run_sync_once(
+        run_id=None,
+        agent_filter=None,
+        no_extract=False,
+        force=False,
+        max_sessions=2,
+        dry_run=False,
+        ignore_lock=True,
+        trigger="test",
+        window_start=None,
+        window_end=None,
+    )
+
+    assert code == daemon.EXIT_OK
+    assert summary.extracted_sessions == 2
+    assert extracted_order == ["run-new", "run-mid"]
+
+
 def test_maintain_no_registered_projects_is_clean_noop(monkeypatch, tmp_path) -> None:
     """Maintain exits cleanly when no projects are registered."""
     cfg = make_config(tmp_path)

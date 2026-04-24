@@ -471,6 +471,86 @@ class TestShipSessions:
 		sessions = captured[0]["sessions"]
 		assert any("transcript_jsonl" in s for s in sessions)
 
+	def test_includes_project_for_known_repo_path(self, tmp_path):
+		"""Session payload includes configured project resolved from repo_path."""
+		db_path = tmp_path / "sessions.sqlite3"
+		_create_sessions_table(db_path)
+		project_dir = tmp_path / "alpha"
+		nested_dir = project_dir / "pkg"
+		nested_dir.mkdir(parents=True)
+		other_project = tmp_path / "beta"
+		other_project.mkdir()
+		_insert_session(
+			db_path,
+			"s-project",
+			"2026-03-20T01:00:00Z",
+			repo_path=str(nested_dir),
+			repo_name="alpha",
+		)
+
+		state = _ShipperState()
+		captured = []
+
+		async def mock_post(endpoint, path, token, payload):
+			"""Capture payload."""
+			captured.append(payload)
+			return True
+
+		with patch("lerim.cloud.shipper._post_batch", side_effect=mock_post):
+			shipped = asyncio.run(
+				_ship_sessions(
+					"https://api.test",
+					"tok",
+					state,
+					db_path,
+					{"alpha": str(project_dir), "beta": str(other_project)},
+				)
+			)
+
+		assert shipped == 1
+		assert captured[0]["sessions"][0]["project"] == "alpha"
+
+	def test_unresolved_repo_path_does_not_fall_back_to_first_project(self, tmp_path):
+		"""Unmatched session repo_path ships without bogus project attribution."""
+		db_path = tmp_path / "sessions.sqlite3"
+		_create_sessions_table(db_path)
+		alpha_dir = tmp_path / "alpha"
+		beta_dir = tmp_path / "beta"
+		unmatched_dir = tmp_path / "outside"
+		alpha_dir.mkdir()
+		beta_dir.mkdir()
+		unmatched_dir.mkdir()
+		_insert_session(
+			db_path,
+			"s-unresolved",
+			"2026-03-20T01:00:00Z",
+			repo_path=str(unmatched_dir),
+			repo_name="outside",
+		)
+
+		state = _ShipperState()
+		captured = []
+
+		async def mock_post(endpoint, path, token, payload):
+			"""Capture payload."""
+			captured.append(payload)
+			return True
+
+		with patch("lerim.cloud.shipper._post_batch", side_effect=mock_post):
+			shipped = asyncio.run(
+				_ship_sessions(
+					"https://api.test",
+					"tok",
+					state,
+					db_path,
+					{"alpha": str(alpha_dir), "beta": str(beta_dir)},
+				)
+			)
+
+		assert shipped == 1
+		assert "project" not in captured[0]["sessions"][0]
+		assert captured[0]["sessions"][0]["repo_name"] == "outside"
+
 
 # ---------------------------------------------------------------------------
 # _ship_logs

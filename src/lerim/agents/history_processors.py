@@ -23,13 +23,14 @@ from pydantic_ai.messages import (
 
 from lerim.agents.tools import (
     MODEL_CONTEXT_TOKEN_LIMIT,
-    PRUNED_STUB,
     _TOKENS_PER_CHAR,
     _classify_context_pressure,
     _first_uncovered_offset,
     ContextDeps,
 )
 from lerim.context.spec import DURABLE_FINDING_LEVELS, IMPLEMENTATION_FINDING_LEVELS
+
+PRUNED_STUB = "[pruned]"
 
 
 def notes_state_injector(

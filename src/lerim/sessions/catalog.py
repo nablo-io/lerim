@@ -25,6 +25,9 @@ JOB_STATUS_DONE = "done"
 JOB_STATUS_FAILED = "failed"
 JOB_STATUS_DEAD_LETTER = "dead_letter"
 SESSION_JOB_ACTIVE = {JOB_STATUS_PENDING, JOB_STATUS_RUNNING}
+SESSION_JOB_CLAIM_NEWEST = "newest"
+SESSION_JOB_CLAIM_OLDEST = "oldest"
+SESSION_JOB_CLAIM_ORDERS = {SESSION_JOB_CLAIM_NEWEST, SESSION_JOB_CLAIM_OLDEST}
 _DB_INIT_LOCK = threading.Lock()
 _DB_INITIALIZED_PATH: Path | None = None
 DEFAULT_RUNNING_JOB_LEASE_SECONDS = 30 * 60
@@ -629,30 +632,60 @@ def claim_session_jobs(
     limit: int = 20,
     run_ids: list[str] | None = None,
     job_type: str = JOB_TYPE_EXTRACT,
+    claim_order: str = SESSION_JOB_CLAIM_NEWEST,
 ) -> list[dict[str, Any]]:
-    """Claim available jobs and mark claimed rows as running."""
+    """Claim available jobs and mark claimed rows as running.
+
+    Normal backlog extraction claims the newest session per project first so a
+    fresh install surfaces recent corrections quickly.  Explicit historical
+    replay can pass ``claim_order="oldest"`` to preserve chronological
+    extraction semantics.
+    """
     _ensure_sessions_db_initialized()
     limit = max(1, int(limit))
+    if claim_order not in SESSION_JOB_CLAIM_ORDERS:
+        raise ValueError(
+            f"claim_order must be one of {sorted(SESSION_JOB_CLAIM_ORDERS)!r}"
+        )
     now = _utc_now()
     now_iso = now.isoformat()
+    if claim_order == SESSION_JOB_CLAIM_OLDEST:
+        per_project_order = (
+            "CASE WHEN start_time IS NULL OR start_time = '' THEN 1 ELSE 0 END ASC, "
+            "start_time ASC, available_at ASC, id ASC"
+        )
+        global_order = (
+            "CASE WHEN start_time IS NULL OR start_time = '' THEN 1 ELSE 0 END ASC, "
+            "start_time ASC, available_at ASC, id ASC"
+        )
+    else:
+        per_project_order = (
+            "CASE WHEN start_time IS NULL OR start_time = '' THEN 1 ELSE 0 END ASC, "
+            "start_time DESC, available_at ASC, id DESC"
+        )
+        global_order = (
+            "CASE WHEN start_time IS NULL OR start_time = '' THEN 1 ELSE 0 END ASC, "
+            "start_time DESC, available_at ASC, id DESC"
+        )
 
     with _connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
 
-        # Per-project ordered claiming: partition by repo_path, pick only
-        # the oldest non-terminal job per project.  If that oldest job is
-        # dead_letter the project is naturally excluded (blocked).  If it
-        # is failed with a future available_at it is also excluded (paused
-        # until retry window opens).
+        # Per-project ordered claiming: partition by repo_path, pick only one
+        # active job per project using the requested backlog policy.  Normal
+        # sync uses newest-first for first-run quality; chronological replay
+        # callers can request oldest-first explicitly.
         #
         # IMPORTANT: The run_id filter is applied in the outer query, NOT
-        # inside the CTE.  The CTE must see ALL non-terminal jobs so that
-        # dead_letter blockers are always visible in the partition.
-        # Otherwise a caller could bypass blocking by targeting specific
-        # run_ids that exclude the blocker.
+        # inside the CTE.  Dead-letter blockers are also checked per project
+        # outside the ranking CTE so no ordering mode or targeted run_id can
+        # bypass a project that needs operator intervention.
         run_id_filter = ""
         params: list[Any] = [
-            JOB_STATUS_PENDING, JOB_STATUS_FAILED, JOB_STATUS_DEAD_LETTER,
+            JOB_STATUS_DEAD_LETTER,
+            job_type,
+            JOB_STATUS_PENDING,
+            JOB_STATUS_FAILED,
             job_type,
         ]
 
@@ -667,21 +700,34 @@ def claim_session_jobs(
 
         rows = conn.execute(
             f"""
-            WITH oldest_per_project AS (
+            WITH dead_letter_projects AS (
+                SELECT DISTINCT repo_path
+                FROM session_jobs
+                WHERE status = ?
+                  AND job_type = ?
+                  AND repo_path IS NOT NULL AND repo_path != ''
+            ),
+            ranked_per_project AS (
                 SELECT *, ROW_NUMBER() OVER (
                     PARTITION BY repo_path
-                    ORDER BY start_time ASC, available_at ASC, id ASC
+                    ORDER BY {per_project_order}
                 ) AS rn
                 FROM session_jobs
-                WHERE status IN (?, ?, ?)
+                WHERE status IN (?, ?)
                   AND job_type = ?
                   AND repo_path IS NOT NULL AND repo_path != ''
             )
-            SELECT * FROM oldest_per_project
+            SELECT * FROM ranked_per_project
             WHERE rn = 1
               AND status IN (?, ?)
               AND available_at <= ?
+              AND NOT EXISTS (
+                SELECT 1
+                FROM dead_letter_projects
+                WHERE dead_letter_projects.repo_path = ranked_per_project.repo_path
+              )
               {run_id_filter}
+            ORDER BY {global_order}
             LIMIT ?
             """,
             params,

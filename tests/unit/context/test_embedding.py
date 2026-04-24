@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import numpy as np
+import pytest
 
 from lerim.context.embedding import (
     DEFAULT_EMBEDDING_MODEL_NAME,
@@ -84,11 +86,40 @@ class TestEmbeddingProviderInit:
         provider = EmbeddingProvider(model_id="", cache_dir=tmp_path)
         assert provider.model_id == DEFAULT_EMBEDDING_MODEL_NAME
 
+    def test_default_model_id_on_none(self, tmp_path):
+        provider = EmbeddingProvider(model_id=None, cache_dir=tmp_path)
+        assert provider.model_id == DEFAULT_EMBEDDING_MODEL_NAME
+
     def test_creates_model_dir(self, tmp_path):
         provider = EmbeddingProvider(model_id="org/model", cache_dir=tmp_path)
         expected = tmp_path / "org--model"
         assert provider.model_dir == expected
         assert expected.exists()
+
+    def test_permission_error_is_wrapped(self, tmp_path, monkeypatch):
+        def fail_mkdir(self, *_args, **_kwargs):
+            if self == tmp_path / "cache":
+                raise PermissionError("denied")
+            return None
+
+        monkeypatch.setattr(Path, "mkdir", fail_mkdir)
+        with pytest.raises(RuntimeError, match="embedding_cache_dir_not_writable"):
+            EmbeddingProvider(model_id="test/model", cache_dir=tmp_path / "cache")
+
+    def test_close_releases_cached_runtime_objects(self, tmp_path):
+        provider = EmbeddingProvider(model_id="test/model", cache_dir=tmp_path)
+        provider._tokenizer = MagicMock()
+        provider._session = MagicMock()
+        provider.close()
+        assert provider._tokenizer is None
+        assert provider._session is None
+
+    def test_context_manager_closes_provider(self, tmp_path):
+        with EmbeddingProvider(model_id="test/model", cache_dir=tmp_path) as provider:
+            provider._tokenizer = MagicMock()
+            provider._session = MagicMock()
+        assert provider._tokenizer is None
+        assert provider._session is None
 
 
 class TestEmbeddingProviderDimsProperty:

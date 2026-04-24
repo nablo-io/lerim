@@ -6,8 +6,6 @@ This module keeps the durable context model intentionally small:
 - one honest records table
 - one versions table for history
 - derived embedding + FTS tables for retrieval
-
-The store does not expose graph/evidence/findings tables in this repair pass.
 """
 
 from __future__ import annotations
@@ -44,8 +42,6 @@ QUERY_ENTITIES = ("records", "versions", "sessions")
 QUERY_MODES = ("list", "count")
 QUERY_ORDER_FIELDS = ("created_at", "updated_at", "valid_from")
 RRF_K = 60
-QUERY_ENTITY_ALIASES: dict[str, str] = {}
-QUERY_MODE_ALIASES: dict[str, str] = {}
 
 
 def _utc_now() -> str:
@@ -182,6 +178,9 @@ class ContextStore:
         try:
             yield conn
             conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()
 
@@ -303,6 +302,9 @@ class ContextStore:
                 """
             )
             self._validate_schema(conn)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_records_valid_until ON records(valid_until)"
+            )
             conn.execute(
                 """
                 INSERT INTO schema_meta(key, value)
@@ -579,6 +581,7 @@ class ContextStore:
             outcomes=outcomes,
         )
         with self.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             self._ensure_episode_uniqueness(
                 conn,
                 project_id=project_id,
@@ -653,101 +656,127 @@ class ContextStore:
         """Apply a partial update and append a version snapshot."""
         self.initialize()
         with self.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             current = conn.execute("SELECT * FROM records WHERE record_id = ?", (record_id,)).fetchone()
             if current is None:
                 raise ValueError(f"record_not_found:{record_id}")
-            merged = self._record_row_to_dict(current)
-            if project_ids and merged["project_id"] not in project_ids:
-                raise ValueError(f"record_out_of_scope:{record_id}")
-            now = _utc_now()
-            effective_updated_at = changes.get("updated_at", now)
-            payload = self._normalize_record_payload(
-                kind=changes.get("kind", merged["kind"]),
-                title=changes.get("title", merged["title"]),
-                body=changes.get("body", merged["body"]),
-                status=changes.get("status", merged["status"]),
-                source_session_id=merged["source_session_id"],
-                created_at=merged["created_at"],
-                updated_at=effective_updated_at,
-                valid_from=changes.get("valid_from", merged["valid_from"]),
-                valid_until=changes.get("valid_until", merged["valid_until"]),
-                superseded_by_record_id=changes.get(
-                    "superseded_by_record_id", merged["superseded_by_record_id"]
-                ),
-                decision=changes.get("decision", merged["decision"]),
-                why=changes.get("why", merged["why"]),
-                alternatives=changes.get("alternatives", merged["alternatives"]),
-                consequences=changes.get("consequences", merged["consequences"]),
-                user_intent=changes.get("user_intent", merged["user_intent"]),
-                what_happened=changes.get("what_happened", merged["what_happened"]),
-                outcomes=changes.get("outcomes", merged["outcomes"]),
-            )
-            self._ensure_episode_uniqueness(
+            self._update_record_in_conn(
                 conn,
-                project_id=merged["project_id"],
-                kind=payload["kind"],
-                session_id=payload["source_session_id"],
-                exclude_record_id=record_id,
+                current=current,
+                record_id=record_id,
+                session_id=session_id,
+                project_ids=project_ids,
+                changes=changes,
+                change_reason=change_reason,
+                change_kind_override=change_kind_override,
             )
-            conn.execute(
-                """
-                UPDATE records
-                SET kind=?, title=?, body=?, status=?, updated_at=?, valid_from=?,
-                    valid_until=?, superseded_by_record_id=?, decision=?, why=?,
-                    alternatives=?, consequences=?, user_intent=?, what_happened=?, outcomes=?
-                WHERE record_id=?
-                """,
-                (
-                    payload["kind"],
-                    payload["title"],
-                    payload["body"],
-                    payload["status"],
-                    payload["updated_at"],
-                    payload["valid_from"],
-                    payload["valid_until"],
-                    payload["superseded_by_record_id"],
-                    payload["decision"],
-                    payload["why"],
-                    payload["alternatives"],
-                    payload["consequences"],
-                    payload["user_intent"],
-                    payload["what_happened"],
-                    payload["outcomes"],
-                    record_id,
-                ),
+        return self.fetch_record(record_id, project_ids=project_ids, include_versions=True) or {}
+
+    def _update_record_in_conn(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        current: sqlite3.Row,
+        record_id: str,
+        session_id: str | None,
+        project_ids: list[str] | None,
+        changes: dict[str, Any],
+        change_reason: str | None,
+        change_kind_override: str | None,
+    ) -> dict[str, Any]:
+        """Apply one record update inside the caller's active transaction."""
+        merged = self._record_row_to_dict(current)
+        if project_ids and merged["project_id"] not in project_ids:
+            raise ValueError(f"record_out_of_scope:{record_id}")
+        now = _utc_now()
+        effective_updated_at = changes.get("updated_at", now)
+        payload = self._normalize_record_payload(
+            kind=changes.get("kind", merged["kind"]),
+            title=changes.get("title", merged["title"]),
+            body=changes.get("body", merged["body"]),
+            status=changes.get("status", merged["status"]),
+            source_session_id=merged["source_session_id"],
+            created_at=merged["created_at"],
+            updated_at=effective_updated_at,
+            valid_from=changes.get("valid_from", merged["valid_from"]),
+            valid_until=changes.get("valid_until", merged["valid_until"]),
+            superseded_by_record_id=changes.get(
+                "superseded_by_record_id", merged["superseded_by_record_id"]
+            ),
+            decision=changes.get("decision", merged["decision"]),
+            why=changes.get("why", merged["why"]),
+            alternatives=changes.get("alternatives", merged["alternatives"]),
+            consequences=changes.get("consequences", merged["consequences"]),
+            user_intent=changes.get("user_intent", merged["user_intent"]),
+            what_happened=changes.get("what_happened", merged["what_happened"]),
+            outcomes=changes.get("outcomes", merged["outcomes"]),
+        )
+        self._ensure_episode_uniqueness(
+            conn,
+            project_id=merged["project_id"],
+            kind=payload["kind"],
+            session_id=payload["source_session_id"],
+            exclude_record_id=record_id,
+        )
+        conn.execute(
+            """
+            UPDATE records
+            SET kind=?, title=?, body=?, status=?, updated_at=?, valid_from=?,
+                valid_until=?, superseded_by_record_id=?, decision=?, why=?,
+                alternatives=?, consequences=?, user_intent=?, what_happened=?, outcomes=?
+            WHERE record_id=?
+            """,
+            (
+                payload["kind"],
+                payload["title"],
+                payload["body"],
+                payload["status"],
+                payload["updated_at"],
+                payload["valid_from"],
+                payload["valid_until"],
+                payload["superseded_by_record_id"],
+                payload["decision"],
+                payload["why"],
+                payload["alternatives"],
+                payload["consequences"],
+                payload["user_intent"],
+                payload["what_happened"],
+                payload["outcomes"],
+                record_id,
+            ),
+        )
+        version_no = (
+            int(
+                conn.execute(
+                    "SELECT COALESCE(MAX(version_no), 0) FROM record_versions WHERE record_id = ?",
+                    (record_id,),
+                ).fetchone()[0]
             )
-            version_no = (
-                int(
-                    conn.execute(
-                        "SELECT COALESCE(MAX(version_no), 0) FROM record_versions WHERE record_id = ?",
-                        (record_id,),
-                    ).fetchone()[0]
-                )
-                + 1
-            )
-            change_kind = change_kind_override or ("archive" if payload["status"] == "archived" else "update")
-            self._insert_record_version(
+            + 1
+        )
+        change_kind = change_kind_override or ("archive" if payload["status"] == "archived" else "update")
+        self._insert_record_version(
+            conn,
+            project_id=merged["project_id"],
+            record_id=record_id,
+            version_no=version_no,
+            payload=payload,
+            change_kind=change_kind,
+            change_reason=change_reason,
+            changed_by_session_id=session_id,
+        )
+        needs_embedding_rebuild = self._ensure_record_embeddings_index(conn)
+        if needs_embedding_rebuild:
+            self._rebuild_embeddings(conn)
+        else:
+            self._upsert_embedding(
                 conn,
                 project_id=merged["project_id"],
                 record_id=record_id,
-                version_no=version_no,
-                payload=payload,
-                change_kind=change_kind,
-                change_reason=change_reason,
-                changed_by_session_id=session_id,
+                text=self._search_text(payload),
             )
-            needs_embedding_rebuild = self._ensure_record_embeddings_index(conn)
-            if needs_embedding_rebuild:
-                self._rebuild_embeddings(conn)
-            else:
-                self._upsert_embedding(
-                    conn,
-                    project_id=merged["project_id"],
-                    record_id=record_id,
-                    text=self._search_text(payload),
-                )
-            self._upsert_fts(conn, project_id=merged["project_id"], record_id=record_id, payload=payload)
-        return self.fetch_record(record_id, project_ids=project_ids, include_versions=True) or {}
+        self._upsert_fts(conn, project_id=merged["project_id"], record_id=record_id, payload=payload)
+        return payload
 
     def archive_record(
         self,
@@ -758,30 +787,39 @@ class ContextStore:
         reason: str | None = None,
     ) -> dict[str, Any]:
         """Archive an existing record."""
-        current = self.fetch_record(record_id, project_ids=project_ids, include_versions=False)
-        if current is None:
-            raise ValueError(f"record_not_found:{record_id}")
-        created_at = _parse_iso_utc(current.get("created_at"))
-        now = datetime.now(timezone.utc)
-        if (
-            str(current.get("status") or "") == "active"
-            and str(current.get("kind") or "") != "episode"
-            and not str(current.get("superseded_by_record_id") or "").strip()
-            and created_at is not None
-            and (now - created_at) < timedelta(hours=24)
-        ):
-            raise ValueError(f"refuse_archive_recent_active_record:{record_id}")
-        return self.update_record(
-            record_id=record_id,
-            session_id=session_id,
-            project_ids=project_ids,
-            changes={
-                "status": "archived",
-                "valid_until": str(current.get("valid_until") or _utc_now()),
-            },
-            change_reason=reason or "archive_record",
-            change_kind_override="archive",
-        )
+        self.initialize()
+        with self.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            current = conn.execute("SELECT * FROM records WHERE record_id = ?", (record_id,)).fetchone()
+            if current is None:
+                raise ValueError(f"record_not_found:{record_id}")
+            current_dict = self._record_row_to_dict(current)
+            if project_ids and current_dict["project_id"] not in project_ids:
+                raise ValueError(f"record_out_of_scope:{record_id}")
+            created_at = _parse_iso_utc(current_dict.get("created_at"))
+            now = datetime.now(timezone.utc)
+            if (
+                str(current_dict.get("status") or "") == "active"
+                and str(current_dict.get("kind") or "") != "episode"
+                and not str(current_dict.get("superseded_by_record_id") or "").strip()
+                and created_at is not None
+                and (now - created_at) < timedelta(hours=24)
+            ):
+                raise ValueError(f"refuse_archive_recent_active_record:{record_id}")
+            self._update_record_in_conn(
+                conn,
+                current=current,
+                record_id=record_id,
+                session_id=session_id,
+                project_ids=project_ids,
+                changes={
+                    "status": "archived",
+                    "valid_until": str(current_dict.get("valid_until") or _utc_now()),
+                },
+                change_reason=reason or "archive_record",
+                change_kind_override="archive",
+            )
+        return self.fetch_record(record_id, project_ids=project_ids, include_versions=True) or {}
 
     def supersede_record(
         self,
@@ -898,8 +936,8 @@ class ContextStore:
         include_archived: bool = False,
     ) -> dict[str, Any]:
         """Run a deterministic list/count query for records, versions, or sessions."""
-        entity_name = QUERY_ENTITY_ALIASES.get(str(entity or "").strip().lower(), str(entity or "").strip().lower())
-        mode_name = QUERY_MODE_ALIASES.get(str(mode or "").strip().lower(), str(mode or "").strip().lower())
+        entity_name = str(entity or "").strip().lower()
+        mode_name = str(mode or "").strip().lower()
         if entity_name not in QUERY_ENTITIES:
             raise ValueError(f"invalid_query_entity:{entity}")
         if mode_name not in QUERY_MODES:
@@ -1090,10 +1128,12 @@ class ContextStore:
         offset: int,
         include_total: bool,
     ) -> dict[str, Any]:
-        del source_session_id
         order_column = "created_at" if order_by in {"created_at", "updated_at", "valid_from"} else "created_at"
         clauses = ["1=1"]
         params: list[Any] = []
+        if source_session_id:
+            clauses.append("session_id = ?")
+            params.append(source_session_id)
         if project_ids:
             placeholders = ", ".join("?" for _ in project_ids)
             clauses.append(f"project_id IN ({placeholders})")

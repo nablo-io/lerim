@@ -25,6 +25,12 @@ def test_configure_logging_clears_existing_handlers() -> None:
     assert logger.propagate is True
 
 
+def test_configure_logging_keeps_anthropic_sdk_at_warning() -> None:
+    logging.getLogger("anthropic").setLevel(logging.INFO)
+    logging_mod.configure_logging("INFO")
+    assert logging.getLogger("anthropic").level == logging.WARNING
+
+
 def test_loguru_messages_do_not_use_percent_style_placeholders() -> None:
     source_root = Path(__file__).resolve().parents[2] / "src" / "lerim"
     pattern = re.compile(
@@ -55,4 +61,16 @@ def test_log_filter_suppresses_claude_sdk_spam_by_default(monkeypatch) -> None:
 def test_log_filter_can_enable_claude_sdk_spam(monkeypatch) -> None:
     monkeypatch.setenv("LERIM_LOG_CLAUDE_SDK", "1")
     record = {"message": "Using bundled Claude Code CLI: /tmp/claude"}
+    assert logging_mod._log_filter(record) is True
+
+
+def test_log_filter_suppresses_anthropic_sdk_spam_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("LERIM_LOG_ANTHROPIC_HTTP", raising=False)
+    record = {"name": "anthropic._base_client", "message": "Retrying request"}
+    assert logging_mod._log_filter(record) is False
+
+
+def test_log_filter_can_enable_anthropic_sdk_spam(monkeypatch) -> None:
+    monkeypatch.setenv("LERIM_LOG_ANTHROPIC_HTTP", "1")
+    record = {"name": "anthropic._base_client", "message": "Retrying request"}
     assert logging_mod._log_filter(record) is True

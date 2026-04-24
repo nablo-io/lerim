@@ -7,6 +7,7 @@ expected:
   durable_kind_any_of:
     - decision
     - fact
+    - constraint
   min_trace_read_calls: 2
   must_use_tools:
     - trace_read

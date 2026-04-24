@@ -48,6 +48,8 @@ def _log_filter(record: dict) -> bool:
     logger_name = str(record.get("name") or "")
     if logger_name.startswith("openai"):
         return _env_flag("LERIM_LOG_OPENAI_HTTP", default=False)
+    if logger_name.startswith("anthropic"):
+        return _env_flag("LERIM_LOG_ANTHROPIC_HTTP", default=False)
     if logger_name in ("asyncio", "httpx", "httpcore"):
         return False
     message = str(record.get("message") or "")
@@ -213,7 +215,7 @@ def configure_logging(level: str | None = None) -> None:
         logging.getLogger(name).propagate = True
 
     # Silence noisy third-party loggers
-    for noisy in ("httpx", "httpcore", "openai"):
+    for noisy in ("httpx", "httpcore", "openai", "anthropic"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 

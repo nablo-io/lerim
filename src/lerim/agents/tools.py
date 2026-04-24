@@ -27,7 +27,6 @@ MODEL_CONTEXT_TOKEN_LIMIT = 200_000
 CONTEXT_SOFT_PRESSURE_PCT = 0.60
 CONTEXT_HARD_PRESSURE_PCT = 0.80
 _TOKENS_PER_CHAR = 0.25
-PRUNED_STUB = "[pruned]"
 
 
 class Finding(BaseModel):
@@ -67,6 +66,7 @@ class ContextDeps:
     project_ids: list[str] | None = None
     trace_path: Path | None = None
     run_folder: Path | None = None
+    session_started_at: str = ""
     trace_total_lines: int = 0
     read_ranges: list[tuple[int, int]] = field(default_factory=list)
     notes: list[Finding] = field(default_factory=list)
@@ -82,6 +82,28 @@ def _store(ctx: RunContext[ContextDeps]) -> ContextStore:
     store.initialize()
     store.register_project(ctx.deps.project_identity)
     return store
+
+
+def _source_session_started_at(ctx: RunContext[ContextDeps], store: ContextStore) -> str:
+    """Return the source session start timestamp for record provenance."""
+    explicit = str(ctx.deps.session_started_at or "").strip()
+    if explicit:
+        return explicit
+    session_id = str(ctx.deps.session_id or "").strip()
+    if not session_id:
+        return ""
+    with store.connect() as conn:
+        row = conn.execute(
+            """
+            SELECT started_at
+            FROM sessions
+            WHERE session_id = ? AND project_id = ?
+            """,
+            (session_id, ctx.deps.project_identity.project_id),
+        ).fetchone()
+    if row is None:
+        return ""
+    return str(row["started_at"] or "").strip()
 
 
 def _trace_lines(trace_path: Path) -> list[str]:
@@ -455,8 +477,15 @@ def _require_full_trace_coverage_before_write(ctx: RunContext[ContextDeps]) -> N
             total_lines = sum(1 for _ in trace_path.open("r", encoding="utf-8"))
         except OSError:
             return
-    if not ctx.deps.read_ranges:
+        ctx.deps.trace_total_lines = total_lines
+    if total_lines <= 0:
         return
+    if not ctx.deps.read_ranges:
+        raise ModelRetry(
+            "No trace lines have been read yet. "
+            f"Call trace_read(offset=0, limit={TRACE_MAX_LINES_PER_READ}) "
+            "before you create or update records."
+        )
     next_offset = _first_uncovered_offset(ctx.deps.read_ranges, total_lines)
     if next_offset is None:
         return
@@ -540,6 +569,7 @@ def create_record(
     _require_episode_before_durable_write(ctx, store, normalized_kind)
     project_id = ctx.deps.project_identity.project_id
     session_id = ctx.deps.session_id
+    source_started_at = _source_session_started_at(ctx, store)
     try:
         result = store.create_record(
             project_id=project_id,
@@ -548,6 +578,7 @@ def create_record(
             title=title,
             body=body,
             status=_normalize_status(status),
+            created_at=source_started_at or None,
             valid_from=valid_from.strip() or None,
             valid_until=valid_until.strip() or None,
             decision=decision.strip() or None,
@@ -667,14 +698,29 @@ def supersede_record(
 ) -> str:
     """Mark one durable record as superseded by another."""
     store = _store(ctx)
-    result = store.supersede_record(
-        record_id=str(record_id or "").strip(),
-        session_id=ctx.deps.session_id,
-        project_ids=ctx.deps.project_ids or [ctx.deps.project_identity.project_id],
-        replacement_record_id=str(replacement_record_id or "").strip(),
-        reason=str(reason or "").strip() or None,
-        valid_until=str(valid_until or "").strip() or None,
-    )
+    try:
+        result = store.supersede_record(
+            record_id=str(record_id or "").strip(),
+            session_id=ctx.deps.session_id,
+            project_ids=ctx.deps.project_ids or [ctx.deps.project_identity.project_id],
+            replacement_record_id=str(replacement_record_id or "").strip(),
+            reason=str(reason or "").strip() or None,
+            valid_until=str(valid_until or "").strip() or None,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        if message.startswith("replacement_record_not_found:"):
+            raise ModelRetry(
+                "The replacement record does not exist in the current project scope. "
+                "Search or list records again, fetch the replacement, then retry with its record_id."
+            ) from exc
+        if message.startswith("record_not_found:") or message.startswith("record_out_of_scope:"):
+            raise ModelRetry(
+                "The record to supersede does not exist in the current project scope. "
+                "Search or list records again, fetch the target, then retry with its record_id."
+            ) from exc
+        _maybe_raise_record_retry(exc)
+        raise
     return json.dumps({"ok": True, "result": result}, ensure_ascii=True, indent=2)
 
 

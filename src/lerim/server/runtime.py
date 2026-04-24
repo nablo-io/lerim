@@ -405,6 +405,7 @@ class LerimRuntime:
 				trace_path=trace_file,
 				model=model,
 				run_folder=run_folder,
+				session_started_at=str(session_meta.get("started_at") or ""),
 				return_messages=True,
 			)
 

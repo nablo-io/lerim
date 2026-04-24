@@ -8,7 +8,10 @@ import pytest
 from pydantic import ValidationError
 from pydantic_ai.models import Model
 
-from lerim.agents.model_settings import LOW_VARIANCE_AGENT_MODEL_SETTINGS
+from lerim.agents.model_settings import (
+    LOW_VARIANCE_AGENT_MODEL_SETTINGS,
+    LOW_VARIANCE_AGENT_TEMPERATURE,
+)
 from lerim.agents.ask import (
     ASK_SYSTEM_PROMPT,
     AskResult,
@@ -31,6 +34,13 @@ def _make_model() -> Model:
 
 def _get_tool_names(agent) -> set[str]:
     return set(agent._function_toolset.tools.keys())
+
+
+def test_shared_low_variance_settings_use_positive_nonzero_temperature():
+    """Agent settings keep variance down without sending MiniMax-hostile zero."""
+    assert LOW_VARIANCE_AGENT_MODEL_SETTINGS["temperature"] == LOW_VARIANCE_AGENT_TEMPERATURE
+    assert 0.0 < LOW_VARIANCE_AGENT_TEMPERATURE < 1.0
+    assert LOW_VARIANCE_AGENT_MODEL_SETTINGS["top_p"] == 0.9
 
 
 class TestBuildExtractAgent:

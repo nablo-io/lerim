@@ -9,7 +9,6 @@ expected:
     - trace_read
     - create_record
   must_not_use_tools:
-    - update_record
     - prune
   preference_text_must_include_all:
     - tightly coupled

@@ -5,9 +5,15 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 
+from lerim.agents.model_settings import (
+	LOW_VARIANCE_AGENT_MODEL_SETTINGS,
+	LOW_VARIANCE_AGENT_TEMPERATURE,
+)
 from lerim.config.providers import (
+	MINIMAX_TEMPERATURE_FLOOR,
 	_api_key_for_provider,
 	build_pydantic_model,
 	build_pydantic_model_from_provider,
@@ -79,6 +85,48 @@ def test_build_pydantic_model_ollama_no_key(tmp_path) -> None:
 	)
 	model = build_pydantic_model("agent", config=cfg)
 	assert model is not None
+
+
+def test_build_pydantic_model_minimax_agent_settings_keep_positive_temperature(tmp_path) -> None:
+	"""MiniMax request prep must preserve the provider floor when agent settings omit temperature."""
+	cfg = make_config(tmp_path)
+	cfg = replace(
+		cfg,
+		agent_role=RoleConfig(
+			provider="minimax",
+			model="MiniMax-M2.7",
+			temperature=0.0,
+		),
+		minimax_api_key="mm-key",
+	)
+	model = build_pydantic_model("agent", config=cfg)
+
+	prepared_settings, _ = model.prepare_request(
+		LOW_VARIANCE_AGENT_MODEL_SETTINGS,
+		ModelRequestParameters(),
+	)
+
+	assert prepared_settings is not None
+	assert prepared_settings["temperature"] == LOW_VARIANCE_AGENT_TEMPERATURE
+	assert prepared_settings["temperature"] > 0.0
+	assert prepared_settings["temperature"] > MINIMAX_TEMPERATURE_FLOOR
+	assert prepared_settings["top_p"] == LOW_VARIANCE_AGENT_MODEL_SETTINGS["top_p"]
+
+
+def test_build_pydantic_model_minimax_uses_explicit_http_client(tmp_path) -> None:
+	"""MiniMax must not rely on the Anthropic SDK's noisy wrapper finalizer."""
+	cfg = make_config(tmp_path)
+	cfg = replace(
+		cfg,
+		agent_role=RoleConfig(provider="minimax", model="MiniMax-M2.7"),
+		minimax_api_key="mm-key",
+	)
+	model = build_pydantic_model("agent", config=cfg)
+
+	client = model.client
+
+	assert client.max_retries == 5
+	assert type(client._client).__name__ != "AsyncHttpxClientWrapper"
 
 
 def test_build_pydantic_model_requires_available_fallback_keys(tmp_path) -> None:
