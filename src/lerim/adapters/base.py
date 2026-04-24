@@ -52,6 +52,7 @@ class SessionRecord:
     error_count: int = 0
     total_tokens: int = 0
     summaries: list[str] = field(default_factory=list)
+    content_hash: str | None = None
 
 
 class Adapter(Protocol):

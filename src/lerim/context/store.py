@@ -861,29 +861,34 @@ class ContextStore:
         """Run hybrid retrieval over records."""
         self.initialize()
         config = get_config()
-        semantic_rows = self._semantic_candidates(
-            project_ids=project_ids,
-            query=query,
-            kind_filters=kind_filters,
-            statuses=statuses,
-            valid_at=valid_at,
-            include_archived=include_archived,
-            limit=max(limit * 3, config.semantic_shortlist_size),
-        )
-        lexical_rows = self._lexical_candidates(
-            project_ids=project_ids,
-            query=query,
-            kind_filters=kind_filters,
-            statuses=statuses,
-            valid_at=valid_at,
-            include_archived=include_archived,
-            limit=max(limit * 3, config.lexical_shortlist_size),
-        )
-        combined = self._rrf_fuse(semantic_rows=semantic_rows, lexical_rows=lexical_rows)
-        if not combined:
-            return []
-        top_ids = [record_id for record_id, _score, _sources in combined[:limit]]
         with self.connect() as conn:
+            self._prepare_search_embeddings(conn)
+            conn.commit()
+            conn.execute("BEGIN")
+            semantic_rows = self._semantic_candidates(
+                project_ids=project_ids,
+                query=query,
+                kind_filters=kind_filters,
+                statuses=statuses,
+                valid_at=valid_at,
+                include_archived=include_archived,
+                limit=max(limit * 3, config.semantic_shortlist_size),
+                conn=conn,
+            )
+            lexical_rows = self._lexical_candidates(
+                project_ids=project_ids,
+                query=query,
+                kind_filters=kind_filters,
+                statuses=statuses,
+                valid_at=valid_at,
+                include_archived=include_archived,
+                limit=max(limit * 3, config.lexical_shortlist_size),
+                conn=conn,
+            )
+            combined = self._rrf_fuse(semantic_rows=semantic_rows, lexical_rows=lexical_rows)
+            if not combined:
+                return []
+            top_ids = [record_id for record_id, _score, _sources in combined[:limit]]
             placeholders = ", ".join("?" for _ in top_ids)
             rows = conn.execute(
                 f"SELECT * FROM records WHERE record_id IN ({placeholders})",
@@ -933,7 +938,7 @@ class ContextStore:
         limit: int = 20,
         offset: int = 0,
         include_total: bool = False,
-        include_archived: bool = False,
+        include_archived: bool | None = None,
     ) -> dict[str, Any]:
         """Run a deterministic list/count query for records, versions, or sessions."""
         entity_name = str(entity or "").strip().lower()
@@ -945,6 +950,18 @@ class ContextStore:
         order_field = str(order_by or "created_at").strip()
         if order_field not in QUERY_ORDER_FIELDS:
             raise ValueError(f"invalid_query_order:{order_by}")
+        unsupported_filters = self._unsupported_query_filters(
+            entity_name=entity_name,
+            kind=kind,
+            status=status,
+            updated_since=updated_since,
+            updated_until=updated_until,
+            valid_at=valid_at,
+            include_archived=include_archived,
+        )
+        if unsupported_filters:
+            filter_names = ",".join(unsupported_filters)
+            raise ValueError(f"unsupported_query_filter:{entity_name}:{filter_names}")
 
         self.initialize()
         if entity_name == "records":
@@ -963,7 +980,7 @@ class ContextStore:
                 limit=limit,
                 offset=offset,
                 include_total=include_total,
-                include_archived=include_archived,
+                include_archived=bool(include_archived),
             )
         if entity_name == "versions":
             return self._query_versions(
@@ -993,6 +1010,35 @@ class ContextStore:
             offset=offset,
             include_total=include_total,
         )
+
+    def _unsupported_query_filters(
+        self,
+        *,
+        entity_name: str,
+        kind: str | None,
+        status: str | None,
+        updated_since: str | None,
+        updated_until: str | None,
+        valid_at: str | None,
+        include_archived: bool | None,
+    ) -> list[str]:
+        """Return query filters that are not meaningful for one entity."""
+        unsupported: list[str] = []
+        if entity_name == "sessions":
+            unsupported.extend(
+                name
+                for name, value in (
+                    ("kind", kind),
+                    ("status", status),
+                    ("updated_since", updated_since),
+                    ("updated_until", updated_until),
+                    ("valid_at", valid_at),
+                )
+                if value is not None
+            )
+        if entity_name in {"sessions", "versions"} and include_archived is not None:
+            unsupported.append("include_archived")
+        return unsupported
 
     def _query_records(
         self,
@@ -1391,6 +1437,12 @@ class ContextStore:
                 text=self._search_text(payload),
             )
 
+    def _prepare_search_embeddings(self, conn: sqlite3.Connection) -> None:
+        """Ensure semantic search sees a complete derived embedding table."""
+        needs_embedding_rebuild = self._ensure_record_embeddings_index(conn)
+        if needs_embedding_rebuild:
+            self._rebuild_embeddings(conn)
+
     def _build_record_filter_sql(
         self,
         *,
@@ -1512,6 +1564,7 @@ class ContextStore:
         valid_at: str | None,
         include_archived: bool,
         limit: int,
+        conn: sqlite3.Connection | None = None,
     ) -> list[tuple[str, float]]:
         """Return ranked semantic candidates from sqlite-vec nearest neighbors."""
         provider = get_embedding_provider()
@@ -1534,12 +1587,11 @@ class ContextStore:
         if project_ids and len(project_ids) == 1:
             vector_filter_sql = " AND record_embeddings.project_id = ?"
             vector_filter_params.append(project_ids[0])
-        with self.connect() as conn:
-            needs_embedding_rebuild = self._ensure_record_embeddings_index(conn)
-            if needs_embedding_rebuild:
-                self._rebuild_embeddings(conn)
+
+        def read_candidates(active_conn: sqlite3.Connection) -> list[sqlite3.Row]:
+            """Read filtered semantic candidates from one active connection."""
             max_candidates = int(
-                conn.execute(
+                active_conn.execute(
                     f"SELECT COUNT(*) FROM record_embeddings WHERE 1=1{vector_filter_sql}",
                     tuple(vector_filter_params),
                 ).fetchone()[0]
@@ -1549,7 +1601,7 @@ class ContextStore:
                 candidate_limit = min(max_candidates, max(candidate_limit, int(limit) * 4))
             rows: list[sqlite3.Row] = []
             while candidate_limit > 0:
-                rows = conn.execute(
+                rows = active_conn.execute(
                     f"""
                     SELECT records.record_id, record_embeddings.distance
                     FROM record_embeddings
@@ -1566,6 +1618,14 @@ class ContextStore:
                 if len(rows) >= limit or candidate_limit >= max_candidates:
                     break
                 candidate_limit = min(max_candidates, max(candidate_limit * 2, candidate_limit + 1))
+            return rows
+
+        if conn is None:
+            with self.connect() as active_conn:
+                self._prepare_search_embeddings(active_conn)
+                rows = read_candidates(active_conn)
+        else:
+            rows = read_candidates(conn)
         return [(str(row["record_id"]), float(row["distance"])) for row in rows]
 
     def _lexical_candidates(
@@ -1578,6 +1638,7 @@ class ContextStore:
         valid_at: str | None,
         include_archived: bool,
         limit: int,
+        conn: sqlite3.Connection | None = None,
     ) -> list[tuple[str, float]]:
         """Return ranked lexical candidates from SQLite FTS."""
         compiled_query = _compile_safe_fts_query(query)
@@ -1596,8 +1657,10 @@ class ContextStore:
             include_archived=include_archived,
             table_alias="records",
         )
-        with self.connect() as conn:
-            rows = conn.execute(
+
+        def read_candidates(active_conn: sqlite3.Connection) -> list[sqlite3.Row]:
+            """Read filtered lexical candidates from one active connection."""
+            return active_conn.execute(
                 f"""
                 SELECT records.record_id, bm25(records_fts) AS rank_score
                 FROM records_fts
@@ -1608,6 +1671,12 @@ class ContextStore:
                 """,
                 tuple([compiled_query] + params + [limit]),
             ).fetchall()
+
+        if conn is None:
+            with self.connect() as active_conn:
+                rows = read_candidates(active_conn)
+        else:
+            rows = read_candidates(conn)
         return [(str(row["record_id"]), float(row["rank_score"])) for row in rows]
 
     def _rrf_fuse(

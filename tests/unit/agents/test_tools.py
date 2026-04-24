@@ -305,8 +305,13 @@ class TestTraceRead:
 
     def test_offset_past_end(self, deps_with_trace):
         ctx = make_run_context(deps_with_trace)
-        result = trace_read(ctx, offset=100)
-        assert "[10 lines" in result
+        with pytest.raises(ModelRetry, match="past the end"):
+            trace_read(ctx, offset=100)
+
+    def test_negative_offset_clamped_to_start(self, deps_with_trace):
+        ctx = make_run_context(deps_with_trace)
+        result = trace_read(ctx, offset=-20, limit=2)
+        assert "showing 1-2" in result
 
     def test_limit_zero_clamped(self, deps_with_trace):
         ctx = make_run_context(deps_with_trace)
@@ -416,6 +421,7 @@ class TestRequireNotesBeforeLongTraceWrite:
             project_identity=project_identity,
             session_id="sess_test",
             trace_path=trace_path,
+            read_ranges=[(0, 200)],
             notes=[Finding(theme="t", offset=0, quote="q", level="fact")],
         )
         ctx = make_run_context(deps)
@@ -423,6 +429,7 @@ class TestRequireNotesBeforeLongTraceWrite:
 
     def test_short_trace_passes(self, deps_with_trace):
         ctx = make_run_context(deps_with_trace)
+        deps_with_trace.read_ranges = [(0, 10)]
         _require_notes_before_long_trace_write(ctx)
 
     def test_long_trace_no_notes_raises(self, tmp_path, project_identity):
@@ -433,6 +440,7 @@ class TestRequireNotesBeforeLongTraceWrite:
             project_identity=project_identity,
             session_id="sess_test",
             trace_path=trace_path,
+            read_ranges=[(0, 200)],
         )
         ctx = make_run_context(deps)
         with pytest.raises(ModelRetry, match="trace_read chunk"):
@@ -478,6 +486,30 @@ class TestSearchRecords:
         assert "count" in parsed
         assert "hits" in parsed
 
+    def test_normalizes_filter_lists(self, deps, mock_embeddings):
+        ctx = make_run_context(deps)
+        store = ContextStore(deps.context_db_path)
+        store.initialize()
+        store.register_project(deps.project_identity)
+        _seed_session(store, deps.project_identity.project_id)
+        store.create_record(
+            project_id=deps.project_identity.project_id,
+            session_id="sess_test",
+            kind="fact",
+            title="Normalized filter fact",
+            body="The filter normalization path should still find this record.",
+        )
+
+        result = search_records(
+            ctx,
+            query="filter normalization",
+            kind_filters=[" Fact "],
+            status_filters=[" Active "],
+        )
+        parsed = json.loads(result)
+
+        assert parsed["count"] >= 1
+
     def test_valid_at_includes_archived_history(self, deps, mock_embeddings):
         ctx = make_run_context(deps)
         store = ContextStore(deps.context_db_path)
@@ -520,12 +552,12 @@ class TestListRecords:
 
     def test_multiple_kind_filters_raise_retry(self, deps):
         ctx = make_run_context(deps)
-        with pytest.raises(ModelRetry, match="at most one kind filter"):
+        with pytest.raises(ModelRetry, match="at most 1 value"):
             list_records(ctx, kind_filters=["decision", "fact"])
 
     def test_multiple_status_filters_raise_retry(self, deps):
         ctx = make_run_context(deps)
-        with pytest.raises(ModelRetry, match="at most one status filter"):
+        with pytest.raises(ModelRetry, match="at most 1 value"):
             list_records(ctx, status_filters=["active", "archived"])
 
     def test_valid_order_by(self, deps):
@@ -581,8 +613,8 @@ class TestFetchRecords:
 
     def test_invalid_response_format(self, deps):
         ctx = make_run_context(deps)
-        result = fetch_records(ctx, record_ids=["rec_1"], response_format="yaml")
-        assert "Error" in result
+        with pytest.raises(ModelRetry, match="response_format"):
+            fetch_records(ctx, record_ids=["rec_1"], response_format="yaml")
 
     def test_nonexistent_record_returns_empty(self, deps):
         ctx = make_run_context(deps)
@@ -770,23 +802,11 @@ class TestCreateRecord:
                 what_happened="Tried to write a second episode.",
             )
 
-    def test_extract_requires_episode_before_durable_create(
+    def test_extract_allows_durable_create_before_episode(
         self, deps_with_session, mock_embeddings
     ):
-        deps_with_session.require_episode_before_durable_write = True
         ctx = make_run_context(deps_with_session)
 
-        with pytest.raises(ModelRetry, match="episode record"):
-            create_record(ctx, kind="fact", title="Fact", body="Reusable fact.")
-
-        create_record(
-            ctx,
-            kind="episode",
-            title="Session summary",
-            body="The extractor read the trace and captured useful context.",
-            user_intent="Capture durable context from a coding session.",
-            what_happened="Read the trace and prepared durable records.",
-        )
         result = create_record(ctx, kind="fact", title="Fact", body="Reusable fact.")
 
         assert json.loads(result)["ok"] is True
@@ -827,7 +847,7 @@ class TestUpdateRecord:
         with pytest.raises(ModelRetry, match=r"trace_read\(offset=0"):
             update_record(ctx, record_id="rec_1", title="t")
 
-    def test_extract_requires_episode_before_update(
+    def test_update_does_not_require_episode_ordering(
         self, deps_with_session, mock_embeddings
     ):
         ctx = make_run_context(deps_with_session)
@@ -841,10 +861,10 @@ class TestUpdateRecord:
             title="Old title",
             body="Old body",
         )
-        deps_with_session.require_episode_before_durable_write = True
 
-        with pytest.raises(ModelRetry, match="episode record"):
-            update_record(ctx, record_id=rec["record_id"], title="New title")
+        result = update_record(ctx, record_id=rec["record_id"], title="New title")
+
+        assert json.loads(result)["ok"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -1092,6 +1112,7 @@ class TestNote:
 class TestPrune:
     def test_marks_offsets(self, deps):
         ctx = make_run_context(deps)
+        deps.read_ranges = [(0, 10), (100, 110)]
         result = prune(ctx, trace_offsets=[0, 100])
         assert "2 new" in result
         assert 0 in deps.pruned_offsets
@@ -1104,13 +1125,21 @@ class TestPrune:
 
     def test_deduplication(self, deps):
         ctx = make_run_context(deps)
+        deps.read_ranges = [(0, 10), (100, 110), (200, 210)]
         prune(ctx, trace_offsets=[0, 100])
         result = prune(ctx, trace_offsets=[0, 200])
         assert "1 new" in result
         assert len(deps.pruned_offsets) == 3
 
+    def test_rejects_unread_offset(self, deps):
+        ctx = make_run_context(deps)
+        deps.read_ranges = [(0, 10)]
+        with pytest.raises(ModelRetry, match="Cannot prune unread"):
+            prune(ctx, trace_offsets=[100])
+
     def test_runtime_only_no_db(self, deps):
         ctx = make_run_context(deps)
+        deps.read_ranges = [(5, 15)]
         prune(ctx, trace_offsets=[5])
         assert 5 in deps.pruned_offsets
 

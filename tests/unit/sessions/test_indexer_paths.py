@@ -7,7 +7,11 @@ from types import SimpleNamespace
 
 from lerim.config.settings import reload_config
 from lerim.sessions import catalog
-from lerim.sessions.catalog import get_indexed_run_ids, index_session_for_fts
+from lerim.sessions.catalog import (
+    fetch_session_doc,
+    get_indexed_run_ids,
+    index_session_for_fts,
+)
 from tests.helpers import write_test_config
 
 
@@ -30,6 +34,7 @@ class _FakeAdapter:
                 error_count=0,
                 total_tokens=42,
                 summaries=["implemented fix"],
+                content_hash="hash-new",
             )
         ]
 
@@ -52,6 +57,7 @@ class _FakeCursorAdapter(_FakeAdapter):
                 error_count=0,
                 total_tokens=42,
                 summaries=["implemented fix"],
+                content_hash="hash-cursor",
             )
         ]
 
@@ -100,10 +106,10 @@ def test_index_new_sessions_cursor_path_ingestion(monkeypatch, tmp_path: Path) -
     assert out[0].run_id == "run-cursor-1"
 
 
-def test_index_new_sessions_marks_changed_when_id_already_known(
+def test_index_new_sessions_marks_changed_when_known_hash_differs(
     monkeypatch, tmp_path: Path
 ) -> None:
-    """index_new_sessions sets changed=True when a known run_id is re-indexed."""
+    """index_new_sessions sets changed=True when a known session hash changes."""
     config_path = write_test_config(tmp_path)
     monkeypatch.setenv("LERIM_CONFIG", str(config_path))
     reload_config()
@@ -113,11 +119,11 @@ def test_index_new_sessions_marks_changed_when_id_already_known(
         run_id="run-x",
         agent_type="codex",
         content="old content",
+        content_hash="hash-old",
     )
 
-    # The adapter does NOT filter by known_run_ids in this fake,
-    # so it will return run-x even though it's already indexed.
-    # Catalog should mark it as changed=True.
+    # Catalog scans known sessions so it can compare hashes and refresh rows.
+    # The changed flag should only be true when an indexed hash differs.
     class _FakeAdapterNoSkip:
         @staticmethod
         def iter_sessions(traces_dir, start=None, end=None, known_run_ids=None):
@@ -136,6 +142,7 @@ def test_index_new_sessions_marks_changed_when_id_already_known(
                     error_count=0,
                     total_tokens=42,
                     summaries=["implemented fix"],
+                    content_hash="hash-new",
                 )
             ]
 
@@ -159,6 +166,71 @@ def test_index_new_sessions_marks_changed_when_id_already_known(
     # Verify the run_id is tracked
     ids = get_indexed_run_ids()
     assert "run-x" in ids
+
+
+def test_index_new_sessions_refreshes_known_unchanged_rows(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Known sessions are refreshed without being marked changed when hashes match."""
+    config_path = write_test_config(tmp_path)
+    monkeypatch.setenv("LERIM_CONFIG", str(config_path))
+    reload_config()
+
+    index_session_for_fts(
+        run_id="run-refresh",
+        agent_type="codex",
+        content="old content",
+        summaries='["old summary"]',
+        content_hash="same-hash",
+    )
+    observed_known_args: list[set[str] | None] = []
+
+    class _FakeAdapterRefresh:
+        @staticmethod
+        def iter_sessions(traces_dir, start=None, end=None, known_run_ids=None):
+            _ = (traces_dir, start, end)
+            observed_known_args.append(known_run_ids)
+            return [
+                SimpleNamespace(
+                    run_id="run-refresh",
+                    agent_type="codex",
+                    session_path="/tmp/run-refresh.jsonl",
+                    start_time="2026-02-14T00:00:00+00:00",
+                    repo_path=None,
+                    repo_name="repo-refresh",
+                    status="completed",
+                    duration_ms=100,
+                    message_count=2,
+                    tool_call_count=1,
+                    error_count=0,
+                    total_tokens=42,
+                    summaries=["new summary"],
+                    content_hash="same-hash",
+                )
+            ]
+
+    monkeypatch.setattr(
+        catalog.adapter_registry,
+        "get_connected_platform_paths",
+        lambda _p: {"codex": Path("/tmp")},
+    )
+    monkeypatch.setattr(
+        catalog.adapter_registry, "get_connected_agents", lambda _p: ["codex"]
+    )
+    monkeypatch.setattr(
+        catalog.adapter_registry, "get_adapter", lambda _name: _FakeAdapterRefresh
+    )
+
+    out = catalog.index_new_sessions(return_details=True)
+
+    assert observed_known_args == [None]
+    assert len(out) == 1
+    assert out[0].run_id == "run-refresh"
+    assert out[0].changed is False
+    doc = fetch_session_doc("run-refresh")
+    assert doc is not None
+    assert doc["summary_text"] == "new summary"
+    assert doc["content_hash"] == "same-hash"
 
 
 def test_index_new_sessions_marks_new_as_not_changed(

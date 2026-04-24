@@ -16,7 +16,6 @@ from lerim.agents.ask import (
     ASK_SYSTEM_PROMPT,
     AskResult,
     build_ask_agent,
-    format_ask_hints,
 )
 from lerim.agents.extract import SYSTEM_PROMPT, ExtractionResult, build_extract_agent
 from lerim.agents.maintain import (
@@ -199,33 +198,3 @@ class TestAskResultSchema:
     def test_field_required(self):
         with pytest.raises(ValidationError):
             AskResult()
-
-
-class TestFormatAskHints:
-    """Tests for format_ask_hints helper."""
-
-    def test_empty_hits(self):
-        result = format_ask_hints([], [])
-        assert result == "(no pre-fetched hints)"
-
-    def test_populated_hits(self):
-        hits = [
-            {
-                "kind": "decision",
-                "title": "Use typed tools",
-                "body_preview": "No raw SQL",
-            },
-            {
-                "kind": "fact",
-                "title": "libvips required",
-                "body_preview": "Image workflows",
-            },
-        ]
-        result = format_ask_hints(hits, [])
-        assert "[decision] Use typed tools: No raw SQL" in result
-        assert "[fact] libvips required: Image workflows" in result
-
-    def test_missing_fields_use_defaults(self):
-        hits = [{}]
-        result = format_ask_hints(hits, [])
-        assert "[?]" in result

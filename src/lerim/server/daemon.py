@@ -731,7 +731,7 @@ def run_sync_once(
                         session_path=item.session_path,
                         start_time=item.start_time,
                         trigger=trigger,
-                        force=item.changed,
+                        force=force or item.changed,
                         repo_path=str(project_path),
                     )
                     if queued:
@@ -877,7 +877,6 @@ def run_sync_once(
 
 def run_maintain_once(
     *,
-    force: bool,
     dry_run: bool,
     trigger: str = "manual",
 ) -> tuple[int, dict]:

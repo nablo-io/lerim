@@ -519,7 +519,7 @@ def api_sync(
     dry_run: bool = False,
     ignore_lock: bool = False,
 ) -> dict[str, Any]:
-    """Run one sync cycle and return summary dict."""
+    """Run one blocking sync cycle and return a summary dict."""
     config = get_config()
     window_start, window_end = resolve_window_bounds(
         window=window or f"{config.sync_window_days}d",
@@ -550,11 +550,11 @@ def api_sync(
     return payload
 
 
-def api_maintain(force: bool = False, dry_run: bool = False) -> dict[str, Any]:
-    """Run one maintain cycle and return result dict."""
+def api_maintain(dry_run: bool = False) -> dict[str, Any]:
+    """Run one blocking maintain cycle and return a result dict."""
     config = get_config()
     with ollama_lifecycle(config):
-        code, payload = run_maintain_once(force=force, dry_run=dry_run)
+        code, payload = run_maintain_once(dry_run=dry_run)
     queue_health = queue_health_snapshot()
     result: dict[str, Any] = {"code": code, **payload, "queue_health": queue_health}
     if queue_health.get("degraded"):
@@ -903,36 +903,52 @@ def api_connect(platform: str, path: str | None = None) -> dict[str, Any]:
 
 def api_retry_job(run_id: str) -> dict[str, Any]:
     """Retry a dead_letter job, returning result."""
-    ok = retry_session_job(run_id)
-    return {"retried": ok, "run_id": run_id, "queue": count_session_jobs_by_status()}
+    return _queue_action_result(
+        run_id=run_id,
+        result_key="retried",
+        mutate=retry_session_job,
+    )
 
 
 def api_skip_job(run_id: str) -> dict[str, Any]:
     """Skip a dead_letter job, returning result."""
-    ok = skip_session_job(run_id)
-    return {"skipped": ok, "run_id": run_id, "queue": count_session_jobs_by_status()}
+    return _queue_action_result(
+        run_id=run_id,
+        result_key="skipped",
+        mutate=skip_session_job,
+    )
 
 
 def api_retry_all_dead_letter() -> dict[str, Any]:
     """Retry all dead_letter jobs across all projects."""
-    dead = list_queue_jobs(status_filter="dead_letter")
-    retried = 0
-    for job in dead:
-        rid = str(job.get("run_id") or "")
-        if rid and retry_session_job(rid):
-            retried += 1
-    return {"retried": retried, "queue": count_session_jobs_by_status()}
+    return _queue_bulk_action_result(result_key="retried", mutate=retry_session_job)
 
 
 def api_skip_all_dead_letter() -> dict[str, Any]:
     """Skip all dead_letter jobs across all projects."""
+    return _queue_bulk_action_result(result_key="skipped", mutate=skip_session_job)
+
+
+def _queue_action_result(
+    *,
+    run_id: str,
+    result_key: str,
+    mutate: Any,
+) -> dict[str, Any]:
+    """Apply one queue mutation and return the common action payload."""
+    ok = mutate(run_id)
+    return {result_key: ok, "run_id": run_id, "queue": count_session_jobs_by_status()}
+
+
+def _queue_bulk_action_result(*, result_key: str, mutate: Any) -> dict[str, Any]:
+    """Apply one queue mutation to every dead-letter job."""
     dead = list_queue_jobs(status_filter="dead_letter")
-    skipped = 0
+    changed = 0
     for job in dead:
         rid = str(job.get("run_id") or "")
-        if rid and skip_session_job(rid):
-            skipped += 1
-    return {"skipped": skipped, "queue": count_session_jobs_by_status()}
+        if rid and mutate(rid):
+            changed += 1
+    return {result_key: changed, "queue": count_session_jobs_by_status()}
 
 
 def api_queue_jobs(

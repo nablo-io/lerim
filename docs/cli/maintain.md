@@ -6,7 +6,6 @@ Run one context-maintenance pass.
 
 ```bash
 lerim maintain
-lerim maintain --force
 lerim maintain --dry-run
 ```
 

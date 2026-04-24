@@ -119,11 +119,11 @@ def test_find_available_port_fallback(monkeypatch) -> None:
 
 
 def test_callback_handler_valid_token() -> None:
-	"""GET /callback?token=abc sets _TOKEN_RESULT and returns 200."""
-	auth_mod._TOKEN_RESULT = None
+	"""GET /callback?token=abc sets server token_result and returns 200."""
 
 	handler = MagicMock(spec=_CallbackHandler)
 	handler.path = "/callback?token=test-token-123"
+	handler.server = MagicMock(token_result=None)
 	handler.wfile = io.BytesIO()
 	handler.send_response = MagicMock()
 	handler.send_header = MagicMock()
@@ -131,23 +131,23 @@ def test_callback_handler_valid_token() -> None:
 
 	_CallbackHandler.do_GET(handler)
 
-	assert auth_mod._TOKEN_RESULT == "test-token-123"
+	assert handler.server.token_result == "test-token-123"
 	handler.send_response.assert_called_with(200)
 
 
 def test_callback_handler_missing_token() -> None:
 	"""GET /callback without token parameter returns 400."""
-	auth_mod._TOKEN_RESULT = None
 
 	handler = MagicMock(spec=_CallbackHandler)
 	handler.path = "/callback"
+	handler.server = MagicMock(token_result=None)
 	handler.wfile = io.BytesIO()
 	handler.send_response = MagicMock()
 	handler.end_headers = MagicMock()
 
 	_CallbackHandler.do_GET(handler)
 
-	assert auth_mod._TOKEN_RESULT is None
+	assert handler.server.token_result is None
 	handler.send_response.assert_called_with(400)
 
 
@@ -166,17 +166,17 @@ def test_callback_handler_wrong_path() -> None:
 
 def test_callback_handler_empty_token() -> None:
 	"""GET /callback?token= (empty) returns 400."""
-	auth_mod._TOKEN_RESULT = None
 
 	handler = MagicMock(spec=_CallbackHandler)
 	handler.path = "/callback?token="
+	handler.server = MagicMock(token_result=None)
 	handler.wfile = io.BytesIO()
 	handler.send_response = MagicMock()
 	handler.end_headers = MagicMock()
 
 	_CallbackHandler.do_GET(handler)
 
-	assert auth_mod._TOKEN_RESULT is None
+	assert handler.server.token_result is None
 	handler.send_response.assert_called_with(400)
 
 
@@ -536,6 +536,7 @@ def test_run_browser_flow_timeout(monkeypatch) -> None:
 		def __init__(self, *args, **kwargs):
 			"""Accept constructor arguments from the production flow."""
 			self.timeout = None
+			self.token_result = None
 
 		def handle_request(self):
 			"""Do not receive a callback token."""
@@ -558,7 +559,7 @@ def test_run_browser_flow_timeout(monkeypatch) -> None:
 			"""Return immediately."""
 
 	monkeypatch.setattr(auth_mod, "_find_available_port", lambda: 9876)
-	monkeypatch.setattr(auth_mod, "HTTPServer", FakeHTTPServer)
+	monkeypatch.setattr(auth_mod, "_TokenCallbackServer", FakeHTTPServer)
 	monkeypatch.setattr(auth_mod.threading, "Thread", FakeThread)
 	monkeypatch.setattr(auth_mod.webbrowser, "open", lambda url: None)
 	result = _run_browser_flow("https://api.lerim.dev", timeout_seconds=1)
@@ -573,6 +574,7 @@ def test_run_browser_flow_opens_correct_url(monkeypatch) -> None:
 		def __init__(self, *args, **kwargs):
 			"""Accept constructor arguments from the production flow."""
 			self.timeout = None
+			self.token_result = None
 
 		def handle_request(self):
 			"""Do not receive a callback token."""
@@ -595,7 +597,7 @@ def test_run_browser_flow_opens_correct_url(monkeypatch) -> None:
 			"""Return immediately."""
 
 	monkeypatch.setattr(auth_mod, "_find_available_port", lambda: 9876)
-	monkeypatch.setattr(auth_mod, "HTTPServer", FakeHTTPServer)
+	monkeypatch.setattr(auth_mod, "_TokenCallbackServer", FakeHTTPServer)
 	monkeypatch.setattr(auth_mod.threading, "Thread", FakeThread)
 	opened_urls: list[str] = []
 	monkeypatch.setattr(

@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from lerim.agents.ask import format_ask_hints, run_ask
+from lerim.agents.ask import run_ask
 from lerim.agents.contracts import MaintainResultContract, SyncResultContract
 from lerim.agents.extract import ExtractionResult, run_extraction
 from lerim.agents.maintain import run_maintain
@@ -549,7 +549,6 @@ class LerimRuntime:
 		resolved_repo_root = Path(repo_root).expanduser().resolve() if repo_root else Path(self._default_cwd or Path.cwd()).expanduser().resolve()
 		project_identity = resolve_project_identity(resolved_repo_root)
 		resolved_project_ids = project_ids or [project_identity.project_id]
-		hints = format_ask_hints(hits=[], context_docs=[])
 
 		def _primary_builder() -> Any:
 			return build_pydantic_model("agent", config=self.config)
@@ -562,7 +561,6 @@ class LerimRuntime:
 				session_id=resolved_session_id,
 				model=model,
 				question=prompt,
-				hints=hints,
 				request_limit=self.config.agent_role.max_iters_ask,
 				return_messages=include_debug,
 			)

@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import dataclasses
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -11,6 +15,37 @@ from lerim.context.project_identity import (
     _slugify,
     resolve_project_identity,
 )
+
+
+def test_barrel_project_identity_import_does_not_load_heavy_context_modules():
+    """Import project identity from the barrel without loading embedding/store deps."""
+    repo_root = Path(__file__).resolve().parents[3]
+    env = os.environ.copy()
+    src_path = str(repo_root / "src")
+    env["PYTHONPATH"] = (
+        src_path
+        if not env.get("PYTHONPATH")
+        else os.pathsep.join((src_path, env["PYTHONPATH"]))
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys\n"
+                "from lerim.context import ProjectIdentity, resolve_project_identity\n"
+                "print('lerim.context.embedding' in sys.modules)\n"
+                "print('lerim.context.store' in sys.modules)\n"
+                "print('sqlite_vec' in sys.modules)\n"
+            ),
+        ],
+        cwd=repo_root,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout.splitlines() == ["False", "False", "False"]
 
 
 class TestSlugify:

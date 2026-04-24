@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+import lerim.context.spec as spec
 from lerim.context.spec import (
     ALLOWED_KINDS,
     DURABLE_RECORD_KINDS,
@@ -73,6 +74,23 @@ def test_normalize_payload_trims_and_clears_irrelevant_typed_fields():
 def test_archived_payload_gets_valid_until_from_updated_at():
     payload = normalize_record_payload(**_payload(status="archived", valid_until=None))
     assert payload["valid_until"] == payload["updated_at"]
+
+
+def test_normalize_payload_uses_one_now_for_default_timestamps(monkeypatch):
+    calls = []
+
+    def fake_now():
+        calls.append("called")
+        return "2026-02-03T04:05:06+00:00"
+
+    monkeypatch.setattr(spec, "_utc_now", fake_now)
+    payload = normalize_record_payload(
+        **_payload(created_at=None, updated_at=None, valid_from=None)
+    )
+    assert calls == ["called"]
+    assert payload["created_at"] == "2026-02-03T04:05:06+00:00"
+    assert payload["updated_at"] == "2026-02-03T04:05:06+00:00"
+    assert payload["valid_from"] == "2026-02-03T04:05:06+00:00"
 
 
 def test_episode_requires_session_id_and_required_fields():

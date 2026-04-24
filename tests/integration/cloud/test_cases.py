@@ -283,6 +283,7 @@ def test_pull_records_skips_unresolved_project_scope(
     pulled = asyncio.run(_pull_records("https://api.test", "tok-test", config, state))
 
     assert pulled == 0
+    assert state.records_pulled_at == ""
     store = ContextStore(config.context_db_path)
     alpha_id = _project_id_for(alpha_root)
     assert store.fetch_record("cloud-missing-project", project_ids=[alpha_id]) is None

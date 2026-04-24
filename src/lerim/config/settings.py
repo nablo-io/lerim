@@ -25,6 +25,7 @@ USER_CONFIG_PATH = Path.home() / ".lerim" / "config.toml"
 GLOBAL_DATA_DIR = Path.home() / ".lerim"
 
 _LAST_CONFIG_SOURCES: list[dict[str, str]] = []
+_MISSING = object()
 
 
 @dataclass(frozen=True)
@@ -101,18 +102,69 @@ def _ensure_dict(data: dict[str, Any], key: str) -> dict[str, Any]:
 	return val
 
 
-def _require_int(raw: dict[str, Any], key: str, minimum: int = 0) -> int:
-    """Read a required integer from config dict. Raises if missing from config."""
+def _read_bool(
+    raw: dict[str, Any],
+    key: str,
+    *,
+    default: bool | object = _MISSING,
+) -> bool:
+    """Read a strictly typed boolean config value."""
     value = raw.get(key)
     if value is None:
+        if default is not _MISSING:
+            return bool(default)
         raise ValueError(
             f"missing required config key: {key} (set it in default.toml or user config)"
         )
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
+    if not isinstance(value, bool):
+        raise ValueError(f"config key {key} must be a boolean, got: {value!r}")
+    return value
+
+
+def _read_int(
+    raw: dict[str, Any],
+    key: str,
+    *,
+    default: int | object = _MISSING,
+    minimum: int = 0,
+) -> int:
+    """Read a strictly typed integer config value."""
+    value = raw.get(key)
+    if value is None:
+        if default is not _MISSING:
+            value = default
+        else:
+            raise ValueError(
+                f"missing required config key: {key} (set it in default.toml or user config)"
+            )
+    if not isinstance(value, int) or isinstance(value, bool):
         raise ValueError(f"config key {key} must be an integer, got: {value!r}")
-    return max(minimum, parsed)
+    return max(minimum, value)
+
+
+def _read_float(
+    raw: dict[str, Any],
+    key: str,
+    *,
+    default: float | object = _MISSING,
+) -> float:
+    """Read a strictly typed floating-point config value."""
+    value = raw.get(key)
+    if value is None:
+        if default is not _MISSING:
+            value = default
+        else:
+            raise ValueError(
+                f"missing required config key: {key} (set it in default.toml or user config)"
+            )
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise ValueError(f"config key {key} must be a float, got: {value!r}")
+    return float(value)
+
+
+def _require_int(raw: dict[str, Any], key: str, minimum: int = 0) -> int:
+    """Read a required strictly typed integer from config dict."""
+    return _read_int(raw, key, minimum=minimum)
 
 
 def _to_fallback_models(value: Any) -> tuple[str, ...]:
@@ -293,13 +345,13 @@ def _build_role(
 		model=model,
 		api_base=_to_non_empty_string(raw.get("api_base")),
 		fallback_models=_to_fallback_models(raw.get("fallback_models")),
-		temperature=float(raw.get("temperature", 1.0)),
-		top_p=float(raw.get("top_p", 0.95)),
-		top_k=int(raw.get("top_k", 40)),
-		max_tokens=int(raw.get("max_tokens", 32000)),
-		parallel_tool_calls=bool(raw.get("parallel_tool_calls", True)),
-		max_iters_maintain=int(raw.get("max_iters_maintain", 30)),
-		max_iters_ask=int(raw.get("max_iters_ask", 30)),
+		temperature=_read_float(raw, "temperature", default=1.0),
+		top_p=_read_float(raw, "top_p", default=0.95),
+		top_k=_read_int(raw, "top_k", default=40),
+		max_tokens=_read_int(raw, "max_tokens", default=32000),
+		parallel_tool_calls=_read_bool(raw, "parallel_tool_calls", default=True),
+		max_iters_maintain=_read_int(raw, "max_iters_maintain", default=30),
+		max_iters_ask=_read_int(raw, "max_iters_ask", default=30),
 	)
 
 
@@ -312,14 +364,15 @@ def _build_agent_role(roles: dict[str, Any]) -> RoleConfig:
 	)
 
 
-def _parse_string_table(raw: dict[str, Any]) -> dict[str, str]:
-    """Parse a TOML table of ``name = "path"`` or ``name = {path = "..."}`` entries."""
+def _parse_string_table(raw: dict[str, Any], *, section: str = "config") -> dict[str, str]:
+    """Parse a TOML table of ``name = "value"`` entries."""
     result: dict[str, str] = {}
     for key, value in raw.items():
-        if isinstance(value, dict):
-            text = str(value.get("path", "")).strip()
-        else:
-            text = str(value).strip() if value is not None else ""
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise ValueError(f"config key {section}.{key} must be a string, got: {value!r}")
+        text = value.strip()
         if text:
             result[key] = text
     return result
@@ -454,8 +507,8 @@ def load_config() -> Config:
 
     cloud = _ensure_dict(toml_data, "cloud")
 
-    agents = _parse_string_table(_ensure_dict(toml_data, "agents"))
-    projects = _parse_string_table(_ensure_dict(toml_data, "projects"))
+    agents = _parse_string_table(_ensure_dict(toml_data, "agents"), section="agents")
+    projects = _parse_string_table(_ensure_dict(toml_data, "projects"), section="projects")
 
     cloud_endpoint = (
         _to_non_empty_string(os.environ.get("LERIM_CLOUD_ENDPOINT"))
@@ -507,8 +560,17 @@ def load_config() -> Config:
         minimax_api_key=_to_non_empty_string(os.environ.get("MINIMAX_API_KEY")) or None,
         opencode_api_key=_to_non_empty_string(os.environ.get("OPENCODE_API_KEY"))
         or None,
-        provider_api_bases=_parse_string_table(_ensure_dict(toml_data, "providers")),
-        auto_unload=bool(_ensure_dict(toml_data, "providers").get("auto_unload", True)),
+        provider_api_bases=_parse_string_table(
+            {
+                key: value
+                for key, value in _ensure_dict(toml_data, "providers").items()
+                if key != "auto_unload"
+            },
+            section="providers",
+        ),
+        auto_unload=_read_bool(
+            _ensure_dict(toml_data, "providers"), "auto_unload", default=True
+        ),
         cloud_endpoint=cloud_endpoint,
         cloud_token=cloud_token,
         agents=agents,

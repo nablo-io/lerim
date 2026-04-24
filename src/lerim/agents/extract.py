@@ -374,9 +374,8 @@ def build_extract_agent(model: Model) -> Agent[ContextDeps, ExtractionResult]:
         output_retries=4,
     )
 
-    # PydanticAI invokes this registered validator when the model calls
-    # `final_result`. Keep it even though extract also gates durable writes:
-    # sessions with no durable records still need exactly one episode.
+    # Keep final validation structural. Semantic durable-signal quality belongs
+    # in the prompt and integration/eval cases, not keyword scans over prose.
     @agent.output_validator
     def _require_session_episode(
         ctx: RunContext[ContextDeps], data: ExtractionResult
@@ -398,52 +397,6 @@ def build_extract_agent(model: Model) -> Agent[ContextDeps, ExtractionResult]:
             raise ModelRetry(
                 "The run is not complete yet. Create exactly one episode record for the current session before final_result."
             )
-        durable_rows = [row for row in rows if str(row.get("kind") or "") != "episode"]
-        with store.connect() as conn:
-            changed_durable_count = int(
-                conn.execute(
-                    """
-                    SELECT COUNT(*)
-                    FROM record_versions
-                    WHERE changed_by_session_id = ?
-                      AND kind != 'episode'
-                    """,
-                    (ctx.deps.session_id,),
-                ).fetchone()[0]
-            )
-        if not durable_rows and changed_durable_count == 0:
-            episode_row = next(row for row in rows if str(row.get("kind") or "") == "episode")
-            episode_text = " ".join(
-                str(episode_row.get(field) or "")
-                for field in ("title", "body", "user_intent", "what_happened", "outcomes")
-            ).lower()
-            negative_markers = ("no durable", "not durable", "non-durable")
-            specific_durable_markers = (
-                "durable record",
-                "durable fact",
-                "durable decision",
-                "durable preference",
-                "durable constraint",
-                "durable reference",
-                "durable context",
-                "reusable pointer",
-                "standing preference",
-                "record created",
-            )
-            self_reported_durable = any(
-                marker in episode_text for marker in specific_durable_markers
-            ) or (
-                any(marker in episode_text for marker in ("durable", "reusable", "standing"))
-                and not any(marker in episode_text for marker in negative_markers)
-            )
-            if self_reported_durable:
-                raise ModelRetry(
-                    "The episode says the session produced durable or reusable context, "
-                    "but no durable record was created or updated. Create/update the "
-                    "corresponding durable fact, decision, preference, constraint, or "
-                    "reference before final_result; otherwise rewrite the episode so it "
-                    "truthfully says no durable context was preserved."
-                )
         return data
 
     return agent
@@ -516,7 +469,6 @@ def run_extraction(
         trace_path=trace_path,
         run_folder=run_folder,
         session_started_at=str(session_started_at or "").strip(),
-        require_episode_before_durable_write=True,
     )
     source_time_text = str(session_started_at or "").strip() or "unknown"
     result = agent.run_sync(

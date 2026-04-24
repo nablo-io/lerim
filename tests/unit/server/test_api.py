@@ -404,6 +404,7 @@ def test_api_maintain_dry_run(monkeypatch, tmp_path) -> None:
 	api_maintain(dry_run=True)
 
 	assert captured["dry_run"] is True
+	assert set(captured) == {"dry_run"}
 
 
 def test_api_maintain_includes_queue_health_warning(monkeypatch, tmp_path) -> None:

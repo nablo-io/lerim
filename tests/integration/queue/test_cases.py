@@ -368,7 +368,7 @@ def test_degraded_queue_reports_cleanly_via_api_sync(queue_case_env: QueueCaseEn
 
 
 @pytest.mark.integration
-def test_maintain_once_dry_run_short_circuits_even_with_force(
+def test_maintain_once_dry_run_short_circuits(
     queue_case_env: QueueCaseEnv,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -376,7 +376,7 @@ def test_maintain_once_dry_run_short_circuits_even_with_force(
     expectation = load_queue_expectation("maintain_once_dry_run_short_circuits_even_with_force")["expected"]
     calls = _patch_fake_runtime(monkeypatch)
 
-    code, payload = daemon.run_maintain_once(force=True, dry_run=True, trigger="manual")
+    code, payload = daemon.run_maintain_once(dry_run=True, trigger="manual")
 
     service_runs = _service_run_rows(queue_case_env, "maintain")
 

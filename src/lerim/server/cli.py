@@ -217,6 +217,7 @@ def _cmd_sync(args: argparse.Namespace) -> int:
         "force": getattr(args, "force", False),
         "dry_run": getattr(args, "dry_run", False),
         "ignore_lock": getattr(args, "ignore_lock", False),
+        "blocking": True,
     }
     data = _api_post("/api/sync", body)
     if data is None:
@@ -235,8 +236,8 @@ def _cmd_sync(args: argparse.Namespace) -> int:
 def _cmd_maintain(args: argparse.Namespace) -> int:
     """Forward maintain request to the running Lerim server."""
     body = {
-        "force": getattr(args, "force", False),
         "dry_run": getattr(args, "dry_run", False),
+        "blocking": True,
     }
     data = _api_post("/api/maintain", body)
     if data is None:
@@ -1146,7 +1147,6 @@ def _cmd_serve(args: argparse.Namespace) -> int:
                 try:
                     with ollama_lifecycle(config):
                         _code, details = run_maintain_once(
-                            force=False,
                             dry_run=False,
                             trigger="daemon",
                         )
@@ -1260,7 +1260,7 @@ def _add_force_flag(parser: argparse.ArgumentParser) -> None:
 	"""Add --force flag to *parser*."""
 	parser.add_argument(
 		"--force", action="store_true",
-		help="Force operation even if recently run.",
+		help="Re-extract already processed sessions.",
 	)
 
 
@@ -1408,10 +1408,9 @@ def build_parser() -> argparse.ArgumentParser:
             "Offline record refinement: merge duplicates, archive low-value items.\n\n"
             "Examples:\n"
             "  lerim maintain            # one pass\n"
-            "  lerim maintain --force    # force even if recently run"
+            "  lerim maintain --dry-run  # preview only"
         ),
     )
-    _add_force_flag(maintain)
     _add_dry_run_flag(maintain)
     maintain.set_defaults(func=_cmd_maintain)
 

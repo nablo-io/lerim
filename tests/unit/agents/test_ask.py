@@ -8,7 +8,6 @@ from unittest.mock import MagicMock
 from lerim.agents.ask import (
     ASK_SYSTEM_PROMPT,
     AskResult,
-    format_ask_hints,
     run_ask,
 )
 
@@ -38,53 +37,6 @@ class TestAskSystemPrompt:
         assert "current-state" in ASK_SYSTEM_PROMPT
         assert "updated_at" in ASK_SYSTEM_PROMPT
         assert "newer direct active durable support" in ASK_SYSTEM_PROMPT
-
-
-class TestFormatAskHints:
-    """Tests for format_ask_hints helper."""
-
-    def test_empty_hits_returns_placeholder(self):
-        assert format_ask_hints([], []) == "(no pre-fetched hints)"
-
-    def test_single_hit(self):
-        hits = [{"kind": "fact", "title": "X depends on Y", "body_preview": "preview"}]
-        result = format_ask_hints(hits, [])
-        assert "[fact] X depends on Y: preview" in result
-
-    def test_multiple_hits(self):
-        hits = [
-            {"kind": "decision", "title": "A", "body_preview": "p1"},
-            {"kind": "preference", "title": "B", "body_preview": "p2"},
-        ]
-        result = format_ask_hints(hits, [])
-        lines = result.strip().split("\n")
-        assert len(lines) == 2
-
-    def test_missing_kind_defaults(self):
-        hits = [{"title": "No kind", "body_preview": "preview"}]
-        result = format_ask_hints(hits, [])
-        assert "[?]" in result
-
-    def test_context_docs_ignored(self):
-        hits = [{"kind": "fact", "title": "T", "body_preview": "B"}]
-        result = format_ask_hints(hits, [{"some": "doc"}])
-        assert "[fact] T: B" in result
-
-    def test_hints_include_currentness_metadata(self):
-        hits = [
-            {
-                "kind": "fact",
-                "title": "Current risk",
-                "body_preview": "preview",
-                "status": "archived",
-                "updated_at": "2026-04-23T15:00:00+00:00",
-                "superseded_by_record_id": "rec_new",
-            }
-        ]
-        result = format_ask_hints(hits, [])
-        assert "status=archived" in result
-        assert "updated_at=2026-04-23T15:00:00+00:00" in result
-        assert "superseded_by=rec_new" in result
 
 
 class TestRunAskSignature:

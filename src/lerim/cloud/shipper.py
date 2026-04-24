@@ -18,12 +18,12 @@ import urllib.request
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from lerim.config.logging import LOG_DIR, logger
 from lerim.config.project_scope import match_session_project
 from lerim.config.settings import Config, get_global_data_dir_path
-from lerim.context import ContextStore, resolve_project_identity
+from lerim.context import ContextStore, ProjectIdentity, resolve_project_identity
 from lerim.context.spec import ALLOWED_KINDS, RECORD_KIND_SPECS
 
 # ── constants ────────────────────────────────────────────────────────────────
@@ -36,6 +36,8 @@ _BATCH_RECORDS = 100
 
 _HTTP_TIMEOUT_SECONDS = 30
 _GZIP_THRESHOLD_BYTES = 1024
+
+_PullRecordOutcome = Literal["applied", "permanent_drop", "retry"]
 
 
 # ── state persistence ────────────────────────────────────────────────────────
@@ -172,52 +174,60 @@ def _typed_fields_from_cloud_record(record: dict[str, Any], *, kind: str) -> dic
     kind_spec = RECORD_KIND_SPECS.get(kind)
     if kind_spec is None:
         return {}
-    typed_field_names = set(kind_spec.typed_field_names)
-    if "decision" in typed_field_names:
-        return {
-            "decision": str(record.get("decision") or "").strip(),
-            "why": str(record.get("why") or "").strip(),
-            "alternatives": str(record.get("alternatives") or "").strip(),
-            "consequences": str(record.get("consequences") or "").strip(),
-        }
-    if "user_intent" in typed_field_names:
-        return {
-            "user_intent": str(record.get("user_intent") or "").strip(),
-            "what_happened": str(record.get("what_happened") or "").strip(),
-            "outcomes": str(record.get("outcomes") or "").strip(),
-        }
-    return {}
+    return {
+        field_name: str(record.get(field_name) or "").strip()
+        for field_name in kind_spec.typed_field_names
+    }
+
+
+def _configured_project_identities(projects: dict[str, str]) -> dict[str, ProjectIdentity]:
+    """Resolve configured cloud project names to local project identities."""
+    identities: dict[str, ProjectIdentity] = {}
+    for project_name, raw_path in projects.items():
+        try:
+            project_path = Path(raw_path).expanduser().resolve()
+        except OSError as exc:
+            logger.warning(
+                "skipping configured cloud project {} because path cannot be resolved: {}",
+                project_name,
+                exc,
+            )
+            continue
+        identities[str(project_name)] = resolve_project_identity(project_path)
+    return identities
 
 
 def _upsert_pulled_record(
     *,
     context_db_path: Path,
-    project_name: str,
-    project_path: Path,
+    project_identity: ProjectIdentity,
     record: dict[str, Any],
-) -> bool:
+) -> _PullRecordOutcome:
     """Upsert one pulled cloud record into the canonical context DB."""
     record_id = str(record.get("record_id") or "").strip()
     if not record_id:
-        return False
+        logger.warning("skipping pulled record without record_id")
+        return "permanent_drop"
     store = ContextStore(context_db_path)
     store.initialize()
-    identity = resolve_project_identity(project_path)
-    store.register_project(identity)
+    store.register_project(project_identity)
     try:
         kind = _normalize_cloud_kind(str(record.get("record_kind") or ""))
     except ValueError as exc:
         logger.warning("skipping pulled record {}: {}", record_id, exc)
-        return False
+        return "permanent_drop"
     if kind == "episode":
         logger.warning(
             "skipping pulled episode record {} because cloud sync only supports durable records",
             record_id,
         )
-        return False
+        return "permanent_drop"
     body = str(record.get("body") or "").strip()
     typed_fields = _typed_fields_from_cloud_record(record, kind=kind)
-    cloud_edited = str(record.get("cloud_edited_at") or "").strip() or datetime.now(timezone.utc).isoformat()
+    cloud_edited = (
+        str(record.get("cloud_edited_at") or "").strip()
+        or datetime.now(timezone.utc).isoformat()
+    )
     created_at_raw = str(record.get("created_at") or "").strip()
     created_at = created_at_raw or cloud_edited
     valid_from_raw = str(record.get("valid_from") or "").strip()
@@ -227,12 +237,12 @@ def _upsert_pulled_record(
     with store.connect() as conn:
         row = conn.execute(
             "SELECT record_id FROM records WHERE record_id = ? AND project_id = ?",
-            (record_id, identity.project_id),
+            (record_id, project_identity.project_id),
         ).fetchone()
     if row is None:
         try:
             store.create_record(
-                project_id=identity.project_id,
+                project_id=project_identity.project_id,
                 session_id=None,
                 record_id=record_id,
                 kind=kind,
@@ -248,8 +258,8 @@ def _upsert_pulled_record(
             )
         except ValueError as exc:
             logger.warning("skipping pulled record {}: {}", record_id, exc)
-            return False
-        return True
+            return "retry"
+        return "applied"
     changes: dict[str, Any] = {
         "kind": kind,
         "title": str(record.get("title") or "").strip(),
@@ -266,14 +276,14 @@ def _upsert_pulled_record(
         store.update_record(
             record_id=record_id,
             session_id=None,
-            project_ids=[identity.project_id],
+            project_ids=[project_identity.project_id],
             changes=changes,
             change_reason="cloud_pull",
         )
     except ValueError as exc:
         logger.warning("skipping pulled record {}: {}", record_id, exc)
-        return False
-    return True
+        return "retry"
+    return "applied"
 
 
 async def _pull_records(
@@ -297,34 +307,58 @@ async def _pull_records(
 
     pulled = 0
     latest_edited = state.records_pulled_at
+    project_identities = _configured_project_identities(config.projects or {})
 
-    for record in data["records"]:
-        cloud_edited = record.get("cloud_edited_at", "")
+    records = sorted(
+        (record for record in data["records"] if isinstance(record, dict)),
+        key=lambda record: str(record.get("cloud_edited_at") or ""),
+    )
+
+    for record in records:
+        cloud_edited = str(record.get("cloud_edited_at") or "").strip()
         if not cloud_edited:
             continue
-        if cloud_edited > latest_edited:
-            latest_edited = cloud_edited
 
-        project_name = record.get("project")
-        if not project_name or project_name not in (config.projects or {}):
+        project_name = str(record.get("project") or "").strip()
+        if not project_name:
+            logger.warning(
+                "skipping pulled record {} because cloud project is missing",
+                record.get("record_id", ""),
+            )
+            if cloud_edited > latest_edited:
+                latest_edited = cloud_edited
+            continue
+        project_identity = project_identities.get(project_name)
+        if project_identity is None:
             logger.warning(
                 "skipping pulled record {} because project {} is not configured locally",
                 record.get("record_id", ""),
                 project_name,
             )
-            continue
+            break
 
         try:
-            project_path = Path(config.projects[project_name]).expanduser().resolve()
-            if _upsert_pulled_record(
+            outcome = _upsert_pulled_record(
                 context_db_path=config.context_db_path,
-                project_name=str(project_name),
-                project_path=project_path,
+                project_identity=project_identity,
                 record=record,
-            ):
+            )
+            if outcome == "applied":
                 pulled += 1
-        except OSError as exc:
-            logger.warning("failed to persist pulled record {}: {}", record.get("record_id", ""), exc)
+            if (
+                outcome in {"applied", "permanent_drop"}
+                and cloud_edited > latest_edited
+            ):
+                latest_edited = cloud_edited
+            if outcome == "retry":
+                break
+        except (OSError, sqlite3.Error) as exc:
+            logger.warning(
+                "failed to persist pulled record {}: {}",
+                record.get("record_id", ""),
+                exc,
+            )
+            break
 
     if latest_edited and latest_edited != state.records_pulled_at:
         state.records_pulled_at = latest_edited

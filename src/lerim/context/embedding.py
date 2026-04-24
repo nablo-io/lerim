@@ -9,7 +9,6 @@ embedding calls.
 from __future__ import annotations
 
 import json
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +29,7 @@ MODEL_FILE_PATTERNS = (
     "special_tokens_map.json",
     DEFAULT_ONNX_FILE,
 )
+_EMBEDDING_PROVIDER_CACHE: dict[tuple[str, str], "EmbeddingProvider"] = {}
 
 
 def _safe_model_dir_name(model_id: str) -> str:
@@ -209,10 +209,15 @@ class EmbeddingProvider:
         return self.model_dir
 
 
-@lru_cache(maxsize=8)
 def build_embedding_provider(model_id: str, cache_dir: str) -> EmbeddingProvider:
-    """Build and cache an embedding provider for one model/cache pair."""
-    return EmbeddingProvider(model_id=model_id, cache_dir=Path(cache_dir))
+    """Build or reuse an embedding provider for one model/cache pair."""
+    model_key = str(model_id or "").strip() or DEFAULT_EMBEDDING_MODEL_NAME
+    key = (model_key, str(Path(cache_dir).expanduser().resolve()))
+    provider = _EMBEDDING_PROVIDER_CACHE.get(key)
+    if provider is None:
+        provider = EmbeddingProvider(model_id=model_key, cache_dir=Path(cache_dir))
+        _EMBEDDING_PROVIDER_CACHE[key] = provider
+    return provider
 
 
 def get_embedding_provider() -> EmbeddingProvider:
@@ -222,8 +227,11 @@ def get_embedding_provider() -> EmbeddingProvider:
 
 
 def clear_embedding_provider_cache() -> None:
-    """Clear the embedding provider cache for tests or config resets."""
-    build_embedding_provider.cache_clear()
+    """Close and clear cached embedding providers for tests or config resets."""
+    providers = tuple(_EMBEDDING_PROVIDER_CACHE.values())
+    _EMBEDDING_PROVIDER_CACHE.clear()
+    for provider in providers:
+        provider.close()
 
 
 EMBEDDING_MODEL_NAME = DEFAULT_EMBEDDING_MODEL_NAME

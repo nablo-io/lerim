@@ -1038,8 +1038,8 @@ class TestPullRecords:
 			).fetchone()
 		assert row is None
 
-	def test_skip_unknown_project_still_advances_watermark(self, tmp_path):
-		"""Skipped unknown-project rows should still advance the pull watermark."""
+	def test_skip_unknown_project_does_not_advance_watermark(self, tmp_path):
+		"""Unknown-project rows are retryable, so the pull watermark stays put."""
 		alpha_dir = tmp_path / "alpha"
 		alpha_dir.mkdir()
 		cfg = replace(make_config(tmp_path), projects={"alpha": str(alpha_dir)})
@@ -1066,7 +1066,7 @@ class TestPullRecords:
 			)
 
 		assert pulled == 0
-		assert state.records_pulled_at == "2026-04-01T12:00:00Z"
+		assert state.records_pulled_at == "2026-03-01T00:00:00Z"
 
 
 # ---------------------------------------------------------------------------

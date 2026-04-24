@@ -11,6 +11,7 @@ import json
 import mimetypes
 import sqlite3
 import threading
+import uuid
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
@@ -908,8 +909,6 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
                     f"Unsupported field(s): {', '.join(unknown)}",
                 )
                 return
-            import threading
-
             result_holder: list[dict[str, Any]] = []
             scope = str(body.get("scope") or "all")
             project = body.get("project")
@@ -964,51 +963,54 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
             body = read_body()
             if body is None:
                 return
-            import threading
-            import uuid
+
+            sync_kwargs = {
+                "agent": body.get("agent"),
+                "window": body.get("window", "7d"),
+                "since": body.get("since"),
+                "until": body.get("until"),
+                "max_sessions": body.get("max_sessions"),
+                "run_id": body.get("run_id"),
+                "no_extract": bool(body.get("no_extract")),
+                "force": bool(body.get("force")),
+                "dry_run": bool(body.get("dry_run")),
+                "ignore_lock": bool(body.get("ignore_lock")),
+            }
+            if bool(body.get("blocking")):
+                self._json(api_sync(**sync_kwargs))
+                return
 
             job_id = str(uuid.uuid4())[:8]
 
             def _run_sync() -> None:
                 """Execute sync in background."""
-                api_sync(
-                    agent=body.get("agent"),
-                    window=body.get("window", "7d"),
-                    since=body.get("since"),
-                    until=body.get("until"),
-                    max_sessions=body.get("max_sessions"),
-                    run_id=body.get("run_id"),
-                    no_extract=bool(body.get("no_extract")),
-                    force=bool(body.get("force")),
-                    dry_run=bool(body.get("dry_run")),
-                    ignore_lock=bool(body.get("ignore_lock")),
-                )
+                api_sync(**sync_kwargs)
 
             threading.Thread(
                 target=_run_sync, name=f"sync-{job_id}", daemon=True
             ).start()
-            self._json({"status": "started", "job_id": job_id})
+            self._json({"status": "started", "job_id": job_id, "mode": "async"})
             return
         if path == "/api/maintain":
             body = read_body()
             if body is None:
                 return
-            import threading
-            import uuid
+
+            maintain_kwargs = {"dry_run": bool(body.get("dry_run"))}
+            if bool(body.get("blocking")):
+                self._json(api_maintain(**maintain_kwargs))
+                return
 
             job_id = str(uuid.uuid4())[:8]
 
             def _run_maintain() -> None:
                 """Execute maintain in background."""
-                api_maintain(
-                    force=bool(body.get("force")),
-                    dry_run=bool(body.get("dry_run")),
-                )
+                api_maintain(**maintain_kwargs)
 
             threading.Thread(
                 target=_run_maintain, name=f"maintain-{job_id}", daemon=True
             ).start()
-            self._json({"status": "started", "job_id": job_id})
+            self._json({"status": "started", "job_id": job_id, "mode": "async"})
             return
         if path == "/api/connect":
             body = read_body()

@@ -304,7 +304,12 @@ class TestCmdSync:
 	def test_sync_success_json(self, monkeypatch: pytest.MonkeyPatch) -> None:
 		"""Sync with --json emits JSON response from API."""
 		fake = {"indexed": 5, "extracted": 3}
-		monkeypatch.setattr(cli, "_api_post", lambda _p, _b: fake)
+		captured: dict[str, Any] = {}
+		monkeypatch.setattr(
+			cli,
+			"_api_post",
+			lambda path, body: (captured.update({"path": path, "body": body}) or fake),
+		)
 		args = _ns(
 			command="sync", json=True,
 			agent=None, window=None, max_sessions=None,
@@ -316,11 +321,18 @@ class TestCmdSync:
 		assert code == 0
 		parsed = json.loads(buf.getvalue())
 		assert parsed["indexed"] == 5
+		assert captured["path"] == "/api/sync"
+		assert captured["body"]["blocking"] is True
 
 	def test_sync_success_human(self, monkeypatch: pytest.MonkeyPatch) -> None:
 		"""Sync without --json emits human-readable output."""
 		fake = {"indexed": 2}
-		monkeypatch.setattr(cli, "_api_post", lambda _p, _b: fake)
+		captured: dict[str, Any] = {}
+		monkeypatch.setattr(
+			cli,
+			"_api_post",
+			lambda path, body: (captured.update({"path": path, "body": body}) or fake),
+		)
 		args = _ns(
 			command="sync", json=False,
 			agent="claude", window="7d", max_sessions=10,
@@ -331,6 +343,8 @@ class TestCmdSync:
 			code = cli._cmd_sync(args)
 		assert code == 0
 		assert "Sync:" in buf.getvalue()
+		assert captured["body"]["force"] is True
+		assert captured["body"]["blocking"] is True
 
 	def test_sync_not_running(self, monkeypatch: pytest.MonkeyPatch) -> None:
 		"""Sync returns 1 when the server is unreachable."""
@@ -377,7 +391,12 @@ class TestCmdMaintain:
 	def test_maintain_success_json(self, monkeypatch: pytest.MonkeyPatch) -> None:
 		"""Maintain with --json emits JSON response."""
 		fake = {"merged": 1, "archived": 0}
-		monkeypatch.setattr(cli, "_api_post", lambda _p, _b: fake)
+		captured: dict[str, Any] = {}
+		monkeypatch.setattr(
+			cli,
+			"_api_post",
+			lambda path, body: (captured.update({"path": path, "body": body}) or fake),
+		)
 		args = _ns(command="maintain", json=True, force=False, dry_run=False)
 		buf = io.StringIO()
 		with redirect_stdout(buf):
@@ -385,6 +404,8 @@ class TestCmdMaintain:
 		assert code == 0
 		parsed = json.loads(buf.getvalue())
 		assert "merged" in parsed
+		assert captured["path"] == "/api/maintain"
+		assert captured["body"] == {"dry_run": False, "blocking": True}
 
 	def test_maintain_not_running(self, monkeypatch: pytest.MonkeyPatch) -> None:
 		"""Maintain returns 1 when the server is unreachable."""
@@ -1747,10 +1768,9 @@ class TestBuildParser:
 		assert args.ignore_lock is True
 
 	def test_maintain_flags(self) -> None:
-		"""Maintain parser accepts --force and --dry-run."""
+		"""Maintain parser accepts --dry-run."""
 		parser = cli.build_parser()
-		args = parser.parse_args(["maintain", "--force", "--dry-run"])
-		assert args.force is True
+		args = parser.parse_args(["maintain", "--dry-run"])
 		assert args.dry_run is True
 
 	def test_queue_flags(self) -> None:

@@ -9,6 +9,9 @@ from lerim.config.settings import (
     RoleConfig,
     _build_role,
     _deep_merge,
+    _read_bool,
+    _read_float,
+    _read_int,
     _require_int,
     _to_non_empty_string,
     ensure_user_config_exists,
@@ -47,8 +50,34 @@ def test_deep_merge_preserves_unset():
 def test_require_int_valid():
     """_require_int parses valid values and enforces minimum."""
     assert _require_int({"k": 42}, "k") == 42
-    assert _require_int({"k": "10"}, "k") == 10
     assert _require_int({"k": -1}, "k", minimum=0) == 0
+
+
+def test_require_int_rejects_string_values():
+    """_require_int rejects string values instead of coercing them."""
+    import pytest
+
+    with pytest.raises(ValueError, match="must be an integer"):
+        _require_int({"k": "10"}, "k")
+
+
+def test_strict_typed_readers_reject_string_scalars():
+    """Strict readers reject quoted TOML scalar values."""
+    import pytest
+
+    with pytest.raises(ValueError, match="must be a boolean"):
+        _read_bool({"k": "false"}, "k")
+    with pytest.raises(ValueError, match="must be an integer"):
+        _read_int({"k": "10"}, "k")
+    with pytest.raises(ValueError, match="must be a float"):
+        _read_float({"k": "0.2"}, "k")
+
+
+def test_strict_typed_readers_accept_native_scalars():
+    """Strict readers accept native TOML bool, int, and float values."""
+    assert _read_bool({"k": False}, "k") is False
+    assert _read_int({"k": 10}, "k") == 10
+    assert _read_float({"k": 0.2}, "k") == 0.2
 
 
 def test_require_int_missing():

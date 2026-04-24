@@ -63,7 +63,6 @@ class FindingLevelSpec:
 
     name: str
     bucket: str
-    durable_record_kind: str | None = None
 
 
 RECORD_KIND_SPECS = {
@@ -135,32 +134,26 @@ FINDING_LEVEL_SPECS = {
     "decision": FindingLevelSpec(
         name="decision",
         bucket="durable",
-        durable_record_kind="decision",
     ),
     "preference": FindingLevelSpec(
         name="preference",
         bucket="durable",
-        durable_record_kind="preference",
     ),
     "feedback": FindingLevelSpec(
         name="feedback",
         bucket="durable",
-        durable_record_kind=None,
     ),
     "reference": FindingLevelSpec(
         name="reference",
         bucket="durable",
-        durable_record_kind="reference",
     ),
     "constraint": FindingLevelSpec(
         name="constraint",
         bucket="durable",
-        durable_record_kind="constraint",
     ),
     "fact": FindingLevelSpec(
         name="fact",
         bucket="durable",
-        durable_record_kind="fact",
     ),
     "implementation": FindingLevelSpec(name="implementation", bucket="implementation"),
 }
@@ -301,15 +294,18 @@ def normalize_record_payload(
     if len(title_text) > MAX_RECORD_TITLE_CHARS:
         raise ValueError("title_too_long")
 
+    now = _utc_now()
+    created_at_text = str(created_at or now).strip()
+    updated_at_text = str(updated_at or now).strip()
     payload = {
         "kind": kind_text,
         "title": title_text,
         "body": body_text,
         "status": status_text,
         "source_session_id": _normalize_optional_text(source_session_id),
-        "created_at": str(created_at or _utc_now()).strip(),
-        "updated_at": str(updated_at or _utc_now()).strip(),
-        "valid_from": str(valid_from or created_at or _utc_now()).strip(),
+        "created_at": created_at_text,
+        "updated_at": updated_at_text,
+        "valid_from": str(valid_from or created_at_text).strip(),
         "valid_until": _normalize_optional_text(valid_until),
         "superseded_by_record_id": _normalize_optional_text(superseded_by_record_id),
         "decision": _normalize_optional_text(decision),

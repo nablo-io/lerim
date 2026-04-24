@@ -149,7 +149,7 @@ class TestEmbeddingProviderDimsProperty:
 
 
 class TestBuildEmbeddingProviderCaching:
-    """Tests for build_embedding_provider LRU cache."""
+    """Tests for build_embedding_provider cache."""
 
     def setup_method(self):
         clear_embedding_provider_cache()
@@ -172,6 +172,14 @@ class TestBuildEmbeddingProviderCaching:
         clear_embedding_provider_cache()
         p2 = build_embedding_provider("test/model", str(tmp_path / "cache"))
         assert p1 is not p2
+
+    def test_cache_clear_closes_cached_provider(self, tmp_path):
+        provider = build_embedding_provider("test/model", str(tmp_path / "cache"))
+        provider._tokenizer = MagicMock()
+        provider._session = MagicMock()
+        clear_embedding_provider_cache()
+        assert provider._tokenizer is None
+        assert provider._session is None
 
 
 class TestGetEmbeddingProvider:

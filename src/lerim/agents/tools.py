@@ -73,7 +73,6 @@ class ContextDeps:
     pruned_offsets: set[int] = field(default_factory=set)
     last_context_tokens: int = 0
     last_context_fill_ratio: float = 0.0
-    require_episode_before_durable_write: bool = False
 
 
 def _store(ctx: RunContext[ContextDeps]) -> ContextStore:
@@ -152,8 +151,11 @@ def _require_note_or_prune_before_trace_read(
             "Call note first with the strongest durable and implementation findings from the chunks already read. "
             "Then continue reading."
         )
-    if not ctx.deps.pruned_offsets:
-        offsets_text = ", ".join(str(item) for item in older_offsets)
+    missing_offsets = [
+        offset for offset in older_offsets if offset not in ctx.deps.pruned_offsets
+    ]
+    if missing_offsets:
+        offsets_text = ", ".join(str(item) for item in missing_offsets)
         raise ModelRetry(
             f"Context pressure is {pressure} ({fill_ratio:.0%} of the configured window). "
             "Prune older trace_read results before reading more so the context stays focused. "
@@ -166,12 +168,18 @@ def trace_read(ctx: RunContext[ContextDeps], offset: int = 0, limit: int = 100) 
     trace_path = ctx.deps.trace_path
     if trace_path is None:
         return "Error: no trace path configured"
-    if limit <= 0 or limit > TRACE_MAX_LINES_PER_READ:
-        limit = TRACE_MAX_LINES_PER_READ
-    _require_note_or_prune_before_trace_read(ctx, int(offset))
     lines = _trace_lines(trace_path)
     total = len(lines)
     ctx.deps.trace_total_lines = total
+    offset = max(0, int(offset))
+    if offset >= total and total > 0:
+        raise ModelRetry(
+            f"trace_read offset {offset} is past the end of the trace. "
+            f"Use an offset from 0 to {max(0, total - 1)}."
+        )
+    if limit <= 0 or limit > TRACE_MAX_LINES_PER_READ:
+        limit = TRACE_MAX_LINES_PER_READ
+    _require_note_or_prune_before_trace_read(ctx, offset)
     chunk = lines[offset : offset + limit]
     safe_chunk: list[str] = []
     running_bytes = 0
@@ -229,12 +237,22 @@ def search_records(
             "search_records needs a real text query. "
             "Use list_records when you want to browse recent or filtered records."
         )
+    normalized_kinds = _normalize_filter_list(
+        kind_filters,
+        _normalize_kind,
+        label="search_records kind_filters",
+    )
+    normalized_statuses = _normalize_filter_list(
+        status_filters,
+        _normalize_status,
+        label="search_records status_filters",
+    )
     effective_include_archived = bool(include_archived or str(valid_at or "").strip())
     hits = store.search(
         project_ids=ctx.deps.project_ids or [ctx.deps.project_identity.project_id],
         query=trimmed_query,
-        kind_filters=kind_filters or None,
-        statuses=status_filters or None,
+        kind_filters=normalized_kinds,
+        statuses=normalized_statuses,
         valid_at=valid_at.strip() or None,
         include_archived=effective_include_archived,
         limit=max(1, min(int(limit), 8)),
@@ -286,14 +304,18 @@ def list_records(
     zero rows, answer from that zero result rather than widening scope.
     """
     store = _store(ctx)
-    if kind_filters and len(kind_filters) > 1:
-        raise ModelRetry(
-            "list_records currently supports at most one kind filter. Narrow to one kind or use repeated calls."
-        )
-    if status_filters and len(status_filters) > 1:
-        raise ModelRetry(
-            "list_records currently supports at most one status filter. Narrow to one status or use repeated calls."
-        )
+    normalized_kinds = _normalize_filter_list(
+        kind_filters,
+        _normalize_kind,
+        max_items=1,
+        label="list_records kind_filters",
+    )
+    normalized_statuses = _normalize_filter_list(
+        status_filters,
+        _normalize_status,
+        max_items=1,
+        label="list_records status_filters",
+    )
     order = str(order_by or "updated_at").strip().lower()
     if order not in {"created_at", "updated_at", "valid_from"}:
         raise ModelRetry(
@@ -301,17 +323,15 @@ def list_records(
         )
     effective_include_archived = bool(include_archived or valid_at.strip())
     status: str | None = None
-    if status_filters and len(status_filters) == 1:
-        status = _normalize_status(status_filters[0])
+    if normalized_statuses:
+        status = normalized_statuses[0]
     elif not effective_include_archived:
         status = "active"
     listing = store.query(
         entity="records",
         mode="list",
         project_ids=ctx.deps.project_ids or [ctx.deps.project_identity.project_id],
-        kind=_normalize_kind(kind_filters[0])
-        if kind_filters and len(kind_filters) == 1
-        else None,
+        kind=normalized_kinds[0] if normalized_kinds else None,
         status=status,
         created_since=created_since.strip() or None,
         created_until=created_until.strip() or None,
@@ -361,7 +381,9 @@ def fetch_records(
     """
     mode = (response_format or "concise").strip().lower()
     if mode not in {"concise", "detailed"}:
-        return f"Error: response_format must be 'concise' or 'detailed', got {response_format!r}"
+        raise ModelRetry(
+            "fetch_records response_format must be 'concise' or 'detailed'."
+        )
     if not record_ids:
         return json.dumps({"count": 0, "records": []}, indent=2)
     store = _store(ctx)
@@ -414,6 +436,26 @@ def _normalize_status(status: str) -> str:
     return normalize_record_status(status)
 
 
+def _normalize_filter_list(
+    values: list[str] | None,
+    normalizer,
+    *,
+    max_items: int | None = None,
+    label: str,
+) -> list[str] | None:
+    """Normalize optional tool filter lists and reject empty or oversized values."""
+    normalized = [
+        item
+        for item in (normalizer(value) for value in (values or []))
+        if item
+    ]
+    if max_items is not None and len(normalized) > max_items:
+        raise ModelRetry(
+            f"{label} currently supports at most {max_items} value(s). Narrow the filter or use repeated calls."
+        )
+    return normalized or None
+
+
 def _maybe_raise_record_retry(exc: ValueError) -> None:
     """Convert record-quality validation errors into guided model retries."""
     code = str(exc or "").strip()
@@ -422,22 +464,49 @@ def _maybe_raise_record_retry(exc: ValueError) -> None:
         raise ModelRetry(message) from exc
 
 
-def _require_notes_before_long_trace_write(ctx: RunContext[ContextDeps]) -> None:
-    """Require one note step before writes on traces that exceed one read chunk."""
+def _trace_line_count(ctx: RunContext[ContextDeps]) -> int:
+    """Return and cache the current trace line count."""
     trace_path = ctx.deps.trace_path
-    if trace_path is None or ctx.deps.notes:
-        return
+    if trace_path is None:
+        return 0
+    total_lines = int(ctx.deps.trace_total_lines)
+    if total_lines > 0:
+        return total_lines
     try:
-        line_count = sum(1 for _ in trace_path.open("r", encoding="utf-8"))
+        total_lines = sum(1 for _ in trace_path.open("r", encoding="utf-8"))
     except OSError:
+        return 0
+    ctx.deps.trace_total_lines = total_lines
+    return total_lines
+
+
+def _require_trace_ready_for_write(ctx: RunContext[ContextDeps]) -> None:
+    """Require trace coverage and note discipline before extract writes."""
+    trace_path = ctx.deps.trace_path
+    if trace_path is None:
         return
-    if line_count <= TRACE_MAX_LINES_PER_READ:
+    total_lines = _trace_line_count(ctx)
+    if total_lines <= 0:
         return
-    raise ModelRetry(
-        "This trace is longer than one trace_read chunk. "
-        "Call note first with the strongest durable and implementation findings, "
-        "then create or update records."
-    )
+    if not ctx.deps.read_ranges:
+        raise ModelRetry(
+            "No trace lines have been read yet. "
+            f"Call trace_read(offset=0, limit={TRACE_MAX_LINES_PER_READ}) "
+            "before you create or update records."
+        )
+    next_offset = _first_uncovered_offset(ctx.deps.read_ranges, total_lines)
+    if next_offset is not None:
+        raise ModelRetry(
+            "Unread trace lines remain. "
+            f"Continue reading with trace_read(offset={next_offset}, limit={TRACE_MAX_LINES_PER_READ}) "
+            "before you create or update records."
+        )
+    if total_lines > TRACE_MAX_LINES_PER_READ and not ctx.deps.notes:
+        raise ModelRetry(
+            "This trace is longer than one trace_read chunk. "
+            "Call note first with the strongest durable and implementation findings, "
+            "then create or update records."
+        )
 
 
 def _first_uncovered_offset(
@@ -467,65 +536,13 @@ def _first_uncovered_offset(
 
 
 def _require_full_trace_coverage_before_write(ctx: RunContext[ContextDeps]) -> None:
-    """Require contiguous coverage of the full trace before any write."""
-    trace_path = ctx.deps.trace_path
-    if trace_path is None:
-        return
-    total_lines = int(ctx.deps.trace_total_lines)
-    if total_lines <= 0:
-        try:
-            total_lines = sum(1 for _ in trace_path.open("r", encoding="utf-8"))
-        except OSError:
-            return
-        ctx.deps.trace_total_lines = total_lines
-    if total_lines <= 0:
-        return
-    if not ctx.deps.read_ranges:
-        raise ModelRetry(
-            "No trace lines have been read yet. "
-            f"Call trace_read(offset=0, limit={TRACE_MAX_LINES_PER_READ}) "
-            "before you create or update records."
-        )
-    next_offset = _first_uncovered_offset(ctx.deps.read_ranges, total_lines)
-    if next_offset is None:
-        return
-    raise ModelRetry(
-        "Unread trace lines remain. "
-        f"Continue reading with trace_read(offset={next_offset}, limit={TRACE_MAX_LINES_PER_READ}) "
-        "before you create or update records."
-    )
+    """Backward-compatible wrapper for the unified trace write gate."""
+    _require_trace_ready_for_write(ctx)
 
 
-def _require_episode_before_durable_write(
-    ctx: RunContext[ContextDeps], store: ContextStore, kind: str | None = None
-) -> None:
-    """Optionally require extract runs to write their session episode first.
-
-    This is an extract-only flow guard, not a substitute for the extract
-    output validator. It catches runs that found durable signal and try to
-    write fact/decision/etc. records before the mandatory episode exists.
-    The output validator still covers sessions with no durable writes.
-    """
-    if not ctx.deps.require_episode_before_durable_write:
-        return
-    if kind == "episode":
-        return
-    rows = store.query(
-        entity="records",
-        mode="list",
-        project_ids=[ctx.deps.project_identity.project_id],
-        source_session_id=ctx.deps.session_id,
-        include_total=False,
-        include_archived=True,
-        limit=20,
-    )["rows"]
-    episode_count = sum(1 for row in rows if str(row.get("kind") or "") == "episode")
-    if episode_count == 1:
-        return
-    raise ModelRetry(
-        "Create exactly one episode record for the current session before writing "
-        "or updating durable fact, decision, preference, constraint, or reference records."
-    )
+def _require_notes_before_long_trace_write(ctx: RunContext[ContextDeps]) -> None:
+    """Backward-compatible wrapper for the unified trace write gate."""
+    _require_trace_ready_for_write(ctx)
 
 
 def create_record(
@@ -562,11 +579,9 @@ def create_record(
     for future sessions. Use `archived` for routine operational sessions with
     no durable signal.
     """
-    _require_full_trace_coverage_before_write(ctx)
-    _require_notes_before_long_trace_write(ctx)
+    _require_trace_ready_for_write(ctx)
     normalized_kind = _normalize_kind(kind)
     store = _store(ctx)
-    _require_episode_before_durable_write(ctx, store, normalized_kind)
     project_id = ctx.deps.project_identity.project_id
     session_id = ctx.deps.session_id
     source_started_at = _source_session_started_at(ctx, store)
@@ -627,8 +642,7 @@ def update_record(
     For dependency or environment facts, name the requirement directly rather
     than copying exception classes, stderr, commands, or log fragments.
     """
-    _require_full_trace_coverage_before_write(ctx)
-    _require_notes_before_long_trace_write(ctx)
+    _require_trace_ready_for_write(ctx)
     changes: dict[str, Any] = {}
     for key, value in {
         "title": title,
@@ -650,7 +664,6 @@ def update_record(
     if str(status or "").strip():
         changes["status"] = _normalize_status(status)
     store = _store(ctx)
-    _require_episode_before_durable_write(ctx, store)
     try:
         result = store.update_record(
             record_id=str(record_id or "").strip(),
@@ -828,8 +841,18 @@ def prune(ctx: RunContext[ContextDeps], trace_offsets: list[int]) -> str:
     """Stub prior trace reads in future turns to reduce context pressure."""
     if not trace_offsets:
         return "No offsets to prune."
+    read_offsets = set(_read_offsets(ctx))
+    requested = {int(offset) for offset in trace_offsets}
+    unknown_offsets = sorted(requested - read_offsets)
+    if unknown_offsets:
+        known = ", ".join(str(offset) for offset in sorted(read_offsets)) or "none"
+        bad = ", ".join(str(offset) for offset in unknown_offsets)
+        raise ModelRetry(
+            f"Cannot prune unread trace offset(s): {bad}. "
+            f"Only previously read offsets can be pruned; read offsets: {known}."
+        )
     before = len(ctx.deps.pruned_offsets)
-    ctx.deps.pruned_offsets.update(int(offset) for offset in trace_offsets)
+    ctx.deps.pruned_offsets.update(requested)
     added = len(ctx.deps.pruned_offsets) - before
     return (
         f"Pruned {added} new offset(s); total pruned: {len(ctx.deps.pruned_offsets)}."

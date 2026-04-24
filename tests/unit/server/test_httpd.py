@@ -554,6 +554,17 @@ def test_post_sync(test_server):
 	assert status == 200
 	assert body["status"] == "started"
 	assert "job_id" in body
+	assert body["mode"] == "async"
+
+
+def test_post_sync_blocking(test_server):
+	"""POST /api/sync with blocking=true returns the completed sync payload."""
+	port, _, _ = test_server
+	status, body = _api_post(port, "/api/sync", {"window": "7d", "blocking": True})
+	assert status == 200
+	assert body["code"] == 0
+	assert body["indexed"] == 5
+	assert "job_id" not in body
 
 
 def test_post_maintain(test_server):
@@ -563,6 +574,17 @@ def test_post_maintain(test_server):
 	assert status == 200
 	assert body["status"] == "started"
 	assert "job_id" in body
+	assert body["mode"] == "async"
+
+
+def test_post_maintain_blocking(test_server):
+	"""POST /api/maintain with blocking=true returns the completed payload."""
+	port, _, _ = test_server
+	status, body = _api_post(port, "/api/maintain", {"blocking": True, "force": True})
+	assert status == 200
+	assert body["code"] == 0
+	assert body["maintain_counts"]["merged"] == 1
+	assert "job_id" not in body
 
 
 def test_post_connect(test_server):

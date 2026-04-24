@@ -5,6 +5,7 @@ Covers _compile_safe_fts_query, _rrf_fuse, ContextStore.search, and SearchHit.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -607,6 +608,47 @@ class TestSearchIntegration:
         for hit in hits:
             all_sources.update(hit.sources)
         assert all_sources & {"semantic", "fts"}
+
+    def test_search_reuses_one_connection_for_retrieval(self, tmp_path, monkeypatch):
+        store, pid = _build_store_with_project(tmp_path, monkeypatch)
+        store.create_record(
+            project_id=pid,
+            session_id="sess_search",
+            kind="fact",
+            title="Cache with Redis TTL",
+            body="Use Redis for caching with TTL expiration.",
+        )
+        store.initialize()
+        monkeypatch.setattr(store, "initialize", lambda: None)
+        opened_connections = []
+        helper_connections = []
+        original_connect = store.connect
+        original_semantic = store._semantic_candidates
+        original_lexical = store._lexical_candidates
+
+        @contextmanager
+        def tracked_connect():
+            with original_connect() as conn:
+                opened_connections.append(conn)
+                yield conn
+
+        def tracked_semantic(*args, **kwargs):
+            helper_connections.append(kwargs.get("conn"))
+            return original_semantic(*args, **kwargs)
+
+        def tracked_lexical(*args, **kwargs):
+            helper_connections.append(kwargs.get("conn"))
+            return original_lexical(*args, **kwargs)
+
+        monkeypatch.setattr(store, "connect", tracked_connect)
+        monkeypatch.setattr(store, "_semantic_candidates", tracked_semantic)
+        monkeypatch.setattr(store, "_lexical_candidates", tracked_lexical)
+
+        hits = store.search(project_ids=[pid], query="Redis cache TTL")
+
+        assert hits
+        assert len(opened_connections) == 1
+        assert helper_connections == [opened_connections[0], opened_connections[0]]
 
 
 class TestSearchHit:

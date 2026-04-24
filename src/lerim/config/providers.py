@@ -338,6 +338,39 @@ def _wrap_with_fallback(
 	)
 
 
+def _build_model_chain(
+	*,
+	cfg: Config,
+	provider: str,
+	model: str,
+	api_base: str,
+	fallback_models: tuple[str, ...] | list[str],
+	primary_role_label: str,
+	fallback_role_label_prefix: str,
+) -> Model:
+	"""Build a primary model and optional configured fallback chain."""
+	primary = _build_pydantic_model_for_provider(
+		provider=provider,
+		model=model,
+		api_base=api_base,
+		cfg=cfg,
+		role_label=primary_role_label,
+	)
+
+	fallbacks = [
+		_build_pydantic_model_for_provider(
+			provider=spec.provider,
+			model=spec.model,
+			api_base="",
+			cfg=cfg,
+			role_label=f"{fallback_role_label_prefix}{spec.provider}:{spec.model}",
+		)
+		for raw in fallback_models
+		for spec in (parse_fallback_spec(raw),)
+	]
+	return _wrap_with_fallback(primary, fallbacks)
+
+
 def build_pydantic_model(
 	role: RoleName = "agent",
 	*,
@@ -366,28 +399,15 @@ def build_pydantic_model(
 	cfg = config or get_config()
 	role_cfg = _role_config(cfg, role)
 
-	primary = _build_pydantic_model_for_provider(
+	return _build_model_chain(
+		cfg=cfg,
 		provider=role_cfg.provider,
 		model=role_cfg.model,
 		api_base=role_cfg.api_base,
-		cfg=cfg,
-		role_label=f"roles.{role}.provider={role_cfg.provider}",
+		fallback_models=role_cfg.fallback_models,
+		primary_role_label=f"roles.{role}.provider={role_cfg.provider}",
+		fallback_role_label_prefix=f"roles.{role}.fallback=",
 	)
-
-	fallbacks: list[Model] = []
-	for raw in role_cfg.fallback_models:
-		spec = parse_fallback_spec(raw)
-		fallbacks.append(
-			_build_pydantic_model_for_provider(
-				provider=spec.provider,
-				model=spec.model,
-				api_base="",
-				cfg=cfg,
-				role_label=f"roles.{role}.fallback={spec.provider}:{spec.model}",
-			)
-		)
-
-	return _wrap_with_fallback(primary, fallbacks)
 
 
 def build_pydantic_model_from_provider(
@@ -422,28 +442,15 @@ def build_pydantic_model_from_provider(
 	"""
 	cfg = config or get_config()
 
-	primary = _build_pydantic_model_for_provider(
+	return _build_model_chain(
+		cfg=cfg,
 		provider=provider,
 		model=model,
 		api_base="",
-		cfg=cfg,
-		role_label=f"explicit_provider={provider}",
+		fallback_models=fallback_models or (),
+		primary_role_label=f"explicit_provider={provider}",
+		fallback_role_label_prefix="explicit_fallback=",
 	)
-
-	fallbacks: list[Model] = []
-	for raw in fallback_models or ():
-		spec = parse_fallback_spec(raw)
-		fallbacks.append(
-			_build_pydantic_model_for_provider(
-				provider=spec.provider,
-				model=spec.model,
-				api_base="",
-				cfg=cfg,
-				role_label=f"explicit_fallback={spec.provider}:{spec.model}",
-			)
-		)
-
-	return _wrap_with_fallback(primary, fallbacks)
 
 
 def list_provider_models(provider: str) -> list[str]:

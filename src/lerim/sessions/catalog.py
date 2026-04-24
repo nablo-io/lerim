@@ -386,6 +386,17 @@ def get_indexed_run_ids() -> set[str]:
     return {str(row.get("run_id")) for row in rows if row.get("run_id")}
 
 
+def _get_indexed_content_hashes() -> dict[str, str | None]:
+    """Return indexed session content hashes keyed by run id."""
+    _ensure_sessions_db_initialized()
+    with _connect() as conn:
+        rows = conn.execute("SELECT run_id, content_hash FROM session_docs").fetchall()
+    return {
+        str(row.get("run_id")): row.get("content_hash")
+        for row in rows
+        if row.get("run_id")
+    }
+
 
 def list_sessions_window(
     *,
@@ -425,7 +436,7 @@ def list_sessions_window(
             SELECT *
             FROM session_docs
             {where_sql}
-            ORDER BY start_time DESC, indexed_at DESC
+            ORDER BY start_time DESC, indexed_at DESC, id DESC
             LIMIT ? OFFSET ?
             """,
             [*params, limit, offset],
@@ -463,6 +474,7 @@ def index_new_sessions(
         config.platforms_path
     )
     known_ids = get_indexed_run_ids()
+    known_hashes = _get_indexed_content_hashes()
 
     new_sessions: list[IndexedSession] = []
 
@@ -477,7 +489,7 @@ def index_new_sessions(
                 traces_dir=traces_dir,
                 start=start,
                 end=end,
-                known_run_ids=known_ids,
+                known_run_ids=None,
             )
         except Exception as exc:
             logger.warning(
@@ -494,7 +506,15 @@ def index_new_sessions(
                         )
                     continue
 
-            is_changed = session.run_id in known_ids
+            content_hash = getattr(session, "content_hash", None)
+            previous_hash = known_hashes.get(session.run_id)
+            is_known = session.run_id in known_ids
+            is_changed = (
+                is_known
+                and content_hash is not None
+                and previous_hash is not None
+                and content_hash != previous_hash
+            )
 
             summaries_json = json.dumps(session.summaries, ensure_ascii=True)
             summary_text = "\n".join(item for item in session.summaries if item)
@@ -518,12 +538,13 @@ def index_new_sessions(
                 summaries=summaries_json,
                 summary_text=summary_text,
                 session_path=session.session_path,
-                content_hash=None,
+                content_hash=content_hash,
             )
             if not indexed:
                 continue
 
             known_ids.add(session.run_id)
+            known_hashes[session.run_id] = content_hash
             new_sessions.append(
                 IndexedSession(
                     run_id=session.run_id,
@@ -687,9 +708,10 @@ def claim_session_jobs(
             JOB_STATUS_PENDING,
             JOB_STATUS_FAILED,
             job_type,
+            now_iso,
         ]
 
-        outer_params: list[Any] = [JOB_STATUS_PENDING, JOB_STATUS_FAILED, now_iso]
+        outer_params: list[Any] = [JOB_STATUS_PENDING, JOB_STATUS_FAILED]
         if run_ids:
             placeholders = ",".join("?" for _ in run_ids)
             run_id_filter = f"AND run_id IN ({placeholders})"
@@ -715,12 +737,12 @@ def claim_session_jobs(
                 FROM session_jobs
                 WHERE status IN (?, ?)
                   AND job_type = ?
+                  AND available_at <= ?
                   AND repo_path IS NOT NULL AND repo_path != ''
             )
             SELECT * FROM ranked_per_project
             WHERE rn = 1
               AND status IN (?, ?)
-              AND available_at <= ?
               AND NOT EXISTS (
                 SELECT 1
                 FROM dead_letter_projects

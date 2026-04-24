@@ -15,7 +15,7 @@ from lerim.cloud.shipper import (
     _typed_fields_from_cloud_record,
     _upsert_pulled_record,
 )
-from lerim.context import ContextStore
+from lerim.context import ContextStore, resolve_project_identity
 from tests.helpers import make_config
 
 
@@ -104,11 +104,10 @@ class TestUpsertPulledRecord:
     def test_skips_empty_record_id(self, tmp_path):
         result = _upsert_pulled_record(
             context_db_path=tmp_path / "ctx.sqlite3",
-            project_name="proj",
-            project_path=tmp_path,
+            project_identity=resolve_project_identity(tmp_path),
             record={"record_id": ""},
         )
-        assert result is False
+        assert result == "permanent_drop"
 
     def test_creates_new_record(self, tmp_path, monkeypatch, mock_embeddings):
         monkeypatch.setattr(
@@ -118,8 +117,7 @@ class TestUpsertPulledRecord:
         ctx_db = tmp_path / "context.sqlite3"
         result = _upsert_pulled_record(
             context_db_path=ctx_db,
-            project_name="proj",
-            project_path=tmp_path,
+            project_identity=resolve_project_identity(tmp_path),
             record={
                 "record_id": "cloud-rec-1",
                 "record_kind": "decision",
@@ -131,7 +129,7 @@ class TestUpsertPulledRecord:
                 "cloud_edited_at": "2026-04-01T12:00:00Z",
             },
         )
-        assert result is True
+        assert result == "applied"
         store = ContextStore(ctx_db)
         with store.connect() as conn:
             row = conn.execute(
@@ -149,8 +147,7 @@ class TestUpsertPulledRecord:
         ctx_db = tmp_path / "context.sqlite3"
         _upsert_pulled_record(
             context_db_path=ctx_db,
-            project_name="proj",
-            project_path=tmp_path,
+            project_identity=resolve_project_identity(tmp_path),
             record={
                 "record_id": "cloud-rec-2",
                 "record_kind": "fact",
@@ -162,8 +159,7 @@ class TestUpsertPulledRecord:
         )
         result = _upsert_pulled_record(
             context_db_path=ctx_db,
-            project_name="proj",
-            project_path=tmp_path,
+            project_identity=resolve_project_identity(tmp_path),
             record={
                 "record_id": "cloud-rec-2",
                 "record_kind": "fact",
@@ -173,7 +169,7 @@ class TestUpsertPulledRecord:
                 "cloud_edited_at": "2026-04-02T12:00:00Z",
             },
         )
-        assert result is True
+        assert result == "applied"
         store = ContextStore(ctx_db)
         with store.connect() as conn:
             row = conn.execute(
@@ -217,3 +213,105 @@ class TestPullRecords:
         with patch("lerim.cloud.shipper.asyncio.to_thread", side_effect=mock_to_thread):
             pulled = asyncio.run(_pull_records("https://api.test", "tok", cfg, state))
         assert pulled == 0
+
+    def test_invalid_kind_advances_watermark_as_permanent_drop(
+        self, tmp_path, mock_embeddings
+    ):
+        """Invalid cloud kinds are permanent drops and can advance the watermark."""
+        proj_dir = tmp_path / "proj"
+        proj_dir.mkdir()
+        cfg = replace(make_config(tmp_path), projects={"proj": str(proj_dir)})
+        state = _ShipperState(records_pulled_at="2026-03-01T00:00:00Z")
+        cloud_data = {
+            "records": [
+                {
+                    "record_id": "bad-kind",
+                    "record_kind": "project",
+                    "title": "Unsupported kind",
+                    "body": "This old cloud kind cannot be stored locally.",
+                    "project": "proj",
+                    "cloud_edited_at": "2026-04-01T12:00:00Z",
+                }
+            ]
+        }
+
+        async def mock_to_thread(fn, *args, **kwargs):
+            return cloud_data
+
+        with patch("lerim.cloud.shipper.asyncio.to_thread", side_effect=mock_to_thread):
+            pulled = asyncio.run(_pull_records("https://api.test", "tok", cfg, state))
+
+        assert pulled == 0
+        assert state.records_pulled_at == "2026-04-01T12:00:00Z"
+        store = ContextStore(cfg.context_db_path)
+        with store.connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM records WHERE record_id = ?",
+                ("bad-kind",),
+            ).fetchone()
+        assert row is None
+
+    def test_upsert_failure_does_not_advance_watermark(
+        self, tmp_path, mock_embeddings
+    ):
+        """Validation failures are retryable and must not move the watermark."""
+        proj_dir = tmp_path / "proj"
+        proj_dir.mkdir()
+        cfg = replace(make_config(tmp_path), projects={"proj": str(proj_dir)})
+        state = _ShipperState(records_pulled_at="2026-03-01T00:00:00Z")
+        cloud_data = {
+            "records": [
+                {
+                    "record_id": "missing-required-fields",
+                    "record_kind": "decision",
+                    "title": "Incomplete decision",
+                    "body": "Decision typed fields are required locally.",
+                    "project": "proj",
+                    "cloud_edited_at": "2026-04-01T12:00:00Z",
+                }
+            ]
+        }
+
+        async def mock_to_thread(fn, *args, **kwargs):
+            return cloud_data
+
+        with patch("lerim.cloud.shipper.asyncio.to_thread", side_effect=mock_to_thread):
+            pulled = asyncio.run(_pull_records("https://api.test", "tok", cfg, state))
+
+        assert pulled == 0
+        assert state.records_pulled_at == "2026-03-01T00:00:00Z"
+        store = ContextStore(cfg.context_db_path)
+        with store.connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM records WHERE record_id = ?",
+                ("missing-required-fields",),
+            ).fetchone()
+        assert row is None
+
+    def test_unknown_project_does_not_advance_watermark(self, tmp_path):
+        """Unknown local projects are retryable and must not move the watermark."""
+        proj_dir = tmp_path / "alpha"
+        proj_dir.mkdir()
+        cfg = replace(make_config(tmp_path), projects={"alpha": str(proj_dir)})
+        state = _ShipperState(records_pulled_at="2026-03-01T00:00:00Z")
+        cloud_data = {
+            "records": [
+                {
+                    "record_id": "cloud-unknown-project",
+                    "record_kind": "fact",
+                    "title": "Should wait",
+                    "body": "This can sync if the project is configured later.",
+                    "project": "beta",
+                    "cloud_edited_at": "2026-04-01T12:00:00Z",
+                }
+            ]
+        }
+
+        async def mock_to_thread(fn, *args, **kwargs):
+            return cloud_data
+
+        with patch("lerim.cloud.shipper.asyncio.to_thread", side_effect=mock_to_thread):
+            pulled = asyncio.run(_pull_records("https://api.test", "tok", cfg, state))
+
+        assert pulled == 0
+        assert state.records_pulled_at == "2026-03-01T00:00:00Z"

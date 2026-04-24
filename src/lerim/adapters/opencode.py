@@ -23,6 +23,7 @@ from typing import Any
 from lerim.adapters.base import SessionRecord, ViewerMessage, ViewerSession
 from lerim.adapters.common import (
     compact_jsonl,
+    compute_file_hash,
     in_window,
     make_canonical_entry,
     normalize_timestamp_iso,
@@ -294,7 +295,7 @@ def iter_sessions(
     """Enumerate OpenCode sessions, export as JSONL, and build session records.
 
     Reads sessions from the SQLite database, exports each as a JSONL cache
-    file in *cache_dir*, and skips sessions already indexed by ID.
+    file in *cache_dir*, and optionally skips sessions already indexed by ID.
     """
     root = traces_dir or default_path()
     if root is None or not root.exists():
@@ -310,7 +311,7 @@ def iter_sessions(
         conn = readonly_connect(db_path)
         rows = conn.execute(
             """SELECT id, directory, title, time_created FROM session \
-ORDER BY time_created"""
+ORDER BY time_created, id"""
         ).fetchall()
         conn.close()
     except sqlite3.Error:
@@ -334,6 +335,7 @@ ORDER BY time_created"""
 
         # Export to JSONL cache file
         jsonl_path = _export_session_jsonl(session, out_dir)
+        content_hash = compute_file_hash(jsonl_path)
 
         summaries: list[str] = []
         for msg in session.messages:
@@ -358,6 +360,7 @@ ORDER BY time_created"""
                 tool_call_count=tool_calls,
                 total_tokens=session.total_input_tokens + session.total_output_tokens,
                 summaries=summaries,
+                content_hash=content_hash,
             )
         )
 

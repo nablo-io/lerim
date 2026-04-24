@@ -1,8 +1,8 @@
 """Unit tests for settings.py coverage gaps not covered by test_config.py.
 
-Tests: load_toml_file, _expand, _to_fallback_models, _to_string_tuple,
-_parse_string_table, _toml_value, _toml_write_dict, save_config_patch,
-layer precedence, port validation.
+Tests: load_toml_file, _expand, strict typed readers, _to_fallback_models,
+_to_string_tuple, _parse_string_table, _toml_value, _toml_write_dict,
+save_config_patch, layer precedence, port validation.
 """
 
 from __future__ import annotations
@@ -154,21 +154,28 @@ def test_string_tuple_unsupported_type():
 def test_parse_string_table_simple():
     """_parse_string_table handles name = 'path' entries."""
     raw = {"claude": "~/.claude/projects", "codex": "~/.codex/sessions"}
-    result = _parse_string_table(raw)
+    result = _parse_string_table(raw, section="agents")
     assert result == {"claude": "~/.claude/projects", "codex": "~/.codex/sessions"}
 
 
-def test_parse_string_table_dict_entries():
-    """_parse_string_table handles name = {path = '...'} entries."""
+def test_parse_string_table_rejects_dict_entries():
+    """_parse_string_table rejects undocumented object-shaped entries."""
     raw = {"claude": {"path": "/home/user/.claude"}}
-    result = _parse_string_table(raw)
-    assert result == {"claude": "/home/user/.claude"}
+    with pytest.raises(ValueError, match="agents.claude must be a string"):
+        _parse_string_table(raw, section="agents")
+
+
+def test_parse_string_table_rejects_non_string_entries():
+    """_parse_string_table rejects scalar values that are not strings."""
+    raw = {"auto_unload": True}
+    with pytest.raises(ValueError, match="providers.auto_unload must be a string"):
+        _parse_string_table(raw, section="providers")
 
 
 def test_parse_string_table_skips_empty():
     """_parse_string_table skips entries with empty/None values."""
     raw = {"good": "/path", "bad": "", "none": None}
-    result = _parse_string_table(raw)
+    result = _parse_string_table(raw, section="agents")
     assert result == {"good": "/path"}
 
 
@@ -307,6 +314,47 @@ def test_layer_precedence_explicit_context_db_path_override(tmp_path, monkeypatc
     monkeypatch.setenv("LERIM_CONFIG", str(explicit))
     cfg = reload_config()
     assert cfg.context_db_path == tmp_path / "db" / "ctx.sqlite3"
+
+
+def test_config_rejects_quoted_boolean_role_value(tmp_path, monkeypatch):
+    """Quoted booleans stay strings and must not be coerced truthy."""
+    explicit = tmp_path / "quoted_bool.toml"
+    explicit.write_text(
+        '[roles.agent]\nparallel_tool_calls = "false"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LERIM_CONFIG", str(explicit))
+
+    with pytest.raises(ValueError, match="parallel_tool_calls must be a boolean"):
+        reload_config()
+
+
+def test_config_rejects_quoted_provider_boolean(tmp_path, monkeypatch):
+    """Provider booleans must be native TOML booleans, not strings."""
+    explicit = tmp_path / "quoted_provider_bool.toml"
+    explicit.write_text(
+        '[providers]\nauto_unload = "false"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LERIM_CONFIG", str(explicit))
+
+    with pytest.raises(ValueError, match="auto_unload must be a boolean"):
+        reload_config()
+
+
+def test_provider_auto_unload_is_not_parsed_as_api_base(tmp_path, monkeypatch):
+    """Provider URL parsing ignores the documented auto_unload boolean."""
+    explicit = tmp_path / "provider_bool.toml"
+    explicit.write_text(
+        "[providers]\nauto_unload = false\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LERIM_CONFIG", str(explicit))
+
+    cfg = reload_config()
+
+    assert cfg.auto_unload is False
+    assert "auto_unload" not in cfg.provider_api_bases
 
 
 def test_deep_merge_adds_new_keys():

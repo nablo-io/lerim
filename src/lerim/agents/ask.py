@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
@@ -20,30 +19,6 @@ from lerim.agents.tools import (
     search_records,
 )
 from lerim.context.project_identity import ProjectIdentity
-
-
-def format_ask_hints(hits: list[dict[str, Any]], context_docs: list[dict[str, Any]]) -> str:
-    """Format optional hints into a compact prompt preface."""
-    del context_docs
-    if not hits:
-        return "(no pre-fetched hints)"
-    lines = []
-    for hit in hits:
-        metadata = []
-        for field_name in ("status", "created_at", "updated_at", "valid_from", "valid_until"):
-            value = str(hit.get(field_name) or "").strip()
-            if value:
-                metadata.append(f"{field_name}={value}")
-        superseded_by = str(hit.get("superseded_by_record_id") or "").strip()
-        if superseded_by:
-            metadata.append(f"superseded_by={superseded_by}")
-        prefix = f"[{hit.get('kind', '?')}] {hit.get('title', '?')}"
-        if metadata:
-            prefix += f" ({', '.join(metadata)})"
-        lines.append(
-            f"- {prefix}: {hit.get('body_preview', '')}"
-        )
-    return "\n".join(lines)
 
 
 ASK_SYSTEM_PROMPT = """\
@@ -192,11 +167,13 @@ def run_ask(
         project_ids=project_ids,
     )
     now_utc = datetime.now(timezone.utc).isoformat()
+    hints_text = hints.strip()
     prompt = (
         f"Current UTC time:\n{now_utc}\n\n"
-        f"Question:\n{question.strip()}\n\n"
-        f"Hints:\n{hints.strip() or '(no hints)'}"
+        f"Question:\n{question.strip()}"
     )
+    if hints_text:
+        prompt = f"{prompt}\n\nHints:\n{hints_text}"
     result = agent.run_sync(
         prompt,
         deps=deps,

@@ -31,8 +31,11 @@ def _emit(message: object = "", *, file: Any | None = None) -> None:
 # Callback server
 # ---------------------------------------------------------------------------
 
-_TOKEN_RESULT: str | None = None
-"""Module-level holder for the token received via localhost callback."""
+
+class _TokenCallbackServer(HTTPServer):
+    """Local callback server that owns one browser-flow token result."""
+
+    token_result: str | None = None
 
 
 class _CallbackHandler(BaseHTTPRequestHandler):
@@ -40,8 +43,6 @@ class _CallbackHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         from urllib.parse import parse_qs, urlparse
-
-        global _TOKEN_RESULT
 
         parsed = urlparse(self.path)
         if parsed.path != "/callback":
@@ -58,7 +59,7 @@ class _CallbackHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"Missing token parameter")
             return
 
-        _TOKEN_RESULT = token_list[0].strip()
+        setattr(self.server, "token_result", token_list[0].strip())
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.end_headers()
@@ -94,11 +95,8 @@ def _run_browser_flow(endpoint: str, timeout_seconds: int = 120) -> str | None:
 
     Returns the token string on success, or None on timeout.
     """
-    global _TOKEN_RESULT
-    _TOKEN_RESULT = None
-
     port = _find_available_port()
-    server = HTTPServer(("127.0.0.1", port), _CallbackHandler)
+    server = _TokenCallbackServer(("127.0.0.1", port), _CallbackHandler)
     server.timeout = 1.0
 
     callback_url = f"http://localhost:{port}/callback"
@@ -117,7 +115,7 @@ def _run_browser_flow(endpoint: str, timeout_seconds: int = 120) -> str | None:
         deadline = time.monotonic() + timeout_seconds
         while not stop.is_set() and time.monotonic() < deadline:
             server.handle_request()
-            if _TOKEN_RESULT is not None:
+            if server.token_result is not None:
                 break
 
     thread = threading.Thread(target=_serve, daemon=True)
@@ -126,7 +124,7 @@ def _run_browser_flow(endpoint: str, timeout_seconds: int = 120) -> str | None:
     stop.set()
     server.server_close()
 
-    return _TOKEN_RESULT
+    return server.token_result
 
 
 # ---------------------------------------------------------------------------

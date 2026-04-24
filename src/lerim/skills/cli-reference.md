@@ -189,13 +189,11 @@ Requires a running server (`lerim up` or `lerim serve`).
 
 ```bash
 lerim maintain                # run one maintenance pass
-lerim maintain --force        # force maintenance even if recently run
 lerim maintain --dry-run      # preview only, no writes
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--force` | Force maintenance even if a recent run was completed |
 | `--dry-run` | Record a run but skip actual record changes |
 
 ### Background sync and maintain

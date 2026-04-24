@@ -117,6 +117,7 @@ class TestSessionRecord:
         assert record.start_time is None
         assert record.repo_path is None
         assert record.repo_name is None
+        assert record.content_hash is None
 
     def test_summaries_default_empty_list(self):
         record = SessionRecord(

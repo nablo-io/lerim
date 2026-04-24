@@ -1,12 +1,10 @@
 """Public context-store API for Lerim's simplified DB-only architecture."""
 
-from lerim.context.embedding import (
-    EMBEDDING_DIMS,
-    EMBEDDING_MODEL_NAME,
-    EmbeddingProvider,
-    clear_embedding_provider_cache,
-    get_embedding_provider,
-)
+from __future__ import annotations
+
+from importlib import import_module
+from typing import Any
+
 from lerim.context.project_identity import ProjectIdentity, resolve_project_identity
 from lerim.context.spec import (
     ALLOWED_FINDING_LEVELS,
@@ -31,7 +29,34 @@ from lerim.context.spec import (
     record_search_text,
     record_validation_message,
 )
-from lerim.context.store import ContextStore, SearchHit
+
+_LAZY_EXPORTS = {
+    "ContextStore": ("lerim.context.store", "ContextStore"),
+    "SearchHit": ("lerim.context.store", "SearchHit"),
+    "EMBEDDING_DIMS": ("lerim.context.embedding", "EMBEDDING_DIMS"),
+    "EMBEDDING_MODEL_NAME": ("lerim.context.embedding", "EMBEDDING_MODEL_NAME"),
+    "EmbeddingProvider": ("lerim.context.embedding", "EmbeddingProvider"),
+    "clear_embedding_provider_cache": (
+        "lerim.context.embedding",
+        "clear_embedding_provider_cache",
+    ),
+    "get_embedding_provider": ("lerim.context.embedding", "get_embedding_provider"),
+}
+
+
+def __getattr__(name: str) -> Any:
+    """Lazily load heavy context exports only when callers request them."""
+    if name not in _LAZY_EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module_name, attr_name = _LAZY_EXPORTS[name]
+    value = getattr(import_module(module_name), attr_name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    """Return public names, including lazy context exports."""
+    return sorted(set(globals()) | set(_LAZY_EXPORTS))
 
 __all__ = [
     "ALLOWED_FINDING_LEVELS",

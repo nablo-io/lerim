@@ -1184,12 +1184,55 @@ class TestQuery:
         assert listed["count"] == 1
         assert counted["count"] == 1
 
+    @pytest.mark.parametrize(
+        ("filter_kwargs", "filter_name"),
+        [
+            ({"kind": "fact"}, "kind"),
+            ({"status": "active"}, "status"),
+            ({"updated_since": "2026-04-22"}, "updated_since"),
+            ({"updated_until": "2026-04-22"}, "updated_until"),
+            ({"valid_at": "2026-04-22"}, "valid_at"),
+            ({"include_archived": False}, "include_archived"),
+            ({"include_archived": True}, "include_archived"),
+        ],
+    )
+    def test_sessions_reject_unsupported_filters(
+        self, mock_seeded, filter_kwargs, filter_name
+    ):
+        store, pid = mock_seeded
+        with pytest.raises(
+            ValueError,
+            match=f"unsupported_query_filter:sessions:{filter_name}",
+        ):
+            store.query(
+                entity="sessions",
+                mode="list",
+                project_ids=[pid],
+                **filter_kwargs,
+            )
+
     def test_versions_count(self, mock_seeded):
         store, pid = mock_seeded
         _make_decision(store, pid)
         result = store.query(entity="versions", mode="count", project_ids=[pid])
         assert result["entity"] == "versions"
         assert result["count"] >= 1
+
+    @pytest.mark.parametrize("include_archived", [False, True])
+    def test_versions_reject_include_archived_filter(
+        self, mock_seeded, include_archived
+    ):
+        store, pid = mock_seeded
+        with pytest.raises(
+            ValueError,
+            match="unsupported_query_filter:versions:include_archived",
+        ):
+            store.query(
+                entity="versions",
+                mode="list",
+                project_ids=[pid],
+                include_archived=include_archived,
+            )
 
     def test_superseded_records_excluded_from_current_query_results(self, mock_seeded):
         store, pid = mock_seeded

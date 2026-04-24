@@ -120,6 +120,57 @@ def test_sync_force_enqueues_changed_sessions(monkeypatch, tmp_path) -> None:
     assert summary.extracted_sessions == 1
 
 
+def test_sync_force_enqueues_unchanged_sessions(monkeypatch, tmp_path) -> None:
+    """Forced sync re-enqueues unchanged completed sessions for extraction."""
+    _setup(tmp_path, monkeypatch)
+
+    session_path = tmp_path / "sessions" / "run-unchanged-1.jsonl"
+    session_path.parent.mkdir(parents=True, exist_ok=True)
+    session_path.write_text('{"role":"user","content":"same"}\n', encoding="utf-8")
+    catalog.enqueue_session_job(
+        "run-unchanged-1", session_path=str(session_path), repo_path=str(tmp_path)
+    )
+    jobs = catalog.claim_session_jobs(limit=1, run_ids=["run-unchanged-1"])
+    assert len(jobs) == 1
+    catalog.complete_session_job("run-unchanged-1")
+
+    from lerim.sessions.catalog import IndexedSession
+
+    monkeypatch.setattr(
+        "lerim.server.daemon.index_new_sessions",
+        lambda **kw: [
+            IndexedSession(
+                run_id="run-unchanged-1",
+                agent_type="codex",
+                session_path=str(session_path),
+                start_time="2026-02-20T10:00:00Z",
+                repo_path=str(tmp_path),
+                changed=False,
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        "lerim.server.runtime.LerimRuntime.sync",
+        lambda *_a, **_kw: {"counts": {"add": 1, "update": 0, "no_op": 0}},
+    )
+
+    code, summary = daemon.run_sync_once(
+        run_id=None,
+        agent_filter=None,
+        no_extract=False,
+        force=True,
+        max_sessions=1,
+        dry_run=False,
+        ignore_lock=True,
+        trigger="test",
+        window_start=None,
+        window_end=None,
+    )
+
+    assert code == daemon.EXIT_OK
+    assert summary.extracted_sessions == 1
+
+
 def test_maintain_calls_agent(monkeypatch, tmp_path) -> None:
     """Maintain flow calls LerimAgent.maintain() for each registered project."""
     _setup(tmp_path, monkeypatch)
@@ -138,7 +189,7 @@ def test_maintain_calls_agent(monkeypatch, tmp_path) -> None:
             },
         )[1],
     )
-    code, payload = daemon.run_maintain_once(force=False, dry_run=False)
+    code, payload = daemon.run_maintain_once(dry_run=False)
     assert code == daemon.EXIT_OK
     assert payload["projects"]
     assert len(called) >= 1
@@ -373,7 +424,7 @@ def test_maintain_no_registered_projects_is_clean_noop(monkeypatch, tmp_path) ->
         lambda self, **kw: called.append("called") or {},
     )
 
-    code, payload = daemon.run_maintain_once(force=False, dry_run=False)
+    code, payload = daemon.run_maintain_once(dry_run=False)
     assert code == daemon.EXIT_OK
     assert payload.get("projects") in ({}, None)
     assert "No registered projects" in str(payload.get("message") or "")

@@ -866,7 +866,7 @@ def test_run_maintain_once_dry_run(monkeypatch, tmp_path) -> None:
 	reload_config()
 	catalog.init_sessions_db()
 
-	code, payload = daemon.run_maintain_once(force=False, dry_run=True)
+	code, payload = daemon.run_maintain_once(dry_run=True)
 	assert code == EXIT_OK
 	assert payload.get("dry_run") is True
 

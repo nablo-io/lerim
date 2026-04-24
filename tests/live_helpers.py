@@ -41,9 +41,6 @@ FORBIDDEN_CONTEXT_TABLES = {
 }
 REMOVED_TOOL_NAMES = {
     "archive",
-    "context_apply",
-    "context_fetch",
-    "context_search",
     "edit",
     "grep",
     "read",

@@ -24,6 +24,7 @@ from typing import Any
 from lerim.adapters.base import SessionRecord, ViewerMessage, ViewerSession
 from lerim.adapters.common import (
     compact_jsonl,
+    compute_file_hash,
     in_window,
     make_canonical_entry,
     normalize_timestamp_iso,
@@ -291,7 +292,7 @@ def iter_sessions(
     """Enumerate Cursor sessions, export as JSONL, and build session records.
 
     Groups ``bubbleId`` rows by composerId, writes each session as a JSONL
-    file in *cache_dir*, and skips sessions already indexed by ID.
+    file in *cache_dir*, and optionally skips sessions already indexed by ID.
     """
     root = traces_dir or default_path()
     if root is None or not root.exists():
@@ -344,6 +345,7 @@ WHERE key LIKE 'bubbleId:%' ORDER BY key"""
             for bubble in bubble_list:
                 raw_lines.append(json.dumps(bubble))
             jsonl_path = write_session_cache(out_dir, cid, raw_lines, compact_trace)
+            content_hash = compute_file_hash(jsonl_path)
 
             message_count = sum(1 for b in bubble_list if b.get("type") in (1, 2))
             tool_count = sum(1 for b in bubble_list if b.get("type") not in (1, 2))
@@ -366,10 +368,11 @@ WHERE key LIKE 'bubbleId:%' ORDER BY key"""
                     message_count=message_count,
                     tool_call_count=tool_count,
                     summaries=summaries,
+                    content_hash=content_hash,
                 )
             )
 
-    records.sort(key=lambda r: r.start_time or "")
+    records.sort(key=lambda r: (r.start_time or "", r.run_id))
     return records
 
 

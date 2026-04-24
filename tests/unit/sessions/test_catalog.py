@@ -451,6 +451,13 @@ class TestSessionWindow:
         assert ids2.isdisjoint(ids3)
         assert len(p3) == 2
 
+    def test_window_ties_have_stable_id_order(self, sessions_db):
+        _seed("tie-a", start_time="2026-04-01T10:00:00+00:00")
+        _seed("tie-b", start_time="2026-04-01T10:00:00+00:00")
+        rows, total = list_sessions_window(limit=2)
+        assert total == 2
+        assert [row["run_id"] for row in rows] == ["tie-b", "tie-a"]
+
     def test_window_empty_db(self, sessions_db):
         rows, total = list_sessions_window()
         assert rows == []
@@ -658,6 +665,56 @@ class TestJobQueueClaim:
 
         assert len(jobs) == 1
         assert jobs[0]["run_id"] == "cl-replay-old"
+
+    def test_claim_future_job_does_not_block_available_project_job(self, sessions_db):
+        """A later unavailable job must not hide an available project job."""
+        _seed_and_enqueue(
+            "cl-available",
+            repo_path="/tmp/available-proj",
+            start_time="2026-04-01T08:00:00+00:00",
+        )
+        _seed_and_enqueue(
+            "cl-future",
+            repo_path="/tmp/available-proj",
+            start_time="2026-04-01T12:00:00+00:00",
+        )
+        future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+        with _connect() as conn:
+            conn.execute(
+                "UPDATE session_jobs SET available_at = ? WHERE run_id = ?",
+                (future, "cl-future"),
+            )
+            conn.commit()
+
+        jobs = claim_session_jobs(limit=10)
+
+        assert len(jobs) == 1
+        assert jobs[0]["run_id"] == "cl-available"
+
+    def test_claim_run_id_filter_not_blocked_by_unavailable_neighbor(self, sessions_db):
+        """Targeted claims find available jobs behind future project rows."""
+        _seed_and_enqueue(
+            "cl-filter-available",
+            repo_path="/tmp/filter-available-proj",
+            start_time="2026-04-01T08:00:00+00:00",
+        )
+        _seed_and_enqueue(
+            "cl-filter-future",
+            repo_path="/tmp/filter-available-proj",
+            start_time="2026-04-01T12:00:00+00:00",
+        )
+        future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+        with _connect() as conn:
+            conn.execute(
+                "UPDATE session_jobs SET available_at = ? WHERE run_id = ?",
+                (future, "cl-filter-future"),
+            )
+            conn.commit()
+
+        jobs = claim_session_jobs(limit=10, run_ids=["cl-filter-available"])
+
+        assert len(jobs) == 1
+        assert jobs[0]["run_id"] == "cl-filter-available"
 
     def test_claim_empty_db(self, sessions_db):
         assert claim_session_jobs(limit=10) == []
