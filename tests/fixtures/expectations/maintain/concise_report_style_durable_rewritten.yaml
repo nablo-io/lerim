@@ -1,18 +1,14 @@
 case: concise_report_style_durable_rewritten
-summary: Concise report-style durable wording should still be rewritten into direct reusable context form.
+summary: Concise decision records with direct decision and why fields should remain active, useful decisions.
 
 expected:
   must_use_tools:
     - list_records
-    - fetch_records
-    - update_record
   must_not_use_tools:
     - archive_record
     - supersede_record
   record_text_must_include_all:
     - queue row
     - worker ownership
-  record_text_must_not_include:
-    - compared
-    - reviewed
-    - chose
+    - restart
+    - failover

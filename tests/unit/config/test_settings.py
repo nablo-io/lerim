@@ -1,7 +1,7 @@
 """Unit tests for settings.py coverage gaps not covered by test_config.py.
 
 Tests: load_toml_file, _expand, strict typed readers, _to_fallback_models,
-_to_string_tuple, _parse_string_table, _toml_value, _toml_write_dict,
+_parse_string_table, _toml_value, _toml_write_dict,
 save_config_patch, layer precedence, port validation.
 """
 
@@ -15,7 +15,6 @@ from lerim.config.settings import (
     _deep_merge,
     _expand,
     _to_fallback_models,
-    _to_string_tuple,
     _parse_string_table,
     _toml_value,
     _toml_write_dict,
@@ -112,38 +111,21 @@ def test_fallback_models_filters_blanks():
     assert result == ("model-a", "model-b")
 
 
-def test_fallback_models_non_list_non_string():
-    """_to_fallback_models returns empty tuple for unsupported types."""
-    assert _to_fallback_models(42) == ()
+def test_fallback_models_none_is_empty():
+    """_to_fallback_models treats an omitted value as no fallbacks."""
     assert _to_fallback_models(None) == ()
 
 
-# ---------------------------------------------------------------------------
-# _to_string_tuple
-# ---------------------------------------------------------------------------
+def test_fallback_models_rejects_invalid_scalar_type():
+    """_to_fallback_models rejects unsupported scalar values."""
+    with pytest.raises(ValueError, match="fallback_models must be a string or list"):
+        _to_fallback_models(42)
 
 
-def test_string_tuple_from_list():
-    """_to_string_tuple normalizes a list into a tuple of strings."""
-    result = _to_string_tuple(["nebius", "together"])
-    assert result == ("nebius", "together")
-
-
-def test_string_tuple_from_csv():
-    """_to_string_tuple parses comma-separated string."""
-    result = _to_string_tuple("nebius, together")
-    assert result == ("nebius", "together")
-
-
-def test_string_tuple_filters_blanks():
-    """_to_string_tuple strips empty items."""
-    result = _to_string_tuple(["nebius", "", "  "])
-    assert result == ("nebius",)
-
-
-def test_string_tuple_unsupported_type():
-    """_to_string_tuple returns empty tuple for non-list/string."""
-    assert _to_string_tuple(123) == ()
+def test_fallback_models_rejects_invalid_list_item_type():
+    """_to_fallback_models rejects non-string list entries."""
+    with pytest.raises(ValueError, match="fallback_models list items must be strings"):
+        _to_fallback_models(["model-a", 42])
 
 
 # ---------------------------------------------------------------------------
@@ -340,6 +322,113 @@ def test_config_rejects_quoted_provider_boolean(tmp_path, monkeypatch):
 
     with pytest.raises(ValueError, match="auto_unload must be a boolean"):
         reload_config()
+
+
+@pytest.mark.parametrize("key", ["provider", "model", "api_base"])
+def test_config_rejects_invalid_role_string_scalars(tmp_path, monkeypatch, key):
+    """Role provider/model/api_base values must be native TOML strings."""
+    explicit = tmp_path / f"bad_{key}.toml"
+    explicit.write_text(
+        f"[roles.agent]\n{key} = 42\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LERIM_CONFIG", str(explicit))
+
+    with pytest.raises(ValueError, match=f"{key} must be a string"):
+        reload_config()
+
+
+def test_config_rejects_invalid_fallback_list_items(tmp_path, monkeypatch):
+    """Fallback model list entries must be strings."""
+    explicit = tmp_path / "bad_fallback_item.toml"
+    explicit.write_text(
+        '[roles.agent]\nfallback_models = ["openrouter:x-ai/grok-4.1-fast", 42]\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LERIM_CONFIG", str(explicit))
+
+    with pytest.raises(ValueError, match="fallback_models list items must be strings"):
+        reload_config()
+
+
+def test_config_rejects_invalid_fallback_scalar(tmp_path, monkeypatch):
+    """Fallback model scalar values must be strings, not coerced values."""
+    explicit = tmp_path / "bad_fallback_scalar.toml"
+    explicit.write_text(
+        "[roles.agent]\nfallback_models = 42\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LERIM_CONFIG", str(explicit))
+
+    with pytest.raises(ValueError, match="fallback_models must be a string or list"):
+        reload_config()
+
+
+@pytest.mark.parametrize(
+    ("section", "key", "value"),
+    [
+        ("data", "dir", "42"),
+        ("data", "context_db_path", "42"),
+        ("server", "host", "42"),
+        ("semantic_search", "embedding_model_id", "42"),
+        ("semantic_search", "embedding_cache_dir", "42"),
+        ("cloud", "endpoint", "42"),
+        ("cloud", "token", "42"),
+    ],
+)
+def test_config_rejects_invalid_string_and_path_scalars(
+    tmp_path,
+    monkeypatch,
+    section,
+    key,
+    value,
+):
+    """String/path TOML fields must be native TOML strings, not coerced scalars."""
+    explicit = tmp_path / f"bad_{section}_{key}.toml"
+    explicit.write_text(
+        f"[{section}]\n{key} = {value}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LERIM_CONFIG", str(explicit))
+
+    with pytest.raises(ValueError, match=f"{key} must be a string"):
+        reload_config()
+
+
+@pytest.mark.parametrize(
+    ("env_name", "section", "key", "env_value", "expected_attr"),
+    [
+        (
+            "LERIM_CLOUD_ENDPOINT",
+            "cloud",
+            "endpoint",
+            "https://cloud.example.test",
+            "cloud_endpoint",
+        ),
+        ("LERIM_CLOUD_TOKEN", "cloud", "token", "token-from-env", "cloud_token"),
+    ],
+)
+def test_cloud_env_overrides_do_not_parse_shadowed_toml_scalars(
+    tmp_path,
+    monkeypatch,
+    env_name,
+    section,
+    key,
+    env_value,
+    expected_attr,
+):
+    """Documented cloud env overrides stay authoritative over TOML values."""
+    explicit = tmp_path / f"env_{key}.toml"
+    explicit.write_text(
+        f"[{section}]\n{key} = 42\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LERIM_CONFIG", str(explicit))
+    monkeypatch.setenv(env_name, env_value)
+
+    cfg = reload_config()
+
+    assert getattr(cfg, expected_attr) == env_value
 
 
 def test_provider_auto_unload_is_not_parsed_as_api_base(tmp_path, monkeypatch):

@@ -31,8 +31,10 @@ from lerim.sessions.catalog import (
     reap_stale_running_jobs,
     record_service_run,
     resolve_run_id_prefix,
+    retry_all_dead_letter_jobs,
     retry_project_jobs,
     retry_session_job,
+    skip_all_dead_letter_jobs,
     skip_project_jobs,
     skip_session_job,
     update_session_extract_fields,
@@ -617,6 +619,23 @@ class TestJobQueueClaim:
         assert "cl-rid-1" in claimed_ids
         assert "cl-rid-2" not in claimed_ids
 
+    def test_claim_run_ids_filter_applies_before_project_ranking(self, sessions_db):
+        """A targeted older job remains claimable behind a newer pending project job."""
+        _seed_and_enqueue(
+            "cl-target-old",
+            repo_path="/tmp/target-rank-proj",
+            start_time="2026-04-01T08:00:00+00:00",
+        )
+        _seed_and_enqueue(
+            "cl-target-new",
+            repo_path="/tmp/target-rank-proj",
+            start_time="2026-04-01T12:00:00+00:00",
+        )
+
+        jobs = claim_session_jobs(limit=10, run_ids=["cl-target-old"])
+
+        assert [job["run_id"] for job in jobs] == ["cl-target-old"]
+
     def test_claim_limit_respected(self, sessions_db):
         for i in range(10):
             _seed_and_enqueue(
@@ -828,6 +847,42 @@ class TestJobQueueDeadLetter:
 
     def test_skip_project_jobs_empty_path(self, sessions_db):
         assert skip_project_jobs("") == 0
+
+    def test_retry_all_dead_letter_jobs_not_limited_to_default_page(
+        self, sessions_db
+    ):
+        """Retry-all transitions every dead-letter row, including rows past 50."""
+        for idx in range(55):
+            run_id = f"dl-retry-all-{idx:02d}"
+            _seed_and_enqueue(run_id, repo_path=f"/tmp/retry-all-{idx}")
+            _set_job_status(run_id, "dead_letter")
+
+        assert retry_all_dead_letter_jobs() == 55
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(1) AS total FROM session_jobs WHERE status = ?",
+                ("pending",),
+            ).fetchone()
+
+        assert row["total"] == 55
+
+    def test_skip_all_dead_letter_jobs_not_limited_to_default_page(
+        self, sessions_db
+    ):
+        """Skip-all transitions every dead-letter row, including rows past 50."""
+        for idx in range(55):
+            run_id = f"dl-skip-all-{idx:02d}"
+            _seed_and_enqueue(run_id, repo_path=f"/tmp/skip-all-{idx}")
+            _set_job_status(run_id, "dead_letter")
+
+        assert skip_all_dead_letter_jobs() == 55
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(1) AS total FROM session_jobs WHERE status = ?",
+                ("done",),
+            ).fetchone()
+
+        assert row["total"] == 55
 
     def test_dead_letter_blocks_project(self, sessions_db):
         _seed_and_enqueue(
@@ -1342,7 +1397,6 @@ class TestJobQueueAdvanced:
         assert len(jobs) >= 1
         job = next(j for j in jobs if j["run_id"] == "rn-check")
 
-        if "rn" in job:
-            assert job["rn"] == 1
+        assert "rn" not in job
         for key in ("run_id", "status", "repo_path", "attempts"):
             assert key in job

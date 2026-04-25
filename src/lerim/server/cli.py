@@ -216,7 +216,6 @@ def _cmd_sync(args: argparse.Namespace) -> int:
         "no_extract": getattr(args, "no_extract", False),
         "force": getattr(args, "force", False),
         "dry_run": getattr(args, "dry_run", False),
-        "ignore_lock": getattr(args, "ignore_lock", False),
         "blocking": True,
     }
     data = _api_post("/api/sync", body)
@@ -567,28 +566,29 @@ def _dead_letter_action(
 	verb: str,
 	single_fn_name: str,
 	project_fn_name: str,
+	all_fn_name: str,
 	done_suffix: str = "",
 ) -> int:
 	"""Shared handler for retry/skip dead_letter operations."""
 	from lerim.sessions.catalog import (
-		resolve_run_id_prefix, list_queue_jobs,
+		resolve_run_id_prefix,
 		count_session_jobs_by_status,
 	)
 	import lerim.sessions.catalog as _catalog
 
 	single_fn = getattr(_catalog, single_fn_name)
 	project_fn = getattr(_catalog, project_fn_name)
+	all_fn = getattr(_catalog, all_fn_name)
 
 	run_id = getattr(args, "run_id", None)
 	project = getattr(args, "project", None)
 	do_all = getattr(args, "all", False)
 
 	if do_all:
-		dead = list_queue_jobs(status_filter="dead_letter")
-		if not dead:
+		count = int(all_fn())
+		if count == 0:
 			_emit(f"No dead_letter jobs to {verb.lower()}.")
 			return 0
-		count = sum(1 for job in dead if single_fn(str(job["run_id"])))
 		_emit(f"{verb} {count} dead_letter job(s).")
 		_emit(_format_queue_counts(count_session_jobs_by_status()))
 		return 0
@@ -631,6 +631,7 @@ def _cmd_retry(args: argparse.Namespace) -> int:
 		verb="Retried",
 		single_fn_name="retry_session_job",
 		project_fn_name="retry_project_jobs",
+		all_fn_name="retry_all_dead_letter_jobs",
 	)
 
 
@@ -641,6 +642,7 @@ def _cmd_skip(args: argparse.Namespace) -> int:
 		verb="Skipped",
 		single_fn_name="skip_session_job",
 		project_fn_name="skip_project_jobs",
+		all_fn_name="skip_all_dead_letter_jobs",
 		done_suffix=" -> done",
 	)
 
@@ -1391,12 +1393,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_force_flag(sync)
     _add_dry_run_flag(sync)
-    sync.add_argument(
-        "--ignore-lock",
-        action="store_true",
-        help="Skip the filesystem writer lock. Useful for debugging, but risks "
-        "corruption if another sync is running concurrently.",
-    )
     sync.set_defaults(func=_cmd_sync)
 
     # ── maintain ─────────────────────────────────────────────────────

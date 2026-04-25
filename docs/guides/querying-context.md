@@ -63,9 +63,10 @@ and `cost_usd`).
 If you need raw local state instead of a synthesized answer:
 
 - Use `lerim status` for project stream health, queue state, and record counts.
+- Use `lerim query` for deterministic record/version/session counts and lists.
 - Use `lerim queue` or `lerim unscoped` for session-ingestion debugging.
-- Inspect `~/.lerim/context.sqlite3` directly with SQLite tooling if you need
-  low-level DB visibility.
+- Inspect `~/.lerim/context.sqlite3` directly only as a last-resort local
+  debugging step. Raw SQL is not the primary agent-facing query path.
 
 ## Tips for effective queries
 

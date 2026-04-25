@@ -66,6 +66,7 @@ A temporary code-state finding, audit observation, open task, or release-risk re
 - One durable record should hold one durable point.
 - Direct consequences and application guidance usually stay inside that same record.
 - Create the minimum number of durable records that preserves distinct durable meanings. Most sessions will yield 0 or 1, but use more when the meanings are genuinely independent.
+- Classify each durable point into one canonical kind. Prefer the most specific supported kind, and do not duplicate the same point across multiple durable kinds.
 - Duplicates are worse than gaps. Skip uncertain candidates rather than spraying near-duplicates.
 - Never create a second durable record in the same run for the same core claim. If you realize the first draft needs improvement, update or refine that record instead of creating another one.
 - `constraint` and `reference` are first-class durable record kinds, not fallback categories.
@@ -103,6 +104,10 @@ A temporary code-state finding, audit observation, open task, or release-risk re
 <selection_rules>
 - First separate findings into durable signal and implementation evidence.
 - Synthesize at the theme level. Usually one theme becomes one durable record.
+- Create multiple durable records only when the trace establishes multiple independent durable points, each with its own support.
+- Do not store one durable point as both a preference and a decision, a fact and a decision, or any other cross-kind duplicate.
+- A stable workflow preference is not also a decision unless the trace separately states an explicit project decision with rationale.
+- A dependency, setup, or environment truth without durable rationale is a fact, not also a decision.
 - Merge candidates when one only states how to apply the other in local operations, routing, or ownership.
 - If two candidates share the same core claim, merge them.
 - If the difference is only evidence framing, symptom wording, or local-vs-CI phrasing around the same durable fact, keep one record and fold the extra context into it.

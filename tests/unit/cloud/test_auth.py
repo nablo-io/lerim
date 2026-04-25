@@ -12,6 +12,7 @@ import io
 import json
 import socket
 import urllib.error
+import urllib.parse
 from unittest.mock import MagicMock
 
 
@@ -567,7 +568,7 @@ def test_run_browser_flow_timeout(monkeypatch) -> None:
 
 
 def test_run_browser_flow_opens_correct_url(monkeypatch) -> None:
-	"""_run_browser_flow opens the correct auth URL in the browser."""
+	"""_run_browser_flow URL-encodes the callback URL for browser auth."""
 	class FakeHTTPServer:
 		"""HTTPServer double that avoids binding a real socket."""
 
@@ -607,5 +608,50 @@ def test_run_browser_flow_opens_correct_url(monkeypatch) -> None:
 	_run_browser_flow("https://api.lerim.dev", timeout_seconds=1)
 
 	assert len(opened_urls) == 1
-	assert "auth/cli?callback=" in opened_urls[0]
-	assert "https://api.lerim.dev" in opened_urls[0]
+	parsed = urllib.parse.urlparse(opened_urls[0])
+	params = urllib.parse.parse_qs(parsed.query)
+	assert f"{parsed.scheme}://{parsed.netloc}{parsed.path}" == (
+		"https://api.lerim.dev/auth/cli"
+	)
+	assert params["callback"] == ["http://localhost:9876/callback"]
+
+
+def test_run_browser_flow_success_path_isolated_between_runs(monkeypatch) -> None:
+	"""Each browser-flow run should use only that server instance's token."""
+	tokens = iter(["first-token", None])
+
+	class FakeHTTPServer:
+		"""HTTPServer double with per-instance token state."""
+
+		def __init__(self, *args, **kwargs):
+			"""Set token_result independently for each constructed server."""
+			self.timeout = None
+			self.token_result = next(tokens)
+
+		def handle_request(self):
+			"""No-op because token_result is preloaded per instance."""
+
+		def server_close(self):
+			"""Close the fake server."""
+
+	class FakeThread:
+		"""Thread double that keeps the unit test synchronous."""
+
+		def __init__(self, target, daemon=False):
+			"""Store the target without running it."""
+			self.target = target
+			self.daemon = daemon
+
+		def start(self):
+			"""Do not start background work."""
+
+		def join(self, timeout=None):
+			"""Return immediately."""
+
+	monkeypatch.setattr(auth_mod, "_find_available_port", lambda: 9876)
+	monkeypatch.setattr(auth_mod, "_TokenCallbackServer", FakeHTTPServer)
+	monkeypatch.setattr(auth_mod.threading, "Thread", FakeThread)
+	monkeypatch.setattr(auth_mod.webbrowser, "open", lambda url: None)
+
+	assert _run_browser_flow("https://api.lerim.dev", timeout_seconds=1) == "first-token"
+	assert _run_browser_flow("https://api.lerim.dev", timeout_seconds=1) is None

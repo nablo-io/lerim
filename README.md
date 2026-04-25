@@ -102,10 +102,10 @@ lerim ask "What do we already know about the auth flow?"
 Lerim has three main flows:
 
 1. `sync`
-   Reads new traces and session metadata.
+   Reads new traces/session metadata and extracts durable context records.
 
 2. `maintain`
-   Extracts durable context, merges overlap, and retires low-value stale records.
+   Refines existing records by merging overlap and retiring low-value stale records.
 
 3. `ask`
    Retrieves relevant records and answers a question using the current context layer.
@@ -177,7 +177,7 @@ tests/run_tests.sh integration
 tests/run_tests.sh e2e
 ```
 
-Release-quality checks now include:
+Before release, verify the affected path with the relevant suites:
 
 - `tests/smoke/` — quick real-LLM extract sanity
 - `tests/integration/` — real extract, maintain, and semantic ask coverage

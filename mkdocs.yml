@@ -126,6 +126,4 @@ nav:
     - Connecting Agents: guides/connecting-agents.md
     - Dashboard: guides/dashboard.md
     - Querying Context: guides/querying-context.md
-    - Dashboard: guides/dashboard.md
-    - Querying Context: guides/querying-context.md
   - Contributing: contributing/getting-started.md

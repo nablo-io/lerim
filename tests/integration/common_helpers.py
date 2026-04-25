@@ -79,6 +79,42 @@ def extract_tool_calls(payload: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return calls
 
 
+def extract_tool_returns(payload: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Extract tool-return payloads from serialized message history."""
+    returns: list[dict[str, Any]] = []
+
+    def parse_content(raw_content: Any) -> Any:
+        if not isinstance(raw_content, str):
+            return raw_content
+        try:
+            return json.loads(raw_content)
+        except json.JSONDecodeError:
+            return raw_content
+
+    def walk(value: Any) -> None:
+        if isinstance(value, dict):
+            if value.get("part_kind") == "tool-return":
+                raw_content = value.get("content")
+                returns.append(
+                    {
+                        "tool_name": str(value.get("tool_name") or "").strip(),
+                        "content": raw_content,
+                        "parsed_content": parse_content(raw_content),
+                        "tool_call_id": value.get("tool_call_id"),
+                        "is_error": bool(value.get("is_error")),
+                    }
+                )
+            for item in value.values():
+                walk(item)
+            return
+        if isinstance(value, list):
+            for item in value:
+                walk(item)
+
+    walk(payload)
+    return returns
+
+
 def retry_on_overload(callable_fn, *, attempts: int = 5, backoff_seconds: float = 5.0):
     """Retry one live integration call on transient provider overload or transport errors."""
     for attempt in range(attempts):

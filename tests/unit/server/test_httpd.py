@@ -567,6 +567,14 @@ def test_post_sync_blocking(test_server):
 	assert "job_id" not in body
 
 
+def test_post_sync_rejects_ignore_lock(test_server):
+	"""POST /api/sync rejects unsupported ignore_lock payloads."""
+	port, _, _ = test_server
+	status, body = _api_post_error(port, "/api/sync", {"ignore_lock": True})
+	assert status == 400
+	assert "ignore_lock" in body["error"]
+
+
 def test_post_maintain(test_server):
 	"""POST /api/maintain starts a maintain job and returns started status."""
 	port, _, _ = test_server
@@ -580,11 +588,19 @@ def test_post_maintain(test_server):
 def test_post_maintain_blocking(test_server):
 	"""POST /api/maintain with blocking=true returns the completed payload."""
 	port, _, _ = test_server
-	status, body = _api_post(port, "/api/maintain", {"blocking": True, "force": True})
+	status, body = _api_post(port, "/api/maintain", {"blocking": True})
 	assert status == 200
 	assert body["code"] == 0
 	assert body["maintain_counts"]["merged"] == 1
 	assert "job_id" not in body
+
+
+def test_post_maintain_rejects_force(test_server):
+	"""POST /api/maintain rejects unsupported force rather than ignoring it."""
+	port, _, _ = test_server
+	status, body = _api_post_error(port, "/api/maintain", {"force": True})
+	assert status == 400
+	assert "force" in body["error"]
 
 
 def test_post_connect(test_server):

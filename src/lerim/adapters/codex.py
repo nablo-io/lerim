@@ -24,7 +24,7 @@ from lerim.adapters.common import (
 def _clean_entry(obj: dict[str, Any]) -> dict[str, Any] | None:
     """Transform a Codex JSONL entry into the canonical compacted schema.
 
-    Drops: session_meta (metadata), event_msg (duplicates of response_items),
+    Drops: session_meta (metadata), non-message event_msg entries,
            developer messages (system prompts), reasoning blocks.
     Transforms response_item entries into canonical
     ``{"type", "message": {"role", "content"}, "timestamp"}`` records.
@@ -35,11 +35,10 @@ def _clean_entry(obj: dict[str, Any]) -> dict[str, Any] | None:
     if line_type == "session_meta":
         return None
 
-    # 2. Drop event_msg entirely (duplicates of response_items)
     if line_type == "event_msg":
-        return None
+        return _clean_event_msg(obj)
 
-    # 3. Only response_item entries carry conversation data
+    # 3. response_item entries carry model messages, tool calls, and tool results.
     if line_type != "response_item":
         return None
 
@@ -99,6 +98,34 @@ def _clean_entry(obj: dict[str, Any]) -> dict[str, Any] | None:
 
     # 4. Any other payload type -- drop
     return None
+
+
+def _clean_event_msg(obj: dict[str, Any]) -> dict[str, Any] | None:
+    """Convert structured Codex user/agent event messages to canonical entries."""
+    payload = obj.get("payload")
+    if not isinstance(payload, dict):
+        return None
+
+    event_type = payload.get("type")
+    role_by_event = {
+        "user_message": "user",
+        "agent_message": "assistant",
+    }
+    role = role_by_event.get(str(event_type))
+    if not role:
+        return None
+
+    message = payload.get("message")
+    if not isinstance(message, str):
+        return None
+    text = message.strip()
+    if not text:
+        return None
+
+    timestamp = normalize_timestamp_iso(
+        obj.get("timestamp") or payload.get("timestamp")
+    )
+    return make_canonical_entry(role, role, text, timestamp)
 
 
 def compact_trace(raw_text: str) -> str:
@@ -205,8 +232,7 @@ def iter_sessions(
                 if ptype in {"function_call", "custom_tool_call"}:
                     tool_calls += 1
                 if ptype in {"function_call_output", "custom_tool_call_output"}:
-                    output = str(payload.get("output") or "")
-                    if "error" in output.lower():
+                    if payload.get("is_error") is True:
                         errors += 1
 
         if not in_window(start_time, start, end):

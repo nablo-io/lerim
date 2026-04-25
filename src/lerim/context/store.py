@@ -10,6 +10,7 @@ This module keeps the durable context model intentionally small:
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import uuid
 from contextlib import contextmanager
@@ -42,11 +43,38 @@ QUERY_ENTITIES = ("records", "versions", "sessions")
 QUERY_MODES = ("list", "count")
 QUERY_ORDER_FIELDS = ("created_at", "updated_at", "valid_from")
 RRF_K = 60
+LOGGER = logging.getLogger(__name__)
+TIMESTAMP_COLUMNS = {
+    "projects": ("created_at", "updated_at"),
+    "sessions": ("started_at", "created_at"),
+    "records": ("created_at", "updated_at", "valid_from", "valid_until"),
+    "record_versions": (
+        "created_at",
+        "updated_at",
+        "valid_from",
+        "valid_until",
+        "changed_at",
+    ),
+}
 
 
 def _utc_now() -> str:
     """Return current UTC timestamp."""
     return datetime.now(timezone.utc).isoformat()
+
+
+def _normalize_datetime_utc(value: str | None) -> str | None:
+    """Normalize a parseable ISO timestamp to UTC ISO text."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return text
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat()
 
 
 def _normalize_datetime_filter_bound(value: str | None, *, upper: bool) -> str | None:
@@ -55,7 +83,7 @@ def _normalize_datetime_filter_bound(value: str | None, *, upper: bool) -> str |
     if not text:
         return None
     if "T" in text:
-        return text
+        return _normalize_datetime_utc(text)
     try:
         parsed = date.fromisoformat(text)
     except ValueError:
@@ -305,6 +333,7 @@ class ContextStore:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_records_valid_until ON records(valid_until)"
             )
+            self._normalize_stored_timestamps(conn)
             conn.execute(
                 """
                 INSERT INTO schema_meta(key, value)
@@ -362,6 +391,26 @@ class ContextStore:
                 missing_list = ", ".join(sorted(missing))
                 raise sqlite3.OperationalError(
                     f"context schema incompatible: table record_embeddings missing columns {missing_list}"
+                )
+
+    def _normalize_stored_timestamps(self, conn: sqlite3.Connection) -> None:
+        """Canonicalize stored timestamp text so lexicographic filters stay correct."""
+        for table_name, column_names in TIMESTAMP_COLUMNS.items():
+            columns = ", ".join(["rowid", *column_names])
+            rows = conn.execute(f"SELECT {columns} FROM {table_name}").fetchall()
+            for row in rows:
+                updates: dict[str, str] = {}
+                for column_name in column_names:
+                    current = row[column_name]
+                    normalized = _normalize_datetime_utc(current)
+                    if normalized is not None and normalized != current:
+                        updates[column_name] = normalized
+                if not updates:
+                    continue
+                set_sql = ", ".join(f"{column_name} = ?" for column_name in updates)
+                conn.execute(
+                    f"UPDATE {table_name} SET {set_sql} WHERE rowid = ?",
+                    tuple(updates.values()) + (row["rowid"],),
                 )
 
     def _ensure_record_embeddings_index(self, conn: sqlite3.Connection) -> bool:
@@ -451,6 +500,7 @@ class ContextStore:
         del metadata
         self.initialize()
         now = _utc_now()
+        started_at_text = _normalize_datetime_utc(started_at)
         with self.connect() as conn:
             conn.execute(
                 """
@@ -477,7 +527,7 @@ class ContextStore:
                     source_trace_ref,
                     repo_path,
                     cwd,
-                    started_at,
+                    started_at_text,
                     model_name,
                     instructions_text,
                     prompt_text,
@@ -630,17 +680,7 @@ class ContextStore:
                 change_reason=change_reason,
                 changed_by_session_id=session_id,
             )
-            needs_embedding_rebuild = self._ensure_record_embeddings_index(conn)
-            if needs_embedding_rebuild:
-                self._rebuild_embeddings(conn)
-            else:
-                self._upsert_embedding(
-                    conn,
-                    project_id=project_id,
-                    record_id=record_id,
-                    text=self._search_text(payload),
-                )
-            self._upsert_fts(conn, project_id=project_id, record_id=record_id, payload=payload)
+        self._refresh_derived_indexes_after_write(record_ids=[record_id])
         return self.fetch_record(record_id, project_ids=[project_id], include_versions=True) or {}
 
     def update_record(
@@ -670,6 +710,7 @@ class ContextStore:
                 change_reason=change_reason,
                 change_kind_override=change_kind_override,
             )
+        self._refresh_derived_indexes_after_write(record_ids=[record_id])
         return self.fetch_record(record_id, project_ids=project_ids, include_versions=True) or {}
 
     def _update_record_in_conn(
@@ -686,7 +727,7 @@ class ContextStore:
     ) -> dict[str, Any]:
         """Apply one record update inside the caller's active transaction."""
         merged = self._record_row_to_dict(current)
-        if project_ids and merged["project_id"] not in project_ids:
+        if project_ids is not None and merged["project_id"] not in project_ids:
             raise ValueError(f"record_out_of_scope:{record_id}")
         now = _utc_now()
         effective_updated_at = changes.get("updated_at", now)
@@ -711,6 +752,24 @@ class ContextStore:
             what_happened=changes.get("what_happened", merged["what_happened"]),
             outcomes=changes.get("outcomes", merged["outcomes"]),
         )
+        meaningful_fields = (
+            "kind",
+            "title",
+            "body",
+            "status",
+            "valid_from",
+            "valid_until",
+            "superseded_by_record_id",
+            "decision",
+            "why",
+            "alternatives",
+            "consequences",
+            "user_intent",
+            "what_happened",
+            "outcomes",
+        )
+        if all(payload[field] == merged[field] for field in meaningful_fields):
+            raise ValueError("no_changes")
         self._ensure_episode_uniqueness(
             conn,
             project_id=merged["project_id"],
@@ -765,17 +824,6 @@ class ContextStore:
             change_reason=change_reason,
             changed_by_session_id=session_id,
         )
-        needs_embedding_rebuild = self._ensure_record_embeddings_index(conn)
-        if needs_embedding_rebuild:
-            self._rebuild_embeddings(conn)
-        else:
-            self._upsert_embedding(
-                conn,
-                project_id=merged["project_id"],
-                record_id=record_id,
-                text=self._search_text(payload),
-            )
-        self._upsert_fts(conn, project_id=merged["project_id"], record_id=record_id, payload=payload)
         return payload
 
     def archive_record(
@@ -794,7 +842,7 @@ class ContextStore:
             if current is None:
                 raise ValueError(f"record_not_found:{record_id}")
             current_dict = self._record_row_to_dict(current)
-            if project_ids and current_dict["project_id"] not in project_ids:
+            if project_ids is not None and current_dict["project_id"] not in project_ids:
                 raise ValueError(f"record_out_of_scope:{record_id}")
             created_at = _parse_iso_utc(current_dict.get("created_at"))
             now = datetime.now(timezone.utc)
@@ -819,6 +867,7 @@ class ContextStore:
                 change_reason=reason or "archive_record",
                 change_kind_override="archive",
             )
+        self._refresh_derived_indexes_after_write(record_ids=[record_id])
         return self.fetch_record(record_id, project_ids=project_ids, include_versions=True) or {}
 
     def supersede_record(
@@ -832,6 +881,8 @@ class ContextStore:
         valid_until: str | None = None,
     ) -> dict[str, Any]:
         """Mark one record as superseded by another record."""
+        if project_ids is not None and not project_ids:
+            raise ValueError(f"record_out_of_scope:{record_id}")
         replacement = self.fetch_record(replacement_record_id, project_ids=project_ids, include_versions=False)
         if replacement is None:
             raise ValueError(f"replacement_record_not_found:{replacement_record_id}")
@@ -950,6 +1001,8 @@ class ContextStore:
         order_field = str(order_by or "created_at").strip()
         if order_field not in QUERY_ORDER_FIELDS:
             raise ValueError(f"invalid_query_order:{order_by}")
+        if entity_name == "sessions" and order_field != "created_at":
+            raise ValueError(f"invalid_query_order:{entity_name}:{order_by}")
         unsupported_filters = self._unsupported_query_filters(
             entity_name=entity_name,
             kind=kind,
@@ -980,7 +1033,7 @@ class ContextStore:
                 limit=limit,
                 offset=offset,
                 include_total=include_total,
-                include_archived=bool(include_archived),
+                include_archived=bool(include_archived or valid_at),
             )
         if entity_name == "versions":
             return self._query_versions(
@@ -1174,7 +1227,7 @@ class ContextStore:
         offset: int,
         include_total: bool,
     ) -> dict[str, Any]:
-        order_column = "created_at" if order_by in {"created_at", "updated_at", "valid_from"} else "created_at"
+        order_column = "created_at"
         clauses = ["1=1"]
         params: list[Any] = []
         if source_session_id:
@@ -1269,7 +1322,7 @@ class ContextStore:
         outcomes: Any,
     ) -> dict[str, Any]:
         """Normalize and validate one record payload."""
-        return normalize_record_payload(
+        payload = normalize_record_payload(
             kind=kind,
             title=title,
             body=body,
@@ -1288,6 +1341,9 @@ class ContextStore:
             what_happened=what_happened,
             outcomes=outcomes,
         )
+        for field_name in ("created_at", "updated_at", "valid_from", "valid_until"):
+            payload[field_name] = _normalize_datetime_utc(payload[field_name])
+        return payload
 
     def _ensure_episode_uniqueness(
         self,
@@ -1442,6 +1498,91 @@ class ContextStore:
         needs_embedding_rebuild = self._ensure_record_embeddings_index(conn)
         if needs_embedding_rebuild:
             self._rebuild_embeddings(conn)
+
+    def _ensure_records_fts_index(self, conn: sqlite3.Connection) -> bool:
+        """Return whether the derived FTS table should be rebuilt from records."""
+        record_count = int(conn.execute("SELECT COUNT(*) FROM records").fetchone()[0])
+        fts_count = int(conn.execute("SELECT COUNT(*) FROM records_fts").fetchone()[0])
+        return fts_count != record_count
+
+    def _rebuild_fts(self, conn: sqlite3.Connection) -> None:
+        """Rebuild all derived FTS rows from canonical record text."""
+        conn.execute("DELETE FROM records_fts")
+        rows = conn.execute("SELECT * FROM records ORDER BY created_at ASC, record_id ASC").fetchall()
+        for row in rows:
+            payload = self._record_row_to_dict(row)
+            self._upsert_fts(
+                conn,
+                project_id=str(row["project_id"]),
+                record_id=str(row["record_id"]),
+                payload=payload,
+            )
+
+    def _refresh_derived_indexes_after_write(self, *, record_ids: list[str]) -> None:
+        """Best-effort refresh of derived indexes after canonical writes commit."""
+        self._refresh_fts_after_write(record_ids=record_ids)
+        self._refresh_embeddings_after_write(record_ids=record_ids)
+
+    def _refresh_fts_after_write(self, *, record_ids: list[str]) -> None:
+        """Best-effort refresh of derived FTS storage after canonical writes commit."""
+        if not record_ids:
+            return
+        try:
+            with self.connect() as conn:
+                if self._ensure_records_fts_index(conn):
+                    self._rebuild_fts(conn)
+                    return
+                placeholders = ", ".join("?" for _ in record_ids)
+                rows = conn.execute(
+                    f"""
+                    SELECT *
+                    FROM records
+                    WHERE record_id IN ({placeholders})
+                    ORDER BY created_at ASC, record_id ASC
+                    """,
+                    tuple(record_ids),
+                ).fetchall()
+                for row in rows:
+                    payload = self._record_row_to_dict(row)
+                    self._upsert_fts(
+                        conn,
+                        project_id=str(row["project_id"]),
+                        record_id=str(row["record_id"]),
+                        payload=payload,
+                    )
+        except Exception:
+            LOGGER.warning("record_fts_refresh_failed", exc_info=True)
+
+    def _refresh_embeddings_after_write(self, *, record_ids: list[str]) -> None:
+        """Best-effort refresh of derived embeddings after canonical writes commit."""
+        if not record_ids:
+            return
+        try:
+            with self.connect() as conn:
+                needs_embedding_rebuild = self._ensure_record_embeddings_index(conn)
+                if needs_embedding_rebuild:
+                    self._rebuild_embeddings(conn)
+                    return
+                placeholders = ", ".join("?" for _ in record_ids)
+                rows = conn.execute(
+                    f"""
+                    SELECT *
+                    FROM records
+                    WHERE record_id IN ({placeholders})
+                    ORDER BY created_at ASC, record_id ASC
+                    """,
+                    tuple(record_ids),
+                ).fetchall()
+                for row in rows:
+                    payload = self._record_row_to_dict(row)
+                    self._upsert_embedding(
+                        conn,
+                        project_id=str(row["project_id"]),
+                        record_id=str(row["record_id"]),
+                        text=self._search_text(payload),
+                    )
+        except Exception:
+            LOGGER.warning("record_embedding_refresh_failed", exc_info=True)
 
     def _build_record_filter_sql(
         self,

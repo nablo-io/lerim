@@ -121,14 +121,32 @@ def test_compact_trace_drops_session_meta():
     assert result.strip() == ""
 
 
-def test_compact_trace_drops_event_msg():
-    """compact_trace drops event_msg lines entirely."""
+def test_compact_trace_preserves_user_event_msg():
+    """compact_trace preserves structured user event messages."""
     entry = {
         "type": "event_msg",
+        "timestamp": "2026-03-20T10:00:00Z",
         "payload": {"type": "user_message", "message": "hi"},
     }
     result = compact_trace(json.dumps(entry) + "\n")
-    assert result.strip() == ""
+    parsed = json.loads(result.strip())
+    assert parsed["type"] == "user"
+    assert parsed["message"]["role"] == "user"
+    assert parsed["message"]["content"] == "hi"
+    assert parsed["timestamp"] == "2026-03-20T10:00:00Z"
+
+
+def test_compact_trace_preserves_agent_event_msg():
+    """compact_trace preserves structured agent event messages."""
+    entry = {
+        "type": "event_msg",
+        "payload": {"type": "agent_message", "message": "done"},
+    }
+    result = compact_trace(json.dumps(entry) + "\n")
+    parsed = json.loads(result.strip())
+    assert parsed["type"] == "assistant"
+    assert parsed["message"]["role"] == "assistant"
+    assert parsed["message"]["content"] == "done"
 
 
 def test_compact_trace_clears_function_call_output():
@@ -385,8 +403,8 @@ def test_iter_sessions_counts_tokens(tmp_path):
     assert records[0].total_tokens == 170
 
 
-def test_iter_sessions_counts_tool_calls_and_errors(tmp_path):
-    """iter_sessions counts function calls and errors in output."""
+def test_iter_sessions_counts_tool_calls_and_structured_errors(tmp_path):
+    """iter_sessions counts tool calls and explicit structured error fields."""
     _write_codex_jsonl(
         tmp_path / "tools.jsonl",
         [
@@ -412,6 +430,14 @@ def test_iter_sessions_counts_tool_calls_and_errors(tmp_path):
             {
                 "type": "response_item",
                 "payload": {
+                    "type": "custom_tool_call_output",
+                    "output": "tool failed",
+                    "is_error": True,
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
                     "type": "custom_tool_call",
                     "name": "write_file",
                     "input": "{}",
@@ -423,6 +449,29 @@ def test_iter_sessions_counts_tool_calls_and_errors(tmp_path):
     assert len(records) == 1
     assert records[0].tool_call_count == 2
     assert records[0].error_count == 1
+
+
+def test_iter_sessions_does_not_infer_errors_from_output_text(tmp_path):
+    """Plain output text containing error-like words does not affect error_count."""
+    _write_codex_jsonl(
+        tmp_path / "text-error.jsonl",
+        [
+            {
+                "type": "event_msg",
+                "payload": {"type": "user_message", "message": "do it"},
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "output": "Error: file not found",
+                },
+            },
+        ],
+    )
+    records = iter_sessions(traces_dir=tmp_path)
+    assert len(records) == 1
+    assert records[0].error_count == 0
 
 
 # --- compact_trace / _clean_entry edge cases ---
@@ -469,8 +518,9 @@ def test_compact_trace_multiple_lines():
     ]
     result = compact_trace("\n".join(lines) + "\n")
     parsed = [json.loads(line) for line in result.strip().split("\n")]
-    # turn_context, session_meta, event_msg all dropped -> only the response_item user message
-    assert len(parsed) == 1
+    # turn_context/session_meta are dropped; structured event and response messages remain.
+    assert len(parsed) == 2
     assert parsed[0]["type"] == "user"
-    assert parsed[0]["message"]["content"] == "hello"
-
+    assert parsed[0]["message"]["content"] == "hi"
+    assert parsed[1]["type"] == "user"
+    assert parsed[1]["message"]["content"] == "hello"

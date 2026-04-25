@@ -25,23 +25,30 @@ MLflow ships as a Lerim dependency, so `pip install lerim` already includes it.
 
 ## Enable tracing
 
-Set `LERIM_MLFLOW=true` in your environment or `.env` file:
+Set `LERIM_MLFLOW=true` for the long-running Lerim server process. Setting it
+only on a client command like `lerim sync` will not enable tracing for a server
+that is already running.
 
 === "Environment variable"
 
-	Quick toggle for a single command:
+	Start the server with tracing enabled:
 
 	```bash
-	LERIM_MLFLOW=true lerim sync
-	LERIM_MLFLOW=true lerim ask "Why did we choose Postgres?"
+	LERIM_MLFLOW=true lerim serve
 	```
 
 === ".env file"
 
-	Persistent toggle in `~/.lerim/.env`:
+	Persistent toggle for `lerim serve` and `lerim up` in `~/.lerim/.env`:
 
 	```bash
 	LERIM_MLFLOW=true
+	```
+
+	Restart the service after changing the file:
+
+	```bash
+	lerim up
 	```
 
 ## Viewing traces
@@ -76,4 +83,4 @@ mlflow ui --backend-store-uri sqlite:///$HOME/.lerim/observability/mlflow.db
 ## Notes
 
 - Lerim configures MLflow tracking to a local SQLite store (`~/.lerim/observability/mlflow.db`).
-- `LERIM_MLFLOW=true` is the main switch to enable or disable tracing.
+- `LERIM_MLFLOW=true` is the main switch to enable or disable tracing for the server process.

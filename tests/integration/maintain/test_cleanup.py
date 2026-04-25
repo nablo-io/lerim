@@ -401,7 +401,7 @@ def test_maintain_concise_report_style_durable_rewritten(
     live_config,
     live_repo_root,
 ) -> None:
-    """Even concise report-style durable wording should be rewritten into direct context form."""
+    """Concise durable decisions with useful typed fields should remain healthy."""
     expectation = load_maintain_expectation("concise_report_style_durable_rewritten")["expected"]
     outcome = run_maintain_case(
         case_name="concise_report_style_durable_rewritten",
@@ -429,11 +429,16 @@ def test_maintain_concise_report_style_durable_rewritten(
         assert tool_name not in tool_names
 
     record = next(record for record in outcome.records if record["record_id"] == "rec_concise_report_decision")
+    assert outcome.result.completion_summary.strip()
+    assert outcome.changed_version_rows == []
+    assert record["status"] == "active"
+    assert record["superseded_by_record_id"] in (None, "")
+    assert record["decision"] == "Use queue-row storage for worker ownership."
+    assert record["why"] == "Queue-row state survives restart and failover."
+    assert len(record["versions"]) == 1
     record_text = _normalize_assertion_text(" ".join(
         str(record.get(field) or "")
         for field in ("title", "body", "decision", "why")
     ))
     for token in expectation["record_text_must_include_all"]:
         assert _normalize_assertion_text(token) in record_text
-    for token in expectation["record_text_must_not_include"]:
-        assert _normalize_assertion_text(token) not in record_text

@@ -58,8 +58,8 @@ Full rules live in `docs/simple-coding-rules.md`. The short version:
   function.
 - **No dead code.** When you replace logic, remove the old path.
 - **Config from TOML, keys from env.** Runtime config comes from the TOML
-  layer stack (`default.toml -> global -> project -> env var`). Only API keys
-  use environment variables.
+  layer stack (`default.toml -> ~/.lerim/config.toml -> LERIM_CONFIG`).
+  API keys and documented cloud overrides use environment variables.
 
 ## Adding a new platform adapter
 

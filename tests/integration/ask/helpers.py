@@ -13,6 +13,7 @@ from lerim.context import ContextStore, resolve_project_identity
 from tests.conftest import ASK_EXPECTATIONS_DIR
 from tests.integration.common_helpers import (
     extract_tool_calls,
+    extract_tool_returns,
     load_yaml_expectation,
     retry_on_overload,
     seed_session,
@@ -27,6 +28,7 @@ class AskCaseOutcome:
     result: AskResult
     tool_names: list[str]
     tool_calls: list[dict[str, Any]]
+    tool_returns: list[dict[str, Any]]
     messages: list[dict[str, Any]]
     project_id: str
 
@@ -181,6 +183,7 @@ def run_ask_case(
         result=result,
         tool_names=extract_tool_names(payload),
         tool_calls=extract_tool_calls(payload),
+        tool_returns=extract_tool_returns(payload),
         messages=payload,
         project_id=identity.project_id,
     )

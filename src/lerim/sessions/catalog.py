@@ -284,8 +284,8 @@ def index_session_for_fts(
             summary_text = "\n".join(str(item) for item in parsed if item)
 
     try:
+        indexed_at = _iso_now()
         with _connect() as conn:
-            conn.execute("DELETE FROM session_docs WHERE run_id = ?", (run_id,))
             conn.execute(
                 """
                 INSERT INTO session_docs (
@@ -295,6 +295,41 @@ def index_session_for_fts(
                     session_path, content_hash
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                    agent_type = excluded.agent_type,
+                    repo_path = excluded.repo_path,
+                    repo_name = excluded.repo_name,
+                    start_time = excluded.start_time,
+                    content = excluded.content,
+                    indexed_at = excluded.indexed_at,
+                    status = excluded.status,
+                    duration_ms = excluded.duration_ms,
+                    message_count = excluded.message_count,
+                    tool_call_count = excluded.tool_call_count,
+                    error_count = excluded.error_count,
+                    total_tokens = excluded.total_tokens,
+                    summaries = excluded.summaries,
+                    summary_text = CASE
+                        WHEN session_docs.content_hash IS NOT NULL
+                         AND session_docs.content_hash = excluded.content_hash
+                        THEN session_docs.summary_text
+                        ELSE excluded.summary_text
+                    END,
+                    turns_json = excluded.turns_json,
+                    session_path = excluded.session_path,
+                    content_hash = excluded.content_hash,
+                    tags = CASE
+                        WHEN session_docs.content_hash IS NOT NULL
+                         AND session_docs.content_hash = excluded.content_hash
+                        THEN session_docs.tags
+                        ELSE NULL
+                    END,
+                    outcome = CASE
+                        WHEN session_docs.content_hash IS NOT NULL
+                         AND session_docs.content_hash = excluded.content_hash
+                        THEN session_docs.outcome
+                        ELSE NULL
+                    END
                 """,
                 (
                     run_id,
@@ -303,7 +338,7 @@ def index_session_for_fts(
                     repo_name,
                     start_time,
                     content,
-                    _iso_now(),
+                    indexed_at,
                     status,
                     duration_ms,
                     message_count,
@@ -697,10 +732,10 @@ def claim_session_jobs(
         # sync uses newest-first for first-run quality; chronological replay
         # callers can request oldest-first explicitly.
         #
-        # IMPORTANT: The run_id filter is applied in the outer query, NOT
-        # inside the CTE.  Dead-letter blockers are also checked per project
-        # outside the ranking CTE so no ordering mode or targeted run_id can
-        # bypass a project that needs operator intervention.
+        # IMPORTANT: The run_id filter is applied before ranking so targeted
+        # historical jobs can be claimed even when newer project rows exist.
+        # Dead-letter blockers are checked per project outside the ranking CTE
+        # so targeted claims cannot bypass operator intervention.
         run_id_filter = ""
         params: list[Any] = [
             JOB_STATUS_DEAD_LETTER,
@@ -711,14 +746,17 @@ def claim_session_jobs(
             now_iso,
         ]
 
-        outer_params: list[Any] = [JOB_STATUS_PENDING, JOB_STATUS_FAILED]
         if run_ids:
             placeholders = ",".join("?" for _ in run_ids)
             run_id_filter = f"AND run_id IN ({placeholders})"
-            outer_params.extend(run_ids)
-        outer_params.append(limit)
+            params.extend(run_ids)
+        params.extend([JOB_STATUS_PENDING, JOB_STATUS_FAILED, limit])
 
-        params.extend(outer_params)
+        job_columns = (
+            "id, run_id, job_type, agent_type, session_path, start_time, status, "
+            "attempts, max_attempts, trigger, available_at, claimed_at, "
+            "completed_at, heartbeat_at, error, created_at, updated_at, repo_path"
+        )
 
         rows = conn.execute(
             f"""
@@ -730,7 +768,7 @@ def claim_session_jobs(
                   AND repo_path IS NOT NULL AND repo_path != ''
             ),
             ranked_per_project AS (
-                SELECT *, ROW_NUMBER() OVER (
+                SELECT {job_columns}, ROW_NUMBER() OVER (
                     PARTITION BY repo_path
                     ORDER BY {per_project_order}
                 ) AS rn
@@ -739,8 +777,9 @@ def claim_session_jobs(
                   AND job_type = ?
                   AND available_at <= ?
                   AND repo_path IS NOT NULL AND repo_path != ''
+                  {run_id_filter}
             )
-            SELECT * FROM ranked_per_project
+            SELECT {job_columns} FROM ranked_per_project
             WHERE rn = 1
               AND status IN (?, ?)
               AND NOT EXISTS (
@@ -748,7 +787,6 @@ def claim_session_jobs(
                 FROM dead_letter_projects
                 WHERE dead_letter_projects.repo_path = ranked_per_project.repo_path
               )
-              {run_id_filter}
             ORDER BY {global_order}
             LIMIT ?
             """,
@@ -1155,6 +1193,26 @@ def skip_project_jobs(
 		reset_attempts=False,
 		where_clause="WHERE repo_path = ? AND job_type = ? AND status = ?",
 		params=[repo_path, job_type, JOB_STATUS_DEAD_LETTER],
+	)
+
+
+def retry_all_dead_letter_jobs(*, job_type: str = JOB_TYPE_EXTRACT) -> int:
+	"""Retry all dead_letter jobs without applying display-list pagination."""
+	return _transition_dead_letter(
+		new_status=JOB_STATUS_PENDING,
+		reset_attempts=True,
+		where_clause="WHERE job_type = ? AND status = ?",
+		params=[job_type, JOB_STATUS_DEAD_LETTER],
+	)
+
+
+def skip_all_dead_letter_jobs(*, job_type: str = JOB_TYPE_EXTRACT) -> int:
+	"""Skip all dead_letter jobs without applying display-list pagination."""
+	return _transition_dead_letter(
+		new_status=JOB_STATUS_DONE,
+		reset_attempts=False,
+		where_clause="WHERE job_type = ? AND status = ?",
+		params=[job_type, JOB_STATUS_DEAD_LETTER],
 	)
 
 

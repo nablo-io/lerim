@@ -14,8 +14,10 @@ override) under `[server]`:
 | `sync_interval_minutes` | `30` | How often the daemon runs sync |
 | `maintain_interval_minutes` | `60` | How often the daemon runs maintain |
 
-Sessions are processed **sequentially in chronological order** (oldest first) so
-later sessions can update records from earlier ones.
+Normal backlog sync claims the **newest available session per project first** so
+recent corrections are extracted quickly on first run. Historical replay paths
+can still request oldest-first catalog ordering when chronological
+reconstruction is required.
 
 ## What to run
 

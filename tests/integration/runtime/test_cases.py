@@ -271,7 +271,7 @@ def test_runtime_sync_then_maintain_then_ask_with_real_artifacts(monkeypatch, li
 			project_ids=[kwargs["project_identity"].project_id],
 			changes={
 				"title": "Worker retries need bounded backoff",
-				"body": "Worker retries need bounded backoff so failures stay observable and avoid runaway queue pressure.",
+				"body": "Worker retries need bounded backoff so failures stay observable.",
 			},
 			change_reason="runtime_chain_maintain",
 		)
@@ -281,8 +281,24 @@ def test_runtime_sync_then_maintain_then_ask_with_real_artifacts(monkeypatch, li
 		)
 
 	def _fake_run_ask(**kwargs):
+		store = ContextStore(kwargs["context_db_path"])
+		rows = store.query(
+			entity="records",
+			mode="list",
+			project_ids=[kwargs["project_identity"].project_id],
+			kind="fact",
+			order_by="updated_at",
+			limit=1,
+			include_total=True,
+		)["rows"]
+		record = store.fetch_record(
+			str(rows[0]["record_id"]),
+			project_ids=[kwargs["project_identity"].project_id],
+		)
+		assert record is not None
+		answer = str(record["body"])
 		return (
-			AskResult(answer="Worker retries need bounded backoff so failures stay observable."),
+			AskResult(answer=answer),
 			build_ordered_ask_messages(),
 		)
 

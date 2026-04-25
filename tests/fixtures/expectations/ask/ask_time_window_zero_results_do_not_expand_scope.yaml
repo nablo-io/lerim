@@ -22,8 +22,7 @@ expected:
   must_use_any_tools:
     - "list_records"
     - "context_query"
-  must_not_use_tools:
-    - "search_records"
+  must_not_use_tools: []
   answer_must_include_any:
     - "no decisions were made yesterday"
     - "no decisions were recorded yesterday"

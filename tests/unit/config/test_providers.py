@@ -15,6 +15,7 @@ from lerim.agents.model_settings import (
 from lerim.config.providers import (
 	MINIMAX_TEMPERATURE_FLOOR,
 	_api_key_for_provider,
+	_build_openai_model_settings,
 	build_pydantic_model,
 	build_pydantic_model_from_provider,
 	list_provider_models,
@@ -31,10 +32,32 @@ def test_parse_fallback_spec_with_provider() -> None:
 	assert spec.model == "glm-4.7"
 
 
-def test_parse_fallback_spec_without_provider_uses_default_openrouter() -> None:
-	spec = parse_fallback_spec("x-ai/grok-4.1-fast")
+def test_parse_fallback_spec_without_provider_requires_default() -> None:
+	with pytest.raises(RuntimeError, match="fallback_model_missing_provider"):
+		parse_fallback_spec("x-ai/grok-4.1-fast")
+
+
+def test_parse_fallback_spec_without_provider_uses_explicit_default() -> None:
+	spec = parse_fallback_spec("x-ai/grok-4.1-fast", default_provider="openrouter")
 	assert spec.provider == "openrouter"
 	assert spec.model == "x-ai/grok-4.1-fast"
+
+
+def test_parse_fallback_spec_openrouter_colon_suffix_uses_default_provider() -> None:
+	"""OpenRouter model IDs can contain colon suffixes like ``:free``."""
+	spec = parse_fallback_spec(
+		"deepseek/deepseek-r1-0528:free",
+		default_provider="openrouter",
+	)
+	assert spec.provider == "openrouter"
+	assert spec.model == "deepseek/deepseek-r1-0528:free"
+
+
+def test_parse_fallback_spec_known_prefix_wins_over_default_provider() -> None:
+	"""Only known provider prefixes are parsed as explicit fallback providers."""
+	spec = parse_fallback_spec("zai:glm-4.7", default_provider="openrouter")
+	assert spec.provider == "zai"
+	assert spec.model == "glm-4.7"
 
 
 def test_parse_fallback_spec_normalizes_known_model_casing() -> None:
@@ -129,6 +152,32 @@ def test_build_pydantic_model_minimax_uses_explicit_http_client(tmp_path) -> Non
 	assert type(client._client).__name__ != "AsyncHttpxClientWrapper"
 
 
+def test_openai_provider_settings_do_not_send_top_k(tmp_path) -> None:
+	"""OpenAI rejects top_k, so it must not be sent in extra_body."""
+	cfg = make_config(tmp_path)
+	cfg = replace(
+		cfg,
+		agent_role=RoleConfig(provider="openai", model="gpt-5-mini", top_k=40),
+	)
+
+	settings = _build_openai_model_settings(cfg, provider="openai")
+
+	assert "extra_body" not in settings
+
+
+def test_openrouter_provider_settings_include_supported_extra_body(tmp_path) -> None:
+	"""Provider-supported nonstandard request fields stay in extra_body."""
+	cfg = make_config(tmp_path)
+	cfg = replace(
+		cfg,
+		agent_role=RoleConfig(provider="openrouter", model="x-ai/grok-4.1-fast", top_k=40),
+	)
+
+	settings = _build_openai_model_settings(cfg, provider="openrouter")
+
+	assert settings["extra_body"] == {"top_k": 40}
+
+
 def test_build_pydantic_model_requires_available_fallback_keys(tmp_path) -> None:
 	"""Configured fallback models must be buildable."""
 	cfg = make_config(tmp_path)
@@ -158,6 +207,23 @@ def test_build_pydantic_model_with_fallback_chain(tmp_path) -> None:
 		zai_api_key="z-key",
 	)
 	model = build_pydantic_model("agent", config=cfg)
+	assert isinstance(model, FallbackModel)
+	assert len(model.models) == 2
+
+
+def test_build_pydantic_model_unqualified_fallback_uses_primary_provider(tmp_path) -> None:
+	cfg = make_config(tmp_path)
+	cfg = replace(
+		cfg,
+		agent_role=RoleConfig(
+			provider="ollama",
+			model="qwen3:8b",
+			fallback_models=("qwen3:14b",),
+		),
+	)
+
+	model = build_pydantic_model("agent", config=cfg)
+
 	assert isinstance(model, FallbackModel)
 	assert len(model.models) == 2
 

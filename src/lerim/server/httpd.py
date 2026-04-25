@@ -963,6 +963,12 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
             body = read_body()
             if body is None:
                 return
+            if "ignore_lock" in body:
+                self._error(
+                    HTTPStatus.BAD_REQUEST,
+                    "ignore_lock is not supported for /api/sync.",
+                )
+                return
 
             sync_kwargs = {
                 "agent": body.get("agent"),
@@ -974,7 +980,6 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
                 "no_extract": bool(body.get("no_extract")),
                 "force": bool(body.get("force")),
                 "dry_run": bool(body.get("dry_run")),
-                "ignore_lock": bool(body.get("ignore_lock")),
             }
             if bool(body.get("blocking")):
                 self._json(api_sync(**sync_kwargs))
@@ -994,6 +999,12 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
         if path == "/api/maintain":
             body = read_body()
             if body is None:
+                return
+            if "force" in body:
+                self._error(
+                    HTTPStatus.BAD_REQUEST,
+                    "force is not supported for /api/maintain.",
+                )
                 return
 
             maintain_kwargs = {"dry_run": bool(body.get("dry_run"))}

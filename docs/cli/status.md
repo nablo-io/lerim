@@ -7,6 +7,7 @@ Show runtime state.
 ```bash
 lerim status
 lerim status --live
+lerim status --live --interval 1
 lerim status --scope project --project lerim-cli
 lerim status --json
 ```
@@ -28,3 +29,12 @@ lerim status --json
 - `quiet`: past in-scope sessions were already processed; no queued work now
 - `idle`: no indexed sessions exist for that project in the current sync window
 - `blocked`: the oldest queued job is dead-lettered and needs retry or skip
+
+## Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--scope` | `all` | Status scope: all projects or one project |
+| `--project` | -- | Project name/path when `--scope=project` |
+| `--live` | off | Refresh the status display until interrupted |
+| `--interval` | `3.0` | Refresh interval in seconds for `--live` |

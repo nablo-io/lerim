@@ -35,8 +35,7 @@ from lerim.agents.tools import (
     _maybe_raise_record_retry,
     _normalize_kind,
     _normalize_status,
-    _require_full_trace_coverage_before_write,
-    _require_notes_before_long_trace_write,
+    _require_trace_ready_for_write,
     _store,
     archive_record,
     compute_request_budget,
@@ -364,19 +363,19 @@ class TestTraceRead:
 
 
 # ---------------------------------------------------------------------------
-# _require_full_trace_coverage_before_write
+# _require_trace_ready_for_write
 # ---------------------------------------------------------------------------
 
 
-class TestRequireFullTraceCoverage:
+class TestRequireTraceReadyForWrite:
     def test_no_trace_path_passes(self, deps):
         ctx = make_run_context(deps)
-        _require_full_trace_coverage_before_write(ctx)
+        _require_trace_ready_for_write(ctx)
 
     def test_no_read_ranges_raises_from_trace_start(self, deps_with_trace):
         ctx = make_run_context(deps_with_trace)
         with pytest.raises(ModelRetry, match=r"trace_read\(offset=0"):
-            _require_full_trace_coverage_before_write(ctx)
+            _require_trace_ready_for_write(ctx)
 
     def test_empty_trace_passes_without_read_ranges(self, tmp_path, project_identity):
         trace_path = tmp_path / "trace.jsonl"
@@ -389,29 +388,18 @@ class TestRequireFullTraceCoverage:
             trace_total_lines=0,
         )
         ctx = make_run_context(deps)
-        _require_full_trace_coverage_before_write(ctx)
+        _require_trace_ready_for_write(ctx)
 
     def test_full_coverage_passes(self, deps_with_trace):
         ctx = make_run_context(deps_with_trace)
         deps_with_trace.read_ranges = [(0, 10)]
-        _require_full_trace_coverage_before_write(ctx)
+        _require_trace_ready_for_write(ctx)
 
     def test_partial_coverage_raises(self, deps_with_trace):
         ctx = make_run_context(deps_with_trace)
         deps_with_trace.read_ranges = [(0, 5)]
         with pytest.raises(ModelRetry, match="Unread trace lines"):
-            _require_full_trace_coverage_before_write(ctx)
-
-
-# ---------------------------------------------------------------------------
-# _require_notes_before_long_trace_write
-# ---------------------------------------------------------------------------
-
-
-class TestRequireNotesBeforeLongTraceWrite:
-    def test_no_trace_path_passes(self, deps):
-        ctx = make_run_context(deps)
-        _require_notes_before_long_trace_write(ctx)
+            _require_trace_ready_for_write(ctx)
 
     def test_already_has_notes_passes(self, tmp_path, project_identity):
         trace_path = tmp_path / "trace.jsonl"
@@ -425,12 +413,12 @@ class TestRequireNotesBeforeLongTraceWrite:
             notes=[Finding(theme="t", offset=0, quote="q", level="fact")],
         )
         ctx = make_run_context(deps)
-        _require_notes_before_long_trace_write(ctx)
+        _require_trace_ready_for_write(ctx)
 
     def test_short_trace_passes(self, deps_with_trace):
         ctx = make_run_context(deps_with_trace)
         deps_with_trace.read_ranges = [(0, 10)]
-        _require_notes_before_long_trace_write(ctx)
+        _require_trace_ready_for_write(ctx)
 
     def test_long_trace_no_notes_raises(self, tmp_path, project_identity):
         trace_path = tmp_path / "trace.jsonl"
@@ -444,7 +432,7 @@ class TestRequireNotesBeforeLongTraceWrite:
         )
         ctx = make_run_context(deps)
         with pytest.raises(ModelRetry, match="trace_read chunk"):
-            _require_notes_before_long_trace_write(ctx)
+            _require_trace_ready_for_write(ctx)
 
 
 # ---------------------------------------------------------------------------
@@ -695,9 +683,9 @@ class TestCreateRecord:
         )
         record = json.loads(result)["result"]
 
-        assert record["created_at"] == "2026-01-01T00:00:00Z"
-        assert record["updated_at"] == "2026-01-01T00:00:00Z"
-        assert record["valid_from"] == "2026-01-01T00:00:00Z"
+        assert record["created_at"] == "2026-01-01T00:00:00+00:00"
+        assert record["updated_at"] == "2026-01-01T00:00:00+00:00"
+        assert record["valid_from"] == "2026-01-01T00:00:00+00:00"
 
     def test_explicit_valid_from_overrides_source_session_time(
         self, deps_with_session, mock_embeddings
@@ -712,7 +700,7 @@ class TestCreateRecord:
         )
         record = json.loads(result)["result"]
 
-        assert record["created_at"] == "2026-01-01T00:00:00Z"
+        assert record["created_at"] == "2026-01-01T00:00:00+00:00"
         assert record["valid_from"] == "2026-02-01T00:00:00+00:00"
 
     def test_missing_title_raises_retry(self, deps_with_session, mock_embeddings):

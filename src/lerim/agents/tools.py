@@ -459,6 +459,11 @@ def _normalize_filter_list(
 def _maybe_raise_record_retry(exc: ValueError) -> None:
     """Convert record-quality validation errors into guided model retries."""
     code = str(exc or "").strip()
+    if code == "no_changes":
+        raise ModelRetry(
+            "update_record needs at least one meaningful field change. "
+            "Fetch the record, compare it to your intended update, then retry only if something should change."
+        ) from exc
     message = record_validation_message(code)
     if message:
         raise ModelRetry(message) from exc
@@ -533,16 +538,6 @@ def _first_uncovered_offset(
     if expected < total_lines:
         return expected
     return None
-
-
-def _require_full_trace_coverage_before_write(ctx: RunContext[ContextDeps]) -> None:
-    """Backward-compatible wrapper for the unified trace write gate."""
-    _require_trace_ready_for_write(ctx)
-
-
-def _require_notes_before_long_trace_write(ctx: RunContext[ContextDeps]) -> None:
-    """Backward-compatible wrapper for the unified trace write gate."""
-    _require_trace_ready_for_write(ctx)
 
 
 def create_record(
@@ -663,6 +658,11 @@ def update_record(
             changes[key] = stripped
     if str(status or "").strip():
         changes["status"] = _normalize_status(status)
+    if not changes:
+        raise ModelRetry(
+            "update_record needs at least one field to change. "
+            "Pass a new title, body, status, validity field, typed field, or superseded_by_record_id."
+        )
     store = _store(ctx)
     try:
         result = store.update_record(

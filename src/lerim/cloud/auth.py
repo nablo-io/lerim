@@ -13,6 +13,7 @@ import socket
 import sys
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -100,7 +101,7 @@ def _run_browser_flow(endpoint: str, timeout_seconds: int = 120) -> str | None:
     server.timeout = 1.0
 
     callback_url = f"http://localhost:{port}/callback"
-    auth_url = f"{endpoint}/auth/cli?callback={callback_url}"
+    auth_url = f"{endpoint}/auth/cli?{urllib.parse.urlencode({'callback': callback_url})}"
 
     _emit(f"Opening browser to: {auth_url}")
     webbrowser.open(auth_url)

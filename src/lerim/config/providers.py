@@ -67,6 +67,7 @@ PROVIDER_CAPABILITIES: dict[str, dict] = {
 	"openrouter": {
 		"roles": ["agent"],
 		"api_key_env": "OPENROUTER_API_KEY",
+		"extra_body_keys": ["top_k"],
 	},
 	"ollama": {
 		"roles": ["agent"],
@@ -149,13 +150,17 @@ def _api_key_for_provider(config: Config, provider: str) -> str | None:
 
 
 def parse_fallback_spec(
-	raw: str, *, default_provider: str = "openrouter"
+	raw: str, *, default_provider: str | None = None
 ) -> FallbackSpec:
-	"""Parse fallback descriptor in the format ``provider:model`` or ``model``."""
-	text = str(raw).strip()
+	"""Parse fallback descriptor as ``known_provider:model`` or provider-local model."""
+	if not isinstance(raw, str):
+		raise RuntimeError(f"fallback_model_invalid:{raw!r}")
+	text = raw.strip()
 	if not text:
 		raise RuntimeError("fallback_model_empty")
 	if ":" not in text:
+		if default_provider is None:
+			raise RuntimeError(f"fallback_model_missing_provider:{raw}")
 		model = normalize_model_name(default_provider, text)
 		return FallbackSpec(provider=default_provider, model=model)
 	provider, model = text.split(":", 1)
@@ -163,6 +168,13 @@ def parse_fallback_spec(
 	model = model.strip()
 	if not provider or not model:
 		raise RuntimeError(f"fallback_model_invalid:{raw}")
+	if provider not in PROVIDER_CAPABILITIES:
+		if default_provider:
+			return FallbackSpec(
+				provider=default_provider,
+				model=normalize_model_name(default_provider, text),
+			)
+		raise RuntimeError(f"fallback_model_unknown_provider:{raw}")
 	model = normalize_model_name(provider, model)
 	return FallbackSpec(provider=provider, model=model)
 
@@ -207,20 +219,31 @@ def _make_retrying_http_client(
 	return AsyncClient(transport=transport)
 
 
-def _build_openai_model_settings(cfg: Config) -> OpenAIChatModelSettings:
+def _build_openai_model_settings(
+	cfg: Config, *, provider: str
+) -> OpenAIChatModelSettings:
 	"""Build OpenAI-path model settings from Lerim Config.agent_role.
 
 	Used for non-MiniMax providers that go through the OpenAI-compat path.
-	Threads temperature, max_tokens, top_p, parallel_tool_calls from config.
+	Threads standard settings from config and only includes provider-specific
+	extra_body fields when the provider capability registry says they are
+	supported.
 	"""
 	role_cfg = cfg.agent_role
-	return OpenAIChatModelSettings(
+	extra_body: dict[str, int] = {}
+	caps = PROVIDER_CAPABILITIES.get(provider.strip().lower(), {})
+	if "top_k" in caps.get("extra_body_keys", []):
+		extra_body["top_k"] = role_cfg.top_k
+
+	settings = OpenAIChatModelSettings(
 		temperature=role_cfg.temperature,
 		top_p=role_cfg.top_p,
 		max_tokens=role_cfg.max_tokens,
 		parallel_tool_calls=role_cfg.parallel_tool_calls,
-		extra_body={"top_k": role_cfg.top_k},
 	)
+	if extra_body:
+		settings["extra_body"] = extra_body
+	return settings
 
 
 def _build_minimax_anthropic_model(
@@ -320,7 +343,7 @@ def _build_pydantic_model_for_provider(
 		http_client=http_client,
 	)
 	canonical_model = normalize_model_name(provider, model)
-	settings = _build_openai_model_settings(cfg)
+	settings = _build_openai_model_settings(cfg, provider=provider)
 	return OpenAIChatModel(canonical_model, provider=openai_provider, settings=settings)
 
 
@@ -366,7 +389,7 @@ def _build_model_chain(
 			role_label=f"{fallback_role_label_prefix}{spec.provider}:{spec.model}",
 		)
 		for raw in fallback_models
-		for spec in (parse_fallback_spec(raw),)
+		for spec in (parse_fallback_spec(raw, default_provider=provider),)
 	]
 	return _wrap_with_fallback(primary, fallbacks)
 
@@ -486,7 +509,7 @@ if __name__ == "__main__":
 	assert spec.provider == "openrouter"
 	assert spec.model == "anthropic/claude-sonnet-4-5-20250929"
 
-	spec_default = parse_fallback_spec("some-model")
+	spec_default = parse_fallback_spec("some-model", default_provider="openrouter")
 	assert spec_default.provider == "openrouter"
 	assert spec_default.model == "some-model"
 

@@ -932,6 +932,7 @@ class TestPullRecords:
 			kind="fact",
 			title="Original title",
 			body="Original body",
+			updated_at="2026-03-02T00:00:00Z",
 			valid_from="2026-03-01T00:00:00Z",
 		)
 		with store.connect() as conn:
@@ -970,8 +971,8 @@ class TestPullRecords:
 			).fetchone()
 		assert row["title"] == "Updated title"
 		assert row["created_at"] == original_created_at
-		assert row["updated_at"] == "2026-04-01T12:00:00Z"
-		assert row["valid_from"] == "2026-03-01T00:00:00Z"
+		assert row["updated_at"].replace("+00:00", "Z") == "2026-04-01T12:00:00Z"
+		assert row["valid_from"].replace("+00:00", "Z") == "2026-03-01T00:00:00Z"
 
 	def test_skips_missing_record_id(self, tmp_path):
 		"""Records without record_id are skipped."""
@@ -1038,8 +1039,8 @@ class TestPullRecords:
 			).fetchone()
 		assert row is None
 
-	def test_skip_unknown_project_does_not_advance_watermark(self, tmp_path):
-		"""Unknown-project rows are retryable, so the pull watermark stays put."""
+	def test_skip_unknown_project_advances_watermark(self, tmp_path):
+		"""Unknown-project rows are permanent skips, so the pull watermark moves."""
 		alpha_dir = tmp_path / "alpha"
 		alpha_dir.mkdir()
 		cfg = replace(make_config(tmp_path), projects={"alpha": str(alpha_dir)})
@@ -1066,7 +1067,7 @@ class TestPullRecords:
 			)
 
 		assert pulled == 0
-		assert state.records_pulled_at == "2026-03-01T00:00:00Z"
+		assert state.records_pulled_at == "2026-04-01T12:00:00Z"
 
 
 # ---------------------------------------------------------------------------

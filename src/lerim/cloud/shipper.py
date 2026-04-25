@@ -180,6 +180,45 @@ def _typed_fields_from_cloud_record(record: dict[str, Any], *, kind: str) -> dic
     }
 
 
+def _parse_sync_timestamp(raw: str | None) -> datetime | None:
+    """Parse a sync timestamp into UTC, returning ``None`` for invalid values."""
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _timestamp_lte(left: str, right: str) -> bool:
+    """Return whether timestamp *left* is less than or equal to *right*."""
+    left_dt = _parse_sync_timestamp(left)
+    right_dt = _parse_sync_timestamp(right)
+    if left_dt is not None and right_dt is not None:
+        return left_dt <= right_dt
+    return left <= right
+
+
+def _timestamp_gt(left: str, right: str) -> bool:
+    """Return whether timestamp *left* is greater than *right*."""
+    left_dt = _parse_sync_timestamp(left)
+    right_dt = _parse_sync_timestamp(right)
+    if left_dt is not None and right_dt is not None:
+        return left_dt > right_dt
+    return left > right
+
+
+def _pull_record_sort_key(record: dict[str, Any]) -> tuple[datetime, str, str]:
+    """Return a deterministic chronological sort key for cloud pull records."""
+    timestamp = str(record.get("cloud_edited_at") or "")
+    parsed = _parse_sync_timestamp(timestamp) or datetime.min.replace(tzinfo=timezone.utc)
+    return (parsed, timestamp, str(record.get("record_id") or ""))
+
+
 def _configured_project_identities(projects: dict[str, str]) -> dict[str, ProjectIdentity]:
     """Resolve configured cloud project names to local project identities."""
     identities: dict[str, ProjectIdentity] = {}
@@ -236,7 +275,7 @@ def _upsert_pulled_record(
     valid_until = valid_until_raw or None
     with store.connect() as conn:
         row = conn.execute(
-            "SELECT record_id FROM records WHERE record_id = ? AND project_id = ?",
+            "SELECT record_id, updated_at FROM records WHERE record_id = ? AND project_id = ?",
             (record_id, project_identity.project_id),
         ).fetchone()
     if row is None:
@@ -260,6 +299,15 @@ def _upsert_pulled_record(
             logger.warning("skipping pulled record {}: {}", record_id, exc)
             return "retry"
         return "applied"
+    local_updated_at = str(row["updated_at"] or "").strip()
+    if local_updated_at and _timestamp_lte(cloud_edited, local_updated_at):
+        logger.info(
+            "skipping pulled record {} because local updated_at {} is newer than cloud_edited_at {}",
+            record_id,
+            local_updated_at,
+            cloud_edited,
+        )
+        return "permanent_drop"
     changes: dict[str, Any] = {
         "kind": kind,
         "title": str(record.get("title") or "").strip(),
@@ -281,6 +329,9 @@ def _upsert_pulled_record(
             change_reason="cloud_pull",
         )
     except ValueError as exc:
+        if str(exc) == "no_changes":
+            logger.info("pulled record {} has no local changes", record_id)
+            return "permanent_drop"
         logger.warning("skipping pulled record {}: {}", record_id, exc)
         return "retry"
     return "applied"
@@ -311,8 +362,14 @@ async def _pull_records(
 
     records = sorted(
         (record for record in data["records"] if isinstance(record, dict)),
-        key=lambda record: str(record.get("cloud_edited_at") or ""),
+        key=_pull_record_sort_key,
     )
+
+    def _mark_processed(cloud_edited_at: str) -> None:
+        """Advance the pull cursor after a record is intentionally handled."""
+        nonlocal latest_edited
+        if not latest_edited or _timestamp_gt(cloud_edited_at, latest_edited):
+            latest_edited = cloud_edited_at
 
     for record in records:
         cloud_edited = str(record.get("cloud_edited_at") or "").strip()
@@ -325,8 +382,7 @@ async def _pull_records(
                 "skipping pulled record {} because cloud project is missing",
                 record.get("record_id", ""),
             )
-            if cloud_edited > latest_edited:
-                latest_edited = cloud_edited
+            _mark_processed(cloud_edited)
             continue
         project_identity = project_identities.get(project_name)
         if project_identity is None:
@@ -335,7 +391,8 @@ async def _pull_records(
                 record.get("record_id", ""),
                 project_name,
             )
-            break
+            _mark_processed(cloud_edited)
+            continue
 
         try:
             outcome = _upsert_pulled_record(
@@ -345,11 +402,8 @@ async def _pull_records(
             )
             if outcome == "applied":
                 pulled += 1
-            if (
-                outcome in {"applied", "permanent_drop"}
-                and cloud_edited > latest_edited
-            ):
-                latest_edited = cloud_edited
+            if outcome in {"applied", "permanent_drop"}:
+                _mark_processed(cloud_edited)
             if outcome == "retry":
                 break
         except (OSError, sqlite3.Error) as exc:
@@ -360,7 +414,7 @@ async def _pull_records(
             )
             break
 
-    if latest_edited and latest_edited != state.records_pulled_at:
+    if latest_edited:
         state.records_pulled_at = latest_edited
 
     return pulled

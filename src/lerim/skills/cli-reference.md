@@ -126,6 +126,7 @@ Supported platforms: `claude`, `codex`, `cursor`, `opencode`
 
 ```bash
 lerim connect list                        # show all connected platforms
+lerim connect                             # same as list
 lerim connect auto                        # auto-detect and connect all known platforms
 lerim connect claude                      # connect the Claude platform
 lerim connect claude --path /custom/dir   # connect with custom session store path
@@ -134,7 +135,7 @@ lerim connect remove claude               # disconnect Claude
 
 | Flag | Description |
 |------|-------------|
-| `platform_name` | Action or platform: `list`, `auto`, `remove`, or a platform name |
+| `platform_name` | Optional action/platform: `list`, `auto`, `remove`, or a platform name. Omit to list connections |
 | `extra_arg` | Used with `remove` -- the platform to disconnect |
 | `--path` | Custom filesystem path to the platform's session store |
 
@@ -161,7 +162,6 @@ lerim sync --since 2026-02-01T00:00:00Z --until 2026-02-08T00:00:00Z
 lerim sync --no-extract             # index and enqueue only, skip extraction
 lerim sync --dry-run                # preview what would happen, no writes
 lerim sync --max-sessions 100       # process up to 100 sessions
-lerim sync --ignore-lock            # skip writer lock (debugging only)
 ```
 
 | Flag | Default | Description |
@@ -175,10 +175,11 @@ lerim sync --ignore-lock            # skip writer lock (debugging only)
 | `--no-extract` | off | Index/enqueue only, skip extraction |
 | `--force` | off | Re-extract already-processed sessions |
 | `--dry-run` | off | Preview mode, no writes |
-| `--ignore-lock` | off | Skip writer lock (risk of corruption) |
 
 Notes:
 - `sync` is the hot path (queue + PydanticAI extraction + lead write).
+- Normal backlog sync claims the newest available session per project first.
+- `--ignore-lock` exists only as a CLI-local debug flag and is intentionally not supported by `/api/sync`; skipping the writer lock risks corruption.
 - Cold maintenance work is not executed in `sync`.
 
 ### `lerim maintain`
@@ -245,6 +246,7 @@ Deterministic count/list queries over records, versions, or sessions.
 lerim query records count
 lerim query records list --kind decision --limit 10
 lerim query records list --created-since 2026-04-17T00:00:00+00:00
+lerim query sessions list --order-by created_at --limit 20
 ```
 
 | Flag | Default | Description |
@@ -261,7 +263,7 @@ lerim query records list --created-since 2026-04-17T00:00:00+00:00
 | `--updated-since` | -- | Lower bound for `updated_at` |
 | `--updated-until` | -- | Upper bound for `updated_at` |
 | `--valid-at` | -- | Point-in-time validity filter |
-| `--order-by` | `created_at` | `created_at`, `updated_at`, or `valid_from` |
+| `--order-by` | `created_at` | Records/versions: `created_at`, `updated_at`, or `valid_from`; sessions: `created_at` only, newest first |
 | `--limit` | `20` | Page size for `list` |
 | `--offset` | `0` | Page offset for `list` |
 | `--include-total` | `false` | Include total matching rows for `list` |
@@ -276,8 +278,16 @@ Requires a running server (`lerim up` or `lerim serve`).
 lerim status
 lerim status --scope project --project lerim-cli
 lerim status --live
+lerim status --live --interval 1
 lerim status --json    # structured JSON output
 ```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--scope` | `all` | Status scope: all projects or one project |
+| `--project` | -- | Project name/path when `--scope=project` |
+| `--live` | off | Refresh the status display until interrupted |
+| `--interval` | `3.0` | Refresh interval in seconds for `--live` |
 
 ### `lerim queue`
 

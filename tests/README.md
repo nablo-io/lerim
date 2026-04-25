@@ -80,8 +80,9 @@ Rules:
 - test file names match source file names (without `_adapter`/`_functions` suffix)
 - each subpackage has its own `conftest.py` with domain-specific fixtures
 - agent tool tests also cover source-session provenance defaults so historical traces do not look freshly created when indexed later
+- adapter tests cover compact-trace visibility for canonical message fields and structured event messages without keyword heuristics
 - session catalog tests cover queue claim availability, content-hash refresh/change detection, and stable pagination ordering
-- config tests cover provider client lifecycle and SDK log-noise filters
+- config tests cover provider client lifecycle, provider-specific model settings, fallback-model parsing, strict config parsing, and SDK log-noise filters
 
 ## Testing rules
 
@@ -92,7 +93,7 @@ Rules:
 5. **Three layers: unit (no LLM/network, temp DB), integration (real LLM, real DB, `@pytest.mark.llm`), smoke (quick sanity).**
 6. **Mock external deps, not internal modules.** Use temp SQLite DBs instead of mocking ContextStore.
 7. **When adding a new tool:** test happy path, validation failure, guard failure, edge case.
-8. **When adding a store method:** test happy path, each validation error, idempotency, side effects (version/FTS/embedding).
+8. **When adding a store method:** test happy path, each validation error, idempotency, canonical side effects, and best-effort derived index refresh (FTS/embedding).
 9. **Keep tests independent.** Each test creates its own temp state. No shared mutable state.
 10. **Reference source constants.** Use `MAX_RECORD_TITLE_CHARS + 1` not `121` in boundary tests.
 
@@ -144,3 +145,7 @@ Use them for:
 Keep them behavior-shaped.
 
 Do not encode accidental wording or prompt internals unless the behavior truly depends on that distinction.
+
+For ask cases, prefer support-boundary assertions over total tool bans: exact time/current queries should prove narrowing happens before synthesis, zero-result windows should prove no later retrieval widens scope, and semantic cases should prove the returned fetched support is sufficient. Only ban tools when the ban is the behavior under test, such as deterministic count questions avoiding semantic retrieval.
+
+For maintain cases, no-churn expectations should assert that useful records keep their content and receive no mutation rows. Do not require rewrite churn when a concise durable record already has clear typed fields.

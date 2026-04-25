@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,13 @@ def _make_cloud_config(base: Path, *, projects: dict[str, Path]):
 def _project_id_for(project_path: Path) -> str:
     """Resolve the canonical project id for one test project path."""
     return resolve_project_identity(project_path).project_id
+
+
+def _assert_same_instant(actual: str, expected: str) -> None:
+    """Assert that two ISO timestamp strings represent the same UTC instant."""
+    actual_dt = datetime.fromisoformat(str(actual).replace("Z", "+00:00"))
+    expected_dt = datetime.fromisoformat(str(expected).replace("Z", "+00:00"))
+    assert actual_dt.astimezone(timezone.utc) == expected_dt.astimezone(timezone.utc)
 
 
 class MockEmbeddingProvider:
@@ -152,6 +160,7 @@ def test_pull_records_updates_existing_record_and_appends_version(
         kind="fact",
         title="Original title",
         body="Original body",
+        updated_at="2026-03-02T00:00:00Z",
         valid_from="2026-03-01T00:00:00Z",
     )
 
@@ -186,7 +195,7 @@ def test_pull_records_updates_existing_record_and_appends_version(
     assert record["body"] == "They keep cloud pull and local reads aligned."
     assert record["decision"] == "Prefer typed sync contracts"
     assert record["why"] == "They keep cloud pull and local reads aligned."
-    assert record["valid_from"] == "2026-03-01T00:00:00Z"
+    _assert_same_instant(record["valid_from"], "2026-03-01T00:00:00Z")
     assert len(record["versions"]) == int(expectation["version_count"])
     assert record["versions"][0]["version_no"] == 2
     assert record["versions"][0]["change_kind"] == expectation["latest_change_kind"]
@@ -283,10 +292,67 @@ def test_pull_records_skips_unresolved_project_scope(
     pulled = asyncio.run(_pull_records("https://api.test", "tok-test", config, state))
 
     assert pulled == 0
-    assert state.records_pulled_at == ""
+    assert state.records_pulled_at == "2026-04-20T12:30:00Z"
     store = ContextStore(config.context_db_path)
     alpha_id = _project_id_for(alpha_root)
     assert store.fetch_record("cloud-missing-project", project_ids=[alpha_id]) is None
+
+
+@pytest.mark.integration
+def test_pull_records_does_not_overwrite_newer_local_record(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    inline_cloud_calls: None,
+    stable_git_roots: None,
+) -> None:
+    """Pull should drop stale cloud payloads when the local row is newer."""
+    project_root = tmp_path / "projects" / "alpha"
+    project_root.mkdir(parents=True)
+    config = _make_cloud_config(tmp_path, projects={"alpha": project_root})
+    state = _ShipperState()
+    store = ContextStore(config.context_db_path)
+    store.initialize()
+
+    project_id = _project_id_for(project_root)
+    store.register_project(resolve_project_identity(project_root))
+    store.create_record(
+        project_id=project_id,
+        session_id=None,
+        record_id="newer-local",
+        kind="fact",
+        title="Local title",
+        body="Local body",
+        created_at="2026-04-20T12:00:00Z",
+        updated_at="2026-04-20T12:45:00Z",
+    )
+
+    monkeypatch.setattr(
+        "lerim.cloud.shipper._get_json_sync",
+        lambda *args, **kwargs: {
+            "records": [
+                {
+                    "record_id": "newer-local",
+                    "record_kind": "fact",
+                    "title": "Stale cloud title",
+                    "body": "Stale cloud body",
+                    "status": "active",
+                    "project": "alpha",
+                    "cloud_edited_at": "2026-04-20T12:30:00Z",
+                }
+            ]
+        },
+    )
+
+    pulled = asyncio.run(_pull_records("https://api.test", "tok-test", config, state))
+
+    assert pulled == 0
+    assert state.records_pulled_at == "2026-04-20T12:30:00Z"
+    record = store.fetch_record("newer-local", project_ids=[project_id], include_versions=True)
+    assert record is not None
+    assert record["title"] == "Local title"
+    assert record["body"] == "Local body"
+    _assert_same_instant(record["updated_at"], "2026-04-20T12:45:00Z")
+    assert len(record["versions"]) == 1
 
 
 @pytest.mark.integration
@@ -372,8 +438,8 @@ def test_ship_and_pull_round_trip_core_fields(
     assert target_record["title"] == "Cloud sync contract"
     assert target_record["body"] == "Round trips should keep the durable body intact."
     assert target_record["status"] == expectation["status"]
-    assert target_record["created_at"] == "2026-03-01T00:00:00Z"
-    assert target_record["updated_at"] == "2026-04-01T00:00:00Z"
-    assert target_record["valid_from"] == "2026-03-01T00:00:00Z"
-    assert target_record["valid_until"] == "2026-04-10T00:00:00Z"
+    _assert_same_instant(target_record["created_at"], "2026-03-01T00:00:00Z")
+    _assert_same_instant(target_record["updated_at"], "2026-04-01T00:00:00Z")
+    _assert_same_instant(target_record["valid_from"], "2026-03-01T00:00:00Z")
+    _assert_same_instant(target_record["valid_until"], "2026-04-10T00:00:00Z")
     assert len(target_record["versions"]) == 1

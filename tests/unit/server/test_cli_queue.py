@@ -257,18 +257,16 @@ def test_cmd_retry_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_cmd_retry_all(monkeypatch: pytest.MonkeyPatch) -> None:
-	"""--all retries all dead_letter jobs."""
-	retried_ids: list[str] = []
-	dead_jobs = [
-		{"run_id": "dead1_full_id_here", "status": "dead_letter"},
-		{"run_id": "dead2_full_id_here", "status": "dead_letter"},
-	]
+	"""--all retries dead_letter jobs through the uncapped catalog helper."""
 	output: list[str] = []
 	monkeypatch.setattr("lerim.server.cli._emit", lambda *a, **kw: output.append(str(a[0])))
-	monkeypatch.setattr("lerim.sessions.catalog.list_queue_jobs", lambda **kw: dead_jobs)
 	monkeypatch.setattr(
-		"lerim.sessions.catalog.retry_session_job",
-		lambda rid: (retried_ids.append(rid) or True),
+		"lerim.sessions.catalog.list_queue_jobs",
+		lambda **kw: pytest.fail("--all retry should not list paginated jobs"),
+	)
+	monkeypatch.setattr(
+		"lerim.sessions.catalog.retry_all_dead_letter_jobs",
+		lambda: 55,
 	)
 	monkeypatch.setattr("lerim.sessions.catalog.count_session_jobs_by_status", lambda: QUEUE_COUNTS)
 
@@ -276,8 +274,7 @@ def test_cmd_retry_all(monkeypatch: pytest.MonkeyPatch) -> None:
 	rc = cli._cmd_retry(args)
 
 	assert rc == 0
-	assert len(retried_ids) == 2
-	assert any("2" in line for line in output)
+	assert any("55" in line for line in output)
 
 
 def test_cmd_retry_not_dead_letter(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -352,19 +349,16 @@ def test_cmd_skip_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_cmd_skip_all(monkeypatch: pytest.MonkeyPatch) -> None:
-	"""--all skips all dead_letter jobs."""
-	skipped_ids: list[str] = []
-	dead_jobs = [
-		{"run_id": "dead1_full_id_here", "status": "dead_letter"},
-		{"run_id": "dead2_full_id_here", "status": "dead_letter"},
-		{"run_id": "dead3_full_id_here", "status": "dead_letter"},
-	]
+	"""--all skips dead_letter jobs through the uncapped catalog helper."""
 	output: list[str] = []
 	monkeypatch.setattr("lerim.server.cli._emit", lambda *a, **kw: output.append(str(a[0])))
-	monkeypatch.setattr("lerim.sessions.catalog.list_queue_jobs", lambda **kw: dead_jobs)
 	monkeypatch.setattr(
-		"lerim.sessions.catalog.skip_session_job",
-		lambda rid: (skipped_ids.append(rid) or True),
+		"lerim.sessions.catalog.list_queue_jobs",
+		lambda **kw: pytest.fail("--all skip should not list paginated jobs"),
+	)
+	monkeypatch.setattr(
+		"lerim.sessions.catalog.skip_all_dead_letter_jobs",
+		lambda: 55,
 	)
 	monkeypatch.setattr("lerim.sessions.catalog.count_session_jobs_by_status", lambda: QUEUE_COUNTS)
 
@@ -372,8 +366,7 @@ def test_cmd_skip_all(monkeypatch: pytest.MonkeyPatch) -> None:
 	rc = cli._cmd_skip(args)
 
 	assert rc == 0
-	assert len(skipped_ids) == 3
-	assert any("3" in line for line in output)
+	assert any("55" in line for line in output)
 
 
 def test_cmd_skip_prefix_too_short(monkeypatch: pytest.MonkeyPatch) -> None:

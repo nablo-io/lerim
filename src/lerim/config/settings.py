@@ -92,6 +92,28 @@ def _to_non_empty_string(value: Any) -> str:
     return str(value).strip()
 
 
+def _read_optional_string(raw: dict[str, Any], key: str) -> str:
+    """Read an optional string config value without coercing other types."""
+    value = raw.get(key)
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ValueError(f"config key {key} must be a string, got: {value!r}")
+    return value.strip()
+
+
+def _read_optional_path(raw: dict[str, Any], key: str, default: Path) -> Path:
+    """Read an optional TOML path string and expand it without scalar coercion."""
+    value = raw.get(key)
+    if value is None:
+        return default
+    if not isinstance(value, str):
+        raise ValueError(f"config key {key} must be a string path, got: {value!r}")
+    if not value.strip():
+        return default
+    return Path(value.strip()).expanduser()
+
+
 def _ensure_dict(data: dict[str, Any], key: str) -> dict[str, Any]:
 	"""Get a table value from config data, failing on wrong section types."""
 	val = data.get(key, {})
@@ -139,7 +161,9 @@ def _read_int(
             )
     if not isinstance(value, int) or isinstance(value, bool):
         raise ValueError(f"config key {key} must be an integer, got: {value!r}")
-    return max(minimum, value)
+    if value < minimum:
+        raise ValueError(f"config key {key} must be >= {minimum}, got: {value!r}")
+    return value
 
 
 def _read_float(
@@ -169,12 +193,23 @@ def _require_int(raw: dict[str, Any], key: str, minimum: int = 0) -> int:
 
 def _to_fallback_models(value: Any) -> tuple[str, ...]:
     """Normalize fallback model list from TOML list/string values."""
+    if value is None:
+        return ()
     if isinstance(value, list):
-        return tuple(str(item).strip() for item in value if str(item).strip())
+        models: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                raise ValueError(
+                    f"config key fallback_models list items must be strings, got: {item!r}"
+                )
+            text = item.strip()
+            if text:
+                models.append(text)
+        return tuple(models)
     if isinstance(value, str):
         parts = [item.strip() for item in value.split(",")]
         return tuple(item for item in parts if item)
-    return ()
+    raise ValueError(f"config key fallback_models must be a string or list, got: {value!r}")
 
 
 def get_user_config_path() -> Path:
@@ -193,7 +228,7 @@ def get_global_data_dir_path() -> Path:
     """Return the effective global data root from layered TOML config."""
     toml_data, _sources = _load_layers()
     data = _ensure_dict(toml_data, "data")
-    return _expand(data.get("dir"), GLOBAL_DATA_DIR)
+    return _read_optional_path(data, "dir", GLOBAL_DATA_DIR)
 
 
 def get_user_env_path() -> Path:
@@ -321,29 +356,19 @@ class Config:
         }
 
 
-def _to_string_tuple(value: Any) -> tuple[str, ...]:
-    """Normalize a TOML list/string into a tuple of non-empty strings."""
-    if isinstance(value, list):
-        return tuple(str(item).strip() for item in value if str(item).strip())
-    if isinstance(value, str):
-        parts = [item.strip() for item in value.split(",")]
-        return tuple(item for item in parts if item)
-    return ()
-
-
 def _build_role(
 	raw: dict[str, Any], *, default_provider: str, default_model: str
 ) -> RoleConfig:
 	"""Build a role config from TOML payload."""
 	from lerim.config.providers import normalize_model_name
 
-	provider = _to_non_empty_string(raw.get("provider")) or default_provider
-	model = _to_non_empty_string(raw.get("model")) or default_model
+	provider = _read_optional_string(raw, "provider") or default_provider
+	model = _read_optional_string(raw, "model") or default_model
 	model = normalize_model_name(provider, model)
 	return RoleConfig(
 		provider=provider,
 		model=model,
-		api_base=_to_non_empty_string(raw.get("api_base")),
+		api_base=_read_optional_string(raw, "api_base"),
 		fallback_models=_to_fallback_models(raw.get("fallback_models")),
 		temperature=_read_float(raw, "temperature", default=1.0),
 		top_p=_read_float(raw, "top_p", default=0.95),
@@ -487,12 +512,13 @@ def load_config() -> Config:
     server = toml_data.get("server", {})
     roles = _ensure_dict(toml_data, "roles")
     semantic_search = _ensure_dict(toml_data, "semantic_search")
-    global_data_dir = _expand(data.get("dir"), GLOBAL_DATA_DIR)
+    global_data_dir = _read_optional_path(data, "dir", GLOBAL_DATA_DIR)
     env_path = global_data_dir / ".env"
     if env_path.is_file():
         load_dotenv(env_path)
-    context_db_path = _expand(
-        data.get("context_db_path"),
+    context_db_path = _read_optional_path(
+        data,
+        "context_db_path",
         _default_context_db_path(global_data_dir),
     )
 
@@ -510,28 +536,25 @@ def load_config() -> Config:
     agents = _parse_string_table(_ensure_dict(toml_data, "agents"), section="agents")
     projects = _parse_string_table(_ensure_dict(toml_data, "projects"), section="projects")
 
-    cloud_endpoint = (
-        _to_non_empty_string(os.environ.get("LERIM_CLOUD_ENDPOINT"))
-        or _to_non_empty_string(cloud.get("endpoint"))
-        or "https://api.lerim.dev"
-    )
-    cloud_token = (
-        _to_non_empty_string(os.environ.get("LERIM_CLOUD_TOKEN"))
-        or _to_non_empty_string(cloud.get("token"))
-        or None
-    )
+    cloud_endpoint = _to_non_empty_string(os.environ.get("LERIM_CLOUD_ENDPOINT"))
+    if not cloud_endpoint:
+        cloud_endpoint = _read_optional_string(cloud, "endpoint") or "https://api.lerim.dev"
+    cloud_token = _to_non_empty_string(os.environ.get("LERIM_CLOUD_TOKEN"))
+    if not cloud_token:
+        cloud_token = _read_optional_string(cloud, "token")
 
     return Config(
         global_data_dir=global_data_dir,
         sessions_db_path=global_data_dir / "index" / "sessions.sqlite3",
         context_db_path=context_db_path,
         platforms_path=global_data_dir / "platforms.json",
-        embedding_model_id=_to_non_empty_string(
-            semantic_search.get("embedding_model_id")
+        embedding_model_id=_read_optional_string(
+            semantic_search, "embedding_model_id"
         )
         or "mixedbread-ai/mxbai-embed-xsmall-v1",
-        embedding_cache_dir=_expand(
-            semantic_search.get("embedding_cache_dir"),
+        embedding_cache_dir=_read_optional_path(
+            semantic_search,
+            "embedding_cache_dir",
             global_data_dir / "cache" / "embeddings",
         ),
         semantic_shortlist_size=_require_int(
@@ -540,7 +563,7 @@ def load_config() -> Config:
         lexical_shortlist_size=_require_int(
             semantic_search, "lexical_shortlist_size", minimum=1
         ),
-        server_host=_to_non_empty_string(server.get("host")) or "127.0.0.1",
+        server_host=_read_optional_string(server, "host") or "127.0.0.1",
         server_port=port,
         sync_interval_minutes=_require_int(server, "sync_interval_minutes", minimum=1),
         maintain_interval_minutes=_require_int(
@@ -572,7 +595,7 @@ def load_config() -> Config:
             _ensure_dict(toml_data, "providers"), "auto_unload", default=True
         ),
         cloud_endpoint=cloud_endpoint,
-        cloud_token=cloud_token,
+        cloud_token=cloud_token or None,
         agents=agents,
         projects=projects,
     )

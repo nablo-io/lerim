@@ -323,6 +323,7 @@ class TestCmdSync:
 		assert parsed["indexed"] == 5
 		assert captured["path"] == "/api/sync"
 		assert captured["body"]["blocking"] is True
+		assert "ignore_lock" not in captured["body"]
 
 	def test_sync_success_human(self, monkeypatch: pytest.MonkeyPatch) -> None:
 		"""Sync without --json emits human-readable output."""
@@ -1005,8 +1006,8 @@ class TestDeadLetterAction:
 	def test_retry_all_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
 		"""Retry --all with no dead_letter jobs prints 'no jobs'."""
 		monkeypatch.setattr(
-			"lerim.sessions.catalog.list_queue_jobs",
-			lambda **_kw: [],
+			"lerim.sessions.catalog.retry_all_dead_letter_jobs",
+			lambda: 0,
 		)
 		monkeypatch.setattr(
 			"lerim.sessions.catalog.count_session_jobs_by_status",
@@ -1025,19 +1026,18 @@ class TestDeadLetterAction:
 		assert "no dead_letter" in buf.getvalue().lower()
 
 	def test_retry_all_with_jobs(self, monkeypatch: pytest.MonkeyPatch) -> None:
-		"""Retry --all retries each dead_letter job."""
-		dead_jobs = [{"run_id": "abc123"}, {"run_id": "def456"}]
+		"""Retry --all uses the uncapped bulk helper."""
 		monkeypatch.setattr(
 			"lerim.sessions.catalog.list_queue_jobs",
-			lambda **_kw: dead_jobs,
+			lambda **_kw: pytest.fail("--all retry should not list paginated jobs"),
 		)
 		monkeypatch.setattr(
 			"lerim.sessions.catalog.count_session_jobs_by_status",
 			lambda: {"pending": 2},
 		)
 		monkeypatch.setattr(
-			"lerim.sessions.catalog.retry_session_job",
-			lambda _id: True,
+			"lerim.sessions.catalog.retry_all_dead_letter_jobs",
+			lambda: 2,
 		)
 
 		args = _ns(command="retry", run_id=None, project=None, all=True)
@@ -1757,7 +1757,6 @@ class TestBuildParser:
 			"--no-extract",
 			"--force",
 			"--dry-run",
-			"--ignore-lock",
 		])
 		assert args.run_id == "r1"
 		assert args.agent == "claude"
@@ -1765,7 +1764,6 @@ class TestBuildParser:
 		assert args.no_extract is True
 		assert args.force is True
 		assert args.dry_run is True
-		assert args.ignore_lock is True
 
 	def test_maintain_flags(self) -> None:
 		"""Maintain parser accepts --dry-run."""

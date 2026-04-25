@@ -54,7 +54,9 @@ from lerim.sessions.catalog import (
     list_queue_jobs,
     list_unscoped_sessions,
     queue_health_snapshot,
+    retry_all_dead_letter_jobs,
     retry_session_job,
+    skip_all_dead_letter_jobs,
     skip_session_job,
 )
 
@@ -921,12 +923,18 @@ def api_skip_job(run_id: str) -> dict[str, Any]:
 
 def api_retry_all_dead_letter() -> dict[str, Any]:
     """Retry all dead_letter jobs across all projects."""
-    return _queue_bulk_action_result(result_key="retried", mutate=retry_session_job)
+    return _queue_bulk_action_result(
+        result_key="retried",
+        mutate_all=retry_all_dead_letter_jobs,
+    )
 
 
 def api_skip_all_dead_letter() -> dict[str, Any]:
     """Skip all dead_letter jobs across all projects."""
-    return _queue_bulk_action_result(result_key="skipped", mutate=skip_session_job)
+    return _queue_bulk_action_result(
+        result_key="skipped",
+        mutate_all=skip_all_dead_letter_jobs,
+    )
 
 
 def _queue_action_result(
@@ -940,14 +948,9 @@ def _queue_action_result(
     return {result_key: ok, "run_id": run_id, "queue": count_session_jobs_by_status()}
 
 
-def _queue_bulk_action_result(*, result_key: str, mutate: Any) -> dict[str, Any]:
+def _queue_bulk_action_result(*, result_key: str, mutate_all: Any) -> dict[str, Any]:
     """Apply one queue mutation to every dead-letter job."""
-    dead = list_queue_jobs(status_filter="dead_letter")
-    changed = 0
-    for job in dead:
-        rid = str(job.get("run_id") or "")
-        if rid and mutate(rid):
-            changed += 1
+    changed = int(mutate_all())
     return {result_key: changed, "queue": count_session_jobs_by_status()}
 
 

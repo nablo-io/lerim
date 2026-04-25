@@ -17,10 +17,12 @@ lerim query records count
 lerim query records list --kind decision --limit 10
 lerim query records list --valid-at 2026-04-20
 lerim query sessions list --created-since 2026-04-20 --created-until 2026-04-20
+lerim query sessions list --order-by created_at --limit 20
 ```
 
 ## Notes
 
 - `query` runs locally and does not require the Ask agent.
+- Session lists only support `created_at` ordering and return newest rows first.
 - For explanatory answers, use [lerim ask](ask.md).
 - For full argument details, check the bundled CLI reference in `src/lerim/skills/cli-reference.md` in the repo.

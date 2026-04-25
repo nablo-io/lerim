@@ -45,7 +45,7 @@ lerim sync --max-sessions 10         # limit batch size
 ```
 
 !!! info "Processing order"
-    Sessions are processed in **chronological order** (oldest-first) so that later sessions can correctly update records from earlier ones.
+    Normal backlog sync claims the **newest available session per project first** so a fresh install surfaces recent corrections quickly. Historical replay paths can still request oldest-first ordering from the catalog API when chronological reconstruction is required.
 
 ---
 

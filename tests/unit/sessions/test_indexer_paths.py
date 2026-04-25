@@ -11,6 +11,7 @@ from lerim.sessions.catalog import (
     fetch_session_doc,
     get_indexed_run_ids,
     index_session_for_fts,
+    update_session_extract_fields,
 )
 from tests.helpers import write_test_config
 
@@ -171,7 +172,7 @@ def test_index_new_sessions_marks_changed_when_known_hash_differs(
 def test_index_new_sessions_refreshes_known_unchanged_rows(
     monkeypatch, tmp_path: Path
 ) -> None:
-    """Known sessions are refreshed without being marked changed when hashes match."""
+    """Known unchanged sessions keep extraction metadata when hashes match."""
     config_path = write_test_config(tmp_path)
     monkeypatch.setenv("LERIM_CONFIG", str(config_path))
     reload_config()
@@ -182,6 +183,12 @@ def test_index_new_sessions_refreshes_known_unchanged_rows(
         content="old content",
         summaries='["old summary"]',
         content_hash="same-hash",
+    )
+    update_session_extract_fields(
+        "run-refresh",
+        summary_text="extracted durable summary",
+        tags='["durable","tag"]',
+        outcome="achieved",
     )
     observed_known_args: list[set[str] | None] = []
 
@@ -229,7 +236,9 @@ def test_index_new_sessions_refreshes_known_unchanged_rows(
     assert out[0].changed is False
     doc = fetch_session_doc("run-refresh")
     assert doc is not None
-    assert doc["summary_text"] == "new summary"
+    assert doc["summary_text"] == "extracted durable summary"
+    assert doc["tags"] == '["durable","tag"]'
+    assert doc["outcome"] == "achieved"
     assert doc["content_hash"] == "same-hash"
 
 

@@ -23,4 +23,5 @@ uv pip install -e '.[test]'
 ## Test expectation
 
 Run the relevant unit tests for your change.
-If you touch live runtime behavior, do a real `lerim up --build` verification too.
+If you touch live runtime behavior, also verify the built service path with
+`lerim up --build` before treating the change as release-ready.

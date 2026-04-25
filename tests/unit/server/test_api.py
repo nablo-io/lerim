@@ -669,30 +669,18 @@ def test_api_project_remove_not_found(monkeypatch, tmp_path) -> None:
 
 def test_api_retry_all_dead_letter(monkeypatch) -> None:
 	"""api_retry_all_dead_letter retries all dead letter jobs."""
-	dead_jobs = [
-		{"run_id": "dl-1"},
-		{"run_id": "dl-2"},
-		{"run_id": ""},  # empty run_id — skipped
-	]
-	monkeypatch.setattr(
-		api_mod, "list_queue_jobs", lambda **kw: dead_jobs
-	)
-	monkeypatch.setattr(api_mod, "retry_session_job", lambda rid: True)
+	monkeypatch.setattr(api_mod, "retry_all_dead_letter_jobs", lambda: 2)
 	monkeypatch.setattr(
 		api_mod, "count_session_jobs_by_status", lambda: {"dead_letter": 0}
 	)
 
 	result = api_retry_all_dead_letter()
-	assert result["retried"] == 2  # empty run_id skipped
+	assert result["retried"] == 2
 
 
 def test_api_skip_all_dead_letter(monkeypatch) -> None:
 	"""api_skip_all_dead_letter skips all dead letter jobs."""
-	dead_jobs = [{"run_id": "dl-1"}, {"run_id": "dl-2"}]
-	monkeypatch.setattr(
-		api_mod, "list_queue_jobs", lambda **kw: dead_jobs
-	)
-	monkeypatch.setattr(api_mod, "skip_session_job", lambda rid: True)
+	monkeypatch.setattr(api_mod, "skip_all_dead_letter_jobs", lambda: 2)
 	monkeypatch.setattr(
 		api_mod, "count_session_jobs_by_status", lambda: {"dead_letter": 0}
 	)
@@ -702,20 +690,46 @@ def test_api_skip_all_dead_letter(monkeypatch) -> None:
 
 
 def test_api_retry_all_dead_letter_partial_failure(monkeypatch) -> None:
-	"""api_retry_all_dead_letter counts only successful retries."""
-	dead_jobs = [{"run_id": "dl-1"}, {"run_id": "dl-2"}]
-	monkeypatch.setattr(
-		api_mod, "list_queue_jobs", lambda **kw: dead_jobs
-	)
-	# First succeeds, second fails
-	retries = iter([True, False])
-	monkeypatch.setattr(api_mod, "retry_session_job", lambda rid: next(retries))
+	"""api_retry_all_dead_letter reports the catalog bulk transition count."""
+	monkeypatch.setattr(api_mod, "retry_all_dead_letter_jobs", lambda: 51)
 	monkeypatch.setattr(
 		api_mod, "count_session_jobs_by_status", lambda: {"dead_letter": 1}
 	)
 
 	result = api_retry_all_dead_letter()
-	assert result["retried"] == 1
+	assert result["retried"] == 51
+
+
+def test_api_retry_all_dead_letter_does_not_page_queue(monkeypatch) -> None:
+	"""Bulk retry uses the uncapped catalog transition, not the queue listing."""
+	monkeypatch.setattr(api_mod, "retry_all_dead_letter_jobs", lambda: 55)
+	monkeypatch.setattr(
+		api_mod,
+		"list_queue_jobs",
+		lambda **kw: pytest.fail("bulk retry should not list paginated jobs"),
+	)
+	monkeypatch.setattr(
+		api_mod, "count_session_jobs_by_status", lambda: {"dead_letter": 0}
+	)
+
+	result = api_retry_all_dead_letter()
+	assert result["retried"] == 55
+
+
+def test_api_skip_all_dead_letter_does_not_page_queue(monkeypatch) -> None:
+	"""Bulk skip uses the uncapped catalog transition, not the queue listing."""
+	monkeypatch.setattr(api_mod, "skip_all_dead_letter_jobs", lambda: 55)
+	monkeypatch.setattr(
+		api_mod,
+		"list_queue_jobs",
+		lambda **kw: pytest.fail("bulk skip should not list paginated jobs"),
+	)
+	monkeypatch.setattr(
+		api_mod, "count_session_jobs_by_status", lambda: {"dead_letter": 0}
+	)
+
+	result = api_skip_all_dead_letter()
+	assert result["skipped"] == 55
 
 
 # ---------------------------------------------------------------------------

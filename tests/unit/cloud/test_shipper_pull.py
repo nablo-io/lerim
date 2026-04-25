@@ -178,6 +178,101 @@ class TestUpsertPulledRecord:
             ).fetchone()
         assert row["title"] == "Updated Title"
 
+    def test_skips_stale_cloud_payload_for_newer_local_record(
+        self, tmp_path, monkeypatch, mock_embeddings
+    ):
+        monkeypatch.setattr(
+            "lerim.config.project_scope.git_root_for",
+            lambda _p=None: tmp_path,
+        )
+        ctx_db = tmp_path / "context.sqlite3"
+        identity = resolve_project_identity(tmp_path)
+        store = ContextStore(ctx_db)
+        store.initialize()
+        store.register_project(identity)
+        store.create_record(
+            project_id=identity.project_id,
+            session_id=None,
+            record_id="cloud-rec-stale",
+            kind="fact",
+            title="Local Title",
+            body="Local body",
+            created_at="2026-04-01T00:00:00Z",
+            updated_at="2026-04-03T00:00:00Z",
+        )
+
+        result = _upsert_pulled_record(
+            context_db_path=ctx_db,
+            project_identity=identity,
+            record={
+                "record_id": "cloud-rec-stale",
+                "record_kind": "fact",
+                "title": "Stale Cloud Title",
+                "body": "Stale cloud body",
+                "status": "active",
+                "cloud_edited_at": "2026-04-02T00:00:00Z",
+            },
+        )
+
+        assert result == "permanent_drop"
+        record = store.fetch_record(
+            "cloud-rec-stale",
+            project_ids=[identity.project_id],
+            include_versions=True,
+        )
+        assert record is not None
+        assert record["title"] == "Local Title"
+        assert record["body"] == "Local body"
+        assert record["updated_at"].replace("+00:00", "Z") == "2026-04-03T00:00:00Z"
+        assert len(record["versions"]) == 1
+
+    def test_no_change_update_is_processed_without_retry(
+        self, tmp_path, monkeypatch, mock_embeddings
+    ):
+        monkeypatch.setattr(
+            "lerim.config.project_scope.git_root_for",
+            lambda _p=None: tmp_path,
+        )
+        ctx_db = tmp_path / "context.sqlite3"
+        identity = resolve_project_identity(tmp_path)
+        store = ContextStore(ctx_db)
+        store.initialize()
+        store.register_project(identity)
+        store.create_record(
+            project_id=identity.project_id,
+            session_id=None,
+            record_id="cloud-rec-same",
+            kind="fact",
+            title="Same title",
+            body="Same body",
+            created_at="2026-04-01T00:00:00Z",
+            updated_at="2026-04-01T00:00:00Z",
+        )
+
+        result = _upsert_pulled_record(
+            context_db_path=ctx_db,
+            project_identity=identity,
+            record={
+                "record_id": "cloud-rec-same",
+                "record_kind": "fact",
+                "title": "Same title",
+                "body": "Same body",
+                "status": "active",
+                "cloud_edited_at": "2026-04-02T00:00:00Z",
+            },
+        )
+
+        assert result == "permanent_drop"
+        record = store.fetch_record(
+            "cloud-rec-same",
+            project_ids=[identity.project_id],
+            include_versions=True,
+        )
+        assert record is not None
+        assert record["title"] == "Same title"
+        assert record["updated_at"].replace("+00:00", "Z") == "2026-04-01T00:00:00Z"
+        assert len(record["versions"]) == 1
+
 
 class TestPullRecords:
     """Tests for _pull_records."""
@@ -288,8 +383,58 @@ class TestPullRecords:
             ).fetchone()
         assert row is None
 
-    def test_unknown_project_does_not_advance_watermark(self, tmp_path):
-        """Unknown local projects are retryable and must not move the watermark."""
+    def test_no_change_pull_advances_watermark(self, tmp_path, mock_embeddings):
+        """Cloud rows that are already represented locally are processed."""
+        proj_dir = tmp_path / "proj"
+        proj_dir.mkdir()
+        cfg = replace(make_config(tmp_path), projects={"proj": str(proj_dir)})
+        identity = resolve_project_identity(proj_dir)
+        store = ContextStore(cfg.context_db_path)
+        store.initialize()
+        store.register_project(identity)
+        store.create_record(
+            project_id=identity.project_id,
+            session_id=None,
+            record_id="same-cloud-record",
+            kind="fact",
+            title="Same title",
+            body="Same body",
+            created_at="2026-04-01T00:00:00Z",
+            updated_at="2026-04-01T00:00:00Z",
+        )
+        state = _ShipperState(records_pulled_at="2026-03-01T00:00:00Z")
+        cloud_data = {
+            "records": [
+                {
+                    "record_id": "same-cloud-record",
+                    "record_kind": "fact",
+                    "title": "Same title",
+                    "body": "Same body",
+                    "status": "active",
+                    "project": "proj",
+                    "cloud_edited_at": "2026-04-02T00:00:00Z",
+                }
+            ]
+        }
+
+        async def mock_to_thread(fn, *args, **kwargs):
+            return cloud_data
+
+        with patch("lerim.cloud.shipper.asyncio.to_thread", side_effect=mock_to_thread):
+            pulled = asyncio.run(_pull_records("https://api.test", "tok", cfg, state))
+
+        assert pulled == 0
+        assert state.records_pulled_at == "2026-04-02T00:00:00Z"
+        record = store.fetch_record(
+            "same-cloud-record",
+            project_ids=[identity.project_id],
+            include_versions=True,
+        )
+        assert record is not None
+        assert len(record["versions"]) == 1
+
+    def test_unknown_project_advances_watermark(self, tmp_path):
+        """Unknown local projects are permanent skips and move the watermark."""
         proj_dir = tmp_path / "alpha"
         proj_dir.mkdir()
         cfg = replace(make_config(tmp_path), projects={"alpha": str(proj_dir)})
@@ -314,4 +459,47 @@ class TestPullRecords:
             pulled = asyncio.run(_pull_records("https://api.test", "tok", cfg, state))
 
         assert pulled == 0
-        assert state.records_pulled_at == "2026-03-01T00:00:00Z"
+        assert state.records_pulled_at == "2026-04-01T12:00:00Z"
+
+    def test_unknown_project_does_not_stall_later_valid_record(
+        self, tmp_path, mock_embeddings
+    ):
+        """An unknown project at T1 should not block a valid configured record at T2."""
+        alpha_dir = tmp_path / "alpha"
+        alpha_dir.mkdir()
+        cfg = replace(make_config(tmp_path), projects={"alpha": str(alpha_dir)})
+        state = _ShipperState(records_pulled_at="2026-03-01T00:00:00Z")
+        cloud_data = {
+            "records": [
+                {
+                    "record_id": "cloud-unknown-project",
+                    "record_kind": "fact",
+                    "title": "Unknown project",
+                    "body": "This should be permanently skipped.",
+                    "project": "beta",
+                    "cloud_edited_at": "2026-04-01T12:00:00Z",
+                },
+                {
+                    "record_id": "cloud-valid-project",
+                    "record_kind": "fact",
+                    "title": "Valid project",
+                    "body": "This should still be applied.",
+                    "project": "alpha",
+                    "cloud_edited_at": "2026-04-01T12:01:00Z",
+                },
+            ]
+        }
+
+        async def mock_to_thread(fn, *args, **kwargs):
+            return cloud_data
+
+        with patch("lerim.cloud.shipper.asyncio.to_thread", side_effect=mock_to_thread):
+            pulled = asyncio.run(_pull_records("https://api.test", "tok", cfg, state))
+
+        assert pulled == 1
+        assert state.records_pulled_at == "2026-04-01T12:01:00Z"
+        store = ContextStore(cfg.context_db_path)
+        identity = resolve_project_identity(alpha_dir)
+        record = store.fetch_record("cloud-valid-project", project_ids=[identity.project_id])
+        assert record is not None
+        assert record["title"] == "Valid project"

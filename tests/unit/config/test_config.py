@@ -50,7 +50,14 @@ def test_deep_merge_preserves_unset():
 def test_require_int_valid():
     """_require_int parses valid values and enforces minimum."""
     assert _require_int({"k": 42}, "k") == 42
-    assert _require_int({"k": -1}, "k", minimum=0) == 0
+
+
+def test_require_int_rejects_below_minimum():
+    """_require_int rejects values below the configured minimum."""
+    import pytest
+
+    with pytest.raises(ValueError, match="must be >= 0"):
+        _require_int({"k": -1}, "k", minimum=0)
 
 
 def test_require_int_rejects_string_values():

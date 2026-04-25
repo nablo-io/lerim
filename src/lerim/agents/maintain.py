@@ -80,11 +80,12 @@ Your job is to keep the context store healthy over time.
 - For duplicate resolution, fetch both the weaker record and the stronger record before you supersede.
 - If `list_records` reveals two active durable rows on the same topic and one appears to operationalize, concretize, or restate the same guarantee as the other, do not stop at the preview stage. Treat them as duplicate candidates and inspect them.
 - When resolving a duplicate pair, prefer changing only the weaker record. Leave the stronger record untouched unless it independently has a concrete problem you would fix even without the duplicate.
-- Before any mutation, identify the concrete problem you are fixing: duplicate, obsolete truth, routine low-value episode, report-style wording, or clearly weak/verbose record shape.
+- Before any mutation, identify the concrete problem you are fixing: duplicate, obsolete truth, routine low-value episode, or clearly weak/verbose record shape.
 - Treat an older active durable record as obsolete when a newer active durable record shows the capability, invariant, dependency, or project state changed. Fetch both records and use `supersede_record` instead of leaving both as current truth.
 - If you cannot name a concrete problem after inspection, stop without mutating the record.
 - Do not turn unrelated healthy records into cleanup targets just because they are available in the same pass.
-- After resolving one duplicate or obsolete-truth pair, prefer stopping over opportunistic cleanup of nearby healthy rows.
+- In one cleanup pass, batch-clean the concrete duplicate, obsolete-truth, routine-episode, and weak-record problems you inspect in scope.
+- Do not keep cleaning opportunistically after the concrete problems are resolved, and do not mutate nearby healthy rows just because they were visible.
 </mutation_rules>
 
 <lifecycle_rules>
@@ -113,14 +114,15 @@ Your job is to keep the context store healthy over time.
 - Rewritten durable title/body text should read as a present-tense rule or fact, not as how the session reached the rule.
 - For decision records, put the selected approach in `decision` and write `body` as the durable rule plus why/application; do not narrate the comparison or selection event.
 - Do not rewrite only the title when the body still narrates the session that produced the record.
-- Good typed fields do not make a record healthy when `title` or `body` still read like comparison notes, review notes, task recaps, or session-origin narration.
-- If a decision's `decision` and `why` are already good but its title/body are report-style, update only the weak title/body and preserve the good typed fields.
+- Good typed fields make a concise decision record reusable when they clearly state the selected approach and why.
+- If a decision's `decision` and `why` are strong, update title/body only when they are long, misleading, contradictory, or hide the durable point.
+- For concise decision records, the typed `decision` and `why` fields are canonical. Do not churn solely to remove harmless provenance wording from title/body when the durable content is clear, reusable, and non-conflicting.
 - If a fetched record is already concise, correctly typed, and reusable, leave it unchanged.
 - Do not rewrite a healthy durable record only to paraphrase wording or make a minor stylistic swap.
 - Empty optional decision fields alone are not a reason to update an otherwise healthy decision record.
-- A record is not healthy if its title or body still reads like a review, task recap, meeting note, comparison log, or other session-story narration.
+- A record is not healthy if its title or body makes the durable rule hard to reuse because it is long, misleading, contradictory, or mostly session-story narration.
 - A code-state assessment is not healthy current context when newer stored evidence contradicts it. Resolve the lifecycle first by superseding the older truth, then rewrite only if the surviving record still needs cleanup.
-- Concise report-style wording still needs rewriting into the direct reusable rule, fact, decision, constraint, preference, or reference.
+- Concise records with clear typed durable fields can be left alone when the useful rule, fact, decision, constraint, preference, or reference is already easy to recover.
 - If the only reason to change a fetched durable record is "I can phrase this a little better", do not change it.
 </rewrite_policy>
 

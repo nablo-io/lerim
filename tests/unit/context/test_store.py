@@ -23,6 +23,7 @@ from lerim.context.store import (
     SCHEMA_VERSION,
     ContextStore,
     _new_id,
+    _normalize_datetime_filter_bound,
     _normalize_optional_text,
     _parse_iso_utc,
     _utc_now,
@@ -141,6 +142,26 @@ class TestParseIsoUtc:
 
     def test_invalid_string_returns_none(self):
         assert _parse_iso_utc("not-a-date") is None
+
+
+class TestNormalizeDatetimeFilterBound:
+    def test_z_suffix_normalizes_to_utc_offset(self):
+        assert (
+            _normalize_datetime_filter_bound("2026-01-01T00:00:00Z", upper=False)
+            == "2026-01-01T00:00:00+00:00"
+        )
+
+    def test_offset_normalizes_to_utc(self):
+        assert (
+            _normalize_datetime_filter_bound("2026-01-01T03:30:00+03:00", upper=False)
+            == "2026-01-01T00:30:00+00:00"
+        )
+
+    def test_date_only_upper_expands_to_end_of_day(self):
+        assert (
+            _normalize_datetime_filter_bound("2026-01-01", upper=True)
+            == "2026-01-01T23:59:59.999999+00:00"
+        )
 
 
 class TestNewId:
@@ -280,6 +301,83 @@ class TestContextStoreInit:
                 "SELECT COUNT(*) FROM schema_meta WHERE key='schema_version'"
             ).fetchone()[0]
         assert n == 1
+
+    def test_initialize_normalizes_existing_timestamp_text_for_filters(
+        self, mock_seeded
+    ):
+        store, pid = mock_seeded
+        rec = store.create_record(
+            project_id=pid,
+            session_id="sess_test",
+            kind="fact",
+            title="Legacy timestamp fact",
+            body="Existing DB rows may have timestamps ending in Z.",
+            created_at="2026-01-01T00:00:00+00:00",
+        )
+        with store.connect() as conn:
+            conn.execute(
+                """
+                UPDATE records
+                SET created_at = ?, updated_at = ?, valid_from = ?, valid_until = ?
+                WHERE record_id = ?
+                """,
+                (
+                    "2026-01-01T00:00:00Z",
+                    "2026-01-01T03:00:00+03:00",
+                    "2026-01-01T00:00:00Z",
+                    "2026-01-02T00:00:00Z",
+                    rec["record_id"],
+                ),
+            )
+            conn.execute(
+                """
+                UPDATE record_versions
+                SET created_at = ?, updated_at = ?, valid_from = ?, valid_until = ?, changed_at = ?
+                WHERE record_id = ?
+                """,
+                (
+                    "2026-01-01T00:00:00Z",
+                    "2026-01-01T03:00:00+03:00",
+                    "2026-01-01T00:00:00Z",
+                    "2026-01-02T00:00:00Z",
+                    "2026-01-01T00:00:00Z",
+                    rec["record_id"],
+                ),
+            )
+
+        store.initialize()
+
+        result = store.query(
+            entity="records",
+            mode="list",
+            project_ids=[pid],
+            created_since="2026-01-01T00:00:00Z",
+            created_until="2026-01-01T00:00:00Z",
+            include_archived=True,
+        )
+        assert any(row["record_id"] == rec["record_id"] for row in result["rows"])
+        with store.connect() as conn:
+            row = conn.execute(
+                "SELECT created_at, updated_at, valid_from, valid_until FROM records WHERE record_id = ?",
+                (rec["record_id"],),
+            ).fetchone()
+            version = conn.execute(
+                """
+                SELECT created_at, updated_at, valid_from, valid_until, changed_at
+                FROM record_versions
+                WHERE record_id = ?
+                """,
+                (rec["record_id"],),
+            ).fetchone()
+        assert row["created_at"] == "2026-01-01T00:00:00+00:00"
+        assert row["updated_at"] == "2026-01-01T00:00:00+00:00"
+        assert row["valid_from"] == "2026-01-01T00:00:00+00:00"
+        assert row["valid_until"] == "2026-01-02T00:00:00+00:00"
+        assert version["created_at"] == "2026-01-01T00:00:00+00:00"
+        assert version["updated_at"] == "2026-01-01T00:00:00+00:00"
+        assert version["valid_from"] == "2026-01-01T00:00:00+00:00"
+        assert version["valid_until"] == "2026-01-02T00:00:00+00:00"
+        assert version["changed_at"] == "2026-01-01T00:00:00+00:00"
 
     def test_validate_schema_detects_missing_columns(self, tmp_path, mock_embeddings):
         db_path = tmp_path / "bad.db"
@@ -519,33 +617,76 @@ class TestCreateRecord:
         assert rec["status"] == "archived"
         assert rec["valid_until"] == rec["updated_at"]
 
-    def test_create_rolls_back_when_derived_write_fails(self, mock_seeded, monkeypatch):
+    def test_fts_failure_does_not_roll_back_canonical_create(
+        self, mock_seeded, monkeypatch
+    ):
         store, pid = mock_seeded
 
         def fail_fts(*_args, **_kwargs):
             raise RuntimeError("fts failed")
 
         monkeypatch.setattr(store, "_upsert_fts", fail_fts)
-        with pytest.raises(RuntimeError, match="fts failed"):
-            store.create_record(
-                project_id=pid,
-                session_id="sess_test",
-                kind="fact",
-                title="Rollback fact",
-                body="This should not partially persist.",
-            )
+        rec = store.create_record(
+            project_id=pid,
+            session_id="sess_test",
+            kind="fact",
+            title="Canonical fact",
+            body="Canonical rows should persist without FTS.",
+        )
 
         with store.connect() as conn:
             record_count = conn.execute(
                 "SELECT COUNT(*) FROM records WHERE title = ?",
-                ("Rollback fact",),
+                ("Canonical fact",),
             ).fetchone()[0]
             version_count = conn.execute(
                 "SELECT COUNT(*) FROM record_versions WHERE title = ?",
-                ("Rollback fact",),
+                ("Canonical fact",),
             ).fetchone()[0]
-        assert record_count == 0
-        assert version_count == 0
+        assert rec["title"] == "Canonical fact"
+        assert record_count == 1
+        assert version_count == 1
+
+    def test_embedding_failure_does_not_roll_back_canonical_create(
+        self, mock_seeded, monkeypatch
+    ):
+        store, pid = mock_seeded
+
+        def fail_embedding(*_args, **_kwargs):
+            raise RuntimeError("embedding failed")
+
+        monkeypatch.setattr(store, "_upsert_embedding", fail_embedding)
+
+        rec = store.create_record(
+            project_id=pid,
+            session_id="sess_test",
+            kind="fact",
+            title="Canonical fact",
+            body="Canonical rows should persist without embeddings.",
+        )
+
+        fetched = store.fetch_record(rec["record_id"], project_ids=[pid], include_versions=True)
+        assert fetched is not None
+        assert fetched["title"] == "Canonical fact"
+        assert len(fetched["versions"]) == 1
+
+    def test_create_normalizes_stored_timestamps_to_utc(self, mock_seeded):
+        store, pid = mock_seeded
+        rec = store.create_record(
+            project_id=pid,
+            session_id="sess_test",
+            kind="fact",
+            title="Timestamp fact",
+            body="Stored timestamps should use one UTC ISO representation.",
+            created_at="2026-01-01T00:00:00Z",
+            updated_at="2026-01-01T03:00:00+03:00",
+            valid_from="2026-01-01T04:30:00+03:00",
+            valid_until="2026-01-01T03:00:00Z",
+        )
+        assert rec["created_at"] == "2026-01-01T00:00:00+00:00"
+        assert rec["updated_at"] == "2026-01-01T00:00:00+00:00"
+        assert rec["valid_from"] == "2026-01-01T01:30:00+00:00"
+        assert rec["valid_until"] == "2026-01-01T03:00:00+00:00"
 
     def test_invalid_kind(self, mock_seeded):
         store, pid = mock_seeded
@@ -814,6 +955,21 @@ class TestUpdateRecord:
                 changes={"title": "X"},
             )
 
+    def test_empty_project_ids_fail_closed(self, mock_seeded):
+        store, pid = mock_seeded
+        rec = _make_decision(store, pid)
+        with pytest.raises(ValueError, match="record_out_of_scope"):
+            store.update_record(
+                record_id=rec["record_id"],
+                session_id=None,
+                project_ids=[],
+                changes={"title": "Blocked title"},
+            )
+        fetched = store.fetch_record(rec["record_id"], project_ids=[pid], include_versions=True)
+        assert fetched is not None
+        assert fetched["title"] == rec["title"]
+        assert len(fetched["versions"]) == 1
+
     def test_none_project_ids_skips_scope_check(self, mock_seeded):
         store, pid = mock_seeded
         rec = _make_decision(store, pid)
@@ -838,7 +994,38 @@ class TestUpdateRecord:
         v2 = [v for v in updated["versions"] if v["version_no"] == 2][0]
         assert v2["change_reason"] == "correcting typo"
 
-    def test_update_rolls_back_when_derived_write_fails(self, mock_seeded, monkeypatch):
+    def test_empty_changes_raise_no_changes(self, mock_seeded):
+        store, pid = mock_seeded
+        rec = _make_decision(store, pid)
+        with pytest.raises(ValueError, match="no_changes"):
+            store.update_record(
+                record_id=rec["record_id"],
+                session_id="sess_test",
+                project_ids=[pid],
+                changes={},
+            )
+        fetched = store.fetch_record(rec["record_id"], project_ids=[pid], include_versions=True)
+        assert fetched is not None
+        assert len(fetched["versions"]) == 1
+
+    def test_effectively_unchanged_fields_raise_no_changes(self, mock_seeded):
+        store, pid = mock_seeded
+        rec = _make_decision(store, pid)
+        with pytest.raises(ValueError, match="no_changes"):
+            store.update_record(
+                record_id=rec["record_id"],
+                session_id="sess_test",
+                project_ids=[pid],
+                changes={"title": rec["title"], "updated_at": "2026-02-01T00:00:00Z"},
+            )
+        fetched = store.fetch_record(rec["record_id"], project_ids=[pid], include_versions=True)
+        assert fetched is not None
+        assert fetched["updated_at"] == rec["updated_at"]
+        assert len(fetched["versions"]) == 1
+
+    def test_fts_failure_does_not_roll_back_canonical_update(
+        self, mock_seeded, monkeypatch
+    ):
         store, pid = mock_seeded
         rec = _make_decision(store, pid)
 
@@ -846,18 +1033,42 @@ class TestUpdateRecord:
             raise RuntimeError("fts failed")
 
         monkeypatch.setattr(store, "_upsert_fts", fail_fts)
-        with pytest.raises(RuntimeError, match="fts failed"):
-            store.update_record(
-                record_id=rec["record_id"],
-                session_id="sess_test",
-                project_ids=[pid],
-                changes={"title": "Rolled back title"},
-            )
+        updated = store.update_record(
+            record_id=rec["record_id"],
+            session_id="sess_test",
+            project_ids=[pid],
+            changes={"title": "Canonical FTS-independent title"},
+        )
 
         fetched = store.fetch_record(rec["record_id"], project_ids=[pid], include_versions=True)
+        assert updated["title"] == "Canonical FTS-independent title"
         assert fetched is not None
-        assert fetched["title"] == rec["title"]
-        assert len(fetched["versions"]) == 1
+        assert fetched["title"] == "Canonical FTS-independent title"
+        assert len(fetched["versions"]) == 2
+
+    def test_embedding_failure_does_not_roll_back_canonical_update(
+        self, mock_seeded, monkeypatch
+    ):
+        store, pid = mock_seeded
+        rec = _make_decision(store, pid)
+
+        def fail_embedding(*_args, **_kwargs):
+            raise RuntimeError("embedding failed")
+
+        monkeypatch.setattr(store, "_upsert_embedding", fail_embedding)
+
+        updated = store.update_record(
+            record_id=rec["record_id"],
+            session_id="sess_test",
+            project_ids=[pid],
+            changes={"title": "Canonical update"},
+        )
+
+        fetched = store.fetch_record(rec["record_id"], project_ids=[pid], include_versions=True)
+        assert updated["title"] == "Canonical update"
+        assert fetched is not None
+        assert fetched["title"] == "Canonical update"
+        assert len(fetched["versions"]) == 2
 
 
 class TestArchiveRecord:
@@ -912,6 +1123,20 @@ class TestArchiveRecord:
                 session_id=None,
                 project_ids=[pid],
             )
+
+    def test_empty_project_ids_fail_closed(self, mock_seeded):
+        store, pid = mock_seeded
+        rec = _make_episode(store, pid)
+        with pytest.raises(ValueError, match="record_out_of_scope"):
+            store.archive_record(
+                record_id=rec["record_id"],
+                session_id=None,
+                project_ids=[],
+            )
+        fetched = store.fetch_record(rec["record_id"], project_ids=[pid], include_versions=True)
+        assert fetched is not None
+        assert fetched["status"] == "active"
+        assert len(fetched["versions"]) == 1
 
     def test_old_record_archives_ok(self, mock_seeded):
         store, pid = mock_seeded
@@ -969,6 +1194,28 @@ class TestSupersedeRecord:
                 project_ids=[pid],
                 replacement_record_id="rec_ghost",
             )
+
+    def test_empty_project_ids_fail_closed(self, mock_seeded):
+        store, pid = mock_seeded
+        old = _make_decision(store, pid)
+        replacement = store.create_record(
+            project_id=pid,
+            session_id="sess_test",
+            kind="fact",
+            title="Replacement fact",
+            body="Replacement body.",
+        )
+        with pytest.raises(ValueError, match="record_out_of_scope"):
+            store.supersede_record(
+                record_id=old["record_id"],
+                session_id=None,
+                project_ids=[],
+                replacement_record_id=replacement["record_id"],
+            )
+        fetched = store.fetch_record(old["record_id"], project_ids=[pid], include_versions=True)
+        assert fetched is not None
+        assert fetched["superseded_by_record_id"] is None
+        assert len(fetched["versions"]) == 1
 
 
 class TestFetchRecord:
@@ -1050,6 +1297,17 @@ class TestQuery:
         with pytest.raises(ValueError, match="invalid_query_order"):
             store.query(
                 entity="records", mode="list", project_ids=[pid], order_by="bad"
+            )
+
+    @pytest.mark.parametrize("order_by", ["updated_at", "valid_from"])
+    def test_sessions_reject_non_created_at_order(self, mock_seeded, order_by):
+        store, pid = mock_seeded
+        with pytest.raises(ValueError, match="invalid_query_order:sessions"):
+            store.query(
+                entity="sessions",
+                mode="list",
+                project_ids=[pid],
+                order_by=order_by,
             )
 
     def test_sessions_list(self, mock_seeded):
@@ -1280,6 +1538,79 @@ class TestQuery:
         )
         row_ids = {row["record_id"] for row in result["rows"]}
         assert record["record_id"] in row_ids
+
+    def test_valid_at_includes_archived_rows_without_include_archived(self, mock_seeded):
+        store, pid = mock_seeded
+        record = store.create_record(
+            project_id=pid,
+            session_id="sess_test",
+            record_id="rec_archived_history",
+            kind="fact",
+            status="archived",
+            title="Archived history",
+            body="This archived fact was true during its validity interval.",
+            valid_from="2026-01-01T00:00:00Z",
+            valid_until="2026-02-01T00:00:00Z",
+        )
+        result = store.query(
+            entity="records",
+            mode="list",
+            project_ids=[pid],
+            valid_at="2026-01-15T02:00:00+02:00",
+        )
+        assert any(row["record_id"] == record["record_id"] for row in result["rows"])
+
+    def test_valid_at_includes_superseded_historical_rows(self, mock_seeded):
+        store, pid = mock_seeded
+        old = store.create_record(
+            project_id=pid,
+            session_id="sess_test",
+            record_id="rec_superseded_history",
+            kind="fact",
+            title="Old provider fact",
+            body="This fact was true before the replacement.",
+            valid_from="2026-01-01T00:00:00Z",
+        )
+        replacement = store.create_record(
+            project_id=pid,
+            session_id="sess_test",
+            kind="fact",
+            title="New provider fact",
+            body="This fact replaced the old one.",
+        )
+        store.supersede_record(
+            record_id=old["record_id"],
+            session_id=None,
+            project_ids=[pid],
+            replacement_record_id=replacement["record_id"],
+            valid_until="2026-02-01T00:00:00Z",
+        )
+        result = store.query(
+            entity="records",
+            mode="list",
+            project_ids=[pid],
+            valid_at="2026-01-15T00:00:00Z",
+        )
+        assert any(row["record_id"] == old["record_id"] for row in result["rows"])
+
+    def test_offset_created_filter_matches_normalized_stored_timestamps(self, mock_seeded):
+        store, pid = mock_seeded
+        record = store.create_record(
+            project_id=pid,
+            session_id="sess_test",
+            kind="fact",
+            title="Offset filter fact",
+            body="Offset filters should compare against normalized UTC text.",
+            created_at="2026-01-01T03:00:00+03:00",
+        )
+        result = store.query(
+            entity="records",
+            mode="list",
+            project_ids=[pid],
+            created_since="2026-01-01T00:00:00Z",
+            created_until="2026-01-01T02:00:00+02:00",
+        )
+        assert any(row["record_id"] == record["record_id"] for row in result["rows"])
 
 
 class TestNormalizeRecordPayload:
