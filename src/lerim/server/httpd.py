@@ -44,8 +44,6 @@ from lerim.server.api import (
 from lerim.config.settings import (
     Config,
     get_config,
-    get_config_sources,
-    get_user_config_path,
     save_config_patch,
 )
 
@@ -456,14 +454,10 @@ def _serialize_full_config(config: Config) -> dict[str, Any]:
 
     def _role_dict(role: Any) -> dict[str, Any]:
         """Convert RoleConfig to a dict."""
-        base: dict[str, Any] = {
+        return {
             "provider": role.provider,
             "model": role.model,
-            "api_base": getattr(role, "api_base", ""),
         }
-        if hasattr(role, "fallback_models"):
-            base["fallback_models"] = list(role.fallback_models)
-        return base
 
     return {
         "server": {
@@ -474,16 +468,21 @@ def _serialize_full_config(config: Config) -> dict[str, Any]:
             "sync_window_days": config.sync_window_days,
             "sync_max_sessions": config.sync_max_sessions,
         },
-        "data": {
-            "dir": str(config.global_data_dir),
-            "context_db_path": str(config.context_db_path),
-            "sessions_db_path": str(config.sessions_db_path),
+        "embedding": {
+            "model_id": config.embedding_model_id,
+            "semantic_shortlist_size": config.semantic_shortlist_size,
+            "lexical_shortlist_size": config.lexical_shortlist_size,
         },
         "roles": {
             "agent": _role_dict(config.agent_role),
         },
         "mlflow_enabled": config.mlflow_enabled,
-        "global_data_dir": str(config.global_data_dir),
+        "auto_unload": config.auto_unload,
+        "cloud_authenticated": config.cloud_token is not None,
+        "connections": {
+            "agents": sorted(config.agents),
+            "projects": sorted(config.projects),
+        },
     }
 
 
@@ -792,8 +791,6 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
         config = get_config()
         payload = {
             "effective": _serialize_full_config(config),
-            "sources": get_config_sources(),
-            "user_config_path": str(get_user_config_path()),
             "read_only": False,
         }
         self._json(payload)
@@ -816,7 +813,10 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
         if path == "/api/jobs/queue":
             status_f = _query_param(query, "status") or None
             project_f = _query_param(query, "project") or None
-            self._json(api_queue_jobs(status=status_f, project=project_f))
+            try:
+                self._json(api_queue_jobs(status=status_f, project=project_f))
+            except ValueError as exc:
+                self._error(HTTPStatus.BAD_REQUEST, str(exc))
             return
         if path == "/api/status":
             scope = _query_param(query, "scope", "all")
@@ -874,8 +874,6 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
             self._json(
                 {
                     "effective": updated,
-                    "sources": get_config_sources(),
-                    "user_config_path": str(get_user_config_path()),
                 }
             )
         except Exception as exc:
@@ -972,7 +970,7 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
 
             sync_kwargs = {
                 "agent": body.get("agent"),
-                "window": body.get("window", "7d"),
+                "window": body.get("window") or None,
                 "since": body.get("since"),
                 "until": body.get("until"),
                 "max_sessions": body.get("max_sessions"),

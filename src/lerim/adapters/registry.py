@@ -29,7 +29,7 @@ def get_adapter(name: str):
     return importlib.import_module(module_path)
 
 
-def _default_path_for(name: str) -> Path | None:
+def default_path_for(name: str) -> Path | None:
     """Return adapter default traces path for a platform."""
     adapter = get_adapter(name)
     if not adapter:
@@ -76,7 +76,7 @@ def auto_seed(path: Path) -> dict[str, Any]:
 
     data: dict[str, Any] = {"platforms": {}}
     for name in _AUTO_SEED_PLATFORMS:
-        default = _default_path_for(name)
+        default = default_path_for(name)
         if default and default.exists():
             data["platforms"][name] = {
                 "path": str(default),
@@ -96,7 +96,7 @@ def connect_platform(
     if custom_path:
         resolved = Path(custom_path).expanduser().resolve()
     else:
-        resolved = _default_path_for(name)
+        resolved = default_path_for(name)
         if resolved is None:
             return {
                 "name": name,

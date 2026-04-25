@@ -36,7 +36,7 @@ from lerim.server.api import (
     api_down,
     detect_agents,
     docker_available,
-    is_container_running,
+    is_docker_container_running,
     parse_duration_to_seconds,
     write_init_config,
 )
@@ -45,10 +45,17 @@ from lerim.server.daemon import (
     run_sync_once,
     resolve_window_bounds,
 )
+from lerim.server.cli_api_client import (
+    ApiClientError,
+    api_get as _api_client_get,
+    api_post as _api_client_post,
+)
+from lerim.config.providers import PROVIDER_SETUP_CHOICES
 from lerim.config.logging import configure_logging
 from lerim.cloud.auth import cmd_auth, cmd_auth_logout, cmd_auth_status
 from lerim.config.settings import get_config, get_user_config_path, get_user_env_path
 from lerim.config.tracing import configure_tracing
+from lerim.context.query_spec import QUERY_ENTITIES, QUERY_MODES, QUERY_ORDER_FIELDS
 
 
 def _emit(message: object = "", *, file: Any | None = None) -> None:
@@ -67,12 +74,14 @@ def _emit_structured(*, title: str, payload: dict[str, Any], as_json: bool) -> N
         _emit(f"- {key}: {value}")
 
 
-def _not_running() -> int:
-    """Print an error that the Lerim server is not reachable and return exit 1."""
-    _emit(
-        "Lerim is not running. Start with: lerim up (Docker) or lerim serve (direct)",
-        file=sys.stderr,
-    )
+def _api_request_failed(error: ApiClientError) -> int:
+    """Print an API client failure and return exit 1."""
+    _emit(error.message, file=sys.stderr)
+    if error.kind == "unreachable":
+        _emit(
+            "Start with: lerim up (Docker) or lerim serve (direct)",
+            file=sys.stderr,
+        )
     return 1
 
 
@@ -92,33 +101,16 @@ def _wait_for_ready(port: int, timeout: int = 30) -> bool:
 	return False
 
 
-def _api_get(path: str) -> dict[str, Any] | None:
-    """GET from the running Lerim server. Returns None if not reachable."""
+def _api_get(path: str) -> dict[str, Any]:
+    """GET from the running Lerim server or raise a classified failure."""
     config = get_config()
-    url = f"http://localhost:{config.server_port}{path}"
-    try:
-        req = urllib.request.Request(url, method="GET")
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read().decode())
-    except (urllib.error.URLError, OSError, json.JSONDecodeError):
-        return None
+    return _api_client_get(path, server_port=config.server_port)
 
 
-def _api_post(path: str, body: dict[str, Any]) -> dict[str, Any] | None:
-    """POST JSON to the running Lerim server. Returns None if not reachable."""
+def _api_post(path: str, body: dict[str, Any]) -> dict[str, Any]:
+    """POST JSON to the running Lerim server or raise a classified failure."""
     config = get_config()
-    url = f"http://localhost:{config.server_port}{path}"
-    try:
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(body).encode(),
-            method="POST",
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=300) as resp:
-            return json.loads(resp.read().decode())
-    except (urllib.error.URLError, OSError, json.JSONDecodeError):
-        return None
+    return _api_client_post(path, body, server_port=config.server_port)
 
 
 def _hoist_global_json_flag(raw: list[str]) -> list[str]:
@@ -154,7 +146,7 @@ def _cmd_connect(args: argparse.Namespace) -> int:
             if result.get("status") == "connected":
                 connected += 1
         _emit(f"Auto connected: {connected}")
-        if connected > 0 and is_container_running():
+        if connected > 0 and is_docker_container_running():
             _emit("Restarting Lerim to mount connected platform paths...")
             api_up()
             _emit("Done.")
@@ -167,7 +159,7 @@ def _cmd_connect(args: argparse.Namespace) -> int:
             return 2
         removed = remove_platform(platforms_path, name)
         _emit(f"Removed: {name}" if removed else f"Platform not connected: {name}")
-        if removed and is_container_running():
+        if removed and is_docker_container_running():
             _emit("Restarting Lerim...")
             api_up()
             _emit("Done.")
@@ -197,7 +189,7 @@ def _cmd_connect(args: argparse.Namespace) -> int:
     _emit(f"- Sessions: {result.get('session_count')}")
     if existing_path and existing_path == result.get("path"):
         _emit("- Path unchanged, no initial reindex trigger.")
-    elif is_container_running():
+    elif is_docker_container_running():
         _emit("Restarting Lerim to mount connected platform path...")
         api_up()
         _emit("Done.")
@@ -218,9 +210,10 @@ def _cmd_sync(args: argparse.Namespace) -> int:
         "dry_run": getattr(args, "dry_run", False),
         "blocking": True,
     }
-    data = _api_post("/api/sync", body)
-    if data is None:
-        return _not_running()
+    try:
+        data = _api_post("/api/sync", body)
+    except ApiClientError as error:
+        return _api_request_failed(error)
     _emit_structured(title="Sync:", payload=data, as_json=args.json)
     if not args.json:
         queue_health = data.get("queue_health") or {}
@@ -238,9 +231,10 @@ def _cmd_maintain(args: argparse.Namespace) -> int:
         "dry_run": getattr(args, "dry_run", False),
         "blocking": True,
     }
-    data = _api_post("/api/maintain", body)
-    if data is None:
-        return _not_running()
+    try:
+        data = _api_post("/api/maintain", body)
+    except ApiClientError as error:
+        return _api_request_failed(error)
     _emit_structured(title="Maintain:", payload=data, as_json=args.json)
     if not args.json:
         queue_health = data.get("queue_health") or {}
@@ -327,9 +321,10 @@ def _cmd_ask(args: argparse.Namespace) -> int:
     project = getattr(args, "project", None)
     if project:
         payload["project"] = str(project)
-    data = _api_post("/api/ask", payload)
-    if data is None:
-        return _not_running()
+    try:
+        data = _api_post("/api/ask", payload)
+    except ApiClientError as error:
+        return _api_request_failed(error)
     if data.get("error"):
         _emit(data.get("answer", "Error"), file=sys.stderr)
         return 1
@@ -499,9 +494,10 @@ def _cmd_queue(args: argparse.Namespace) -> int:
 def _cmd_unscoped(args: argparse.Namespace) -> int:
 	"""Show indexed sessions that are currently unscoped (no project match)."""
 	query_path = f"/api/unscoped?limit={max(1, int(args.limit))}"
-	data = _api_get(query_path)
-	if data is None:
-		return _not_running()
+	try:
+		data = _api_get(query_path)
+	except ApiClientError as error:
+		return _api_request_failed(error)
 	items = data.get("items") or []
 	if args.json:
 		_emit(json.dumps(data, indent=2, ensure_ascii=True))
@@ -536,23 +532,25 @@ def _cmd_status_live(args: argparse.Namespace) -> int:
 	if project:
 		query += f"&project={urllib.parse.quote(str(project))}"
 
-	def _fetch() -> dict[str, Any] | None:
+	def _fetch() -> dict[str, Any]:
 		return _api_get(query)
 
 	if args.json:
-		payload = _fetch()
-		if payload is None:
-			return _not_running()
+		try:
+			payload = _fetch()
+		except ApiClientError as error:
+			return _api_request_failed(error)
 		_emit(json.dumps(payload, indent=2, ensure_ascii=True))
 		return 0
 
 	try:
 		with Live(refresh_per_second=4, screen=False) as live:
 			while True:
-				payload = _fetch()
-				if payload is None:
+				try:
+					payload = _fetch()
+				except ApiClientError as error:
 					live.stop()
-					return _not_running()
+					return _api_request_failed(error)
 				refreshed_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
 				live.update(render_status_output(payload, refreshed_at=refreshed_at))
 				time.sleep(interval)
@@ -664,9 +662,10 @@ def _cmd_status(args: argparse.Namespace) -> int:
 	project = getattr(args, "project", None)
 	if project:
 		query += f"&project={urllib.parse.quote(str(project))}"
-	data = _api_get(query)
-	if data is None:
-		return _not_running()
+	try:
+		data = _api_get(query)
+	except ApiClientError as error:
+		return _api_request_failed(error)
 	if data.get("error"):
 		if args.json:
 			_emit(json.dumps(data, indent=2, ensure_ascii=True))
@@ -683,17 +682,6 @@ def _cmd_status(args: argparse.Namespace) -> int:
 		refreshed_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
 		Console().print(render_status_output(data, refreshed_at=refreshed_at))
 	return 0
-
-
-_PROVIDERS = [
-    ("opencode_go", "OPENCODE_API_KEY", "OpenCode Go", "Free tier available — opencode.ai"),
-    ("openrouter", "OPENROUTER_API_KEY", "OpenRouter", "Access 100+ models — openrouter.ai"),
-    ("openai", "OPENAI_API_KEY", "OpenAI", "GPT models — platform.openai.com"),
-    ("minimax", "MINIMAX_API_KEY", "MiniMax", "MiniMax models — minimax.io"),
-    ("zai", "ZAI_API_KEY", "Z.AI", "GLM models — z.ai"),
-    ("anthropic", "ANTHROPIC_API_KEY", "Anthropic", "Claude models — anthropic.com"),
-    ("ollama", "", "Ollama", "Local models — no API key needed"),
-]
 
 
 def _setup_api_keys() -> None:
@@ -717,9 +705,10 @@ def _setup_api_keys() -> None:
     _emit("")
     _emit("  Available providers:")
     _emit("")
-    for i, (pid, env_var, name, desc) in enumerate(_PROVIDERS, 1):
+    for i, provider in enumerate(PROVIDER_SETUP_CHOICES, 1):
+        env_var = provider.api_key_env
         has_key = "✓" if existing.get(env_var) else " "
-        _emit(f"  [{has_key}] {i}. {name:<14} {desc}")
+        _emit(f"  [{has_key}] {i}. {provider.display_name:<14} {provider.description}")
     _emit("")
 
     answer = input("  Enter provider numbers (comma-separated, e.g. 1,3) or press Enter to skip: ").strip()
@@ -740,9 +729,11 @@ def _setup_api_keys() -> None:
 
     _emit("")
     for idx in indices:
-        if idx < 0 or idx >= len(_PROVIDERS):
+        if idx < 0 or idx >= len(PROVIDER_SETUP_CHOICES):
             continue
-        pid, env_var, name, desc = _PROVIDERS[idx]
+        provider = PROVIDER_SETUP_CHOICES[idx]
+        env_var = provider.api_key_env
+        name = provider.display_name
         if not env_var:
             _emit(f"  {name}: no API key needed (local provider)")
             continue
@@ -857,7 +848,7 @@ def _cmd_project(args: argparse.Namespace) -> int:
             return 1
         _emit(f'Added project "{result["name"]}" ({result["path"]})')
         # Restart container if running
-        if is_container_running():
+        if is_docker_container_running():
             _emit("Restarting Lerim to mount new project...")
             api_up()
             _emit("Done.")
@@ -873,7 +864,7 @@ def _cmd_project(args: argparse.Namespace) -> int:
             _emit(result["error"], file=sys.stderr)
             return 1
         _emit(f'Removed project "{name}"')
-        if is_container_running():
+        if is_docker_container_running():
             _emit("Restarting Lerim...")
             api_up()
             _emit("Done.")
@@ -1458,8 +1449,8 @@ def build_parser() -> argparse.ArgumentParser:
             "Example: lerim query records list --kind decision --limit 10"
         ),
     )
-    query.add_argument("entity", choices=["records", "versions", "sessions"])
-    query.add_argument("mode", choices=["list", "count"])
+    query.add_argument("entity", choices=QUERY_ENTITIES)
+    query.add_argument("mode", choices=QUERY_MODES)
     query.add_argument("--scope", choices=["all", "project"], default="all")
     query.add_argument("--project", help="Project name/path when --scope=project.")
     query.add_argument("--kind")
@@ -1470,7 +1461,7 @@ def build_parser() -> argparse.ArgumentParser:
     query.add_argument("--updated-since")
     query.add_argument("--updated-until")
     query.add_argument("--valid-at")
-    query.add_argument("--order-by", choices=["created_at", "updated_at", "valid_from"], default="created_at")
+    query.add_argument("--order-by", choices=QUERY_ORDER_FIELDS, default="created_at")
     query.add_argument("--limit", type=int, default=20)
     query.add_argument("--offset", type=int, default=0)
     query.add_argument("--include-total", action="store_true")
