@@ -592,6 +592,11 @@ def _sync_metrics_from_details(details: dict[str, Any]) -> dict[str, Any]:
     return sync_metrics if isinstance(sync_metrics, dict) else {}
 
 
+def _public_error_message(raw: Any) -> str:
+    """Return a public-safe error marker without internal paths or provider details."""
+    return "Error details hidden" if str(raw or "").strip() else ""
+
+
 def _normalize_activity_item(run: dict[str, Any]) -> dict[str, Any]:
     """Normalize one service_run row into status activity item."""
     details = run.get("details") if isinstance(run.get("details"), dict) else {}
@@ -616,7 +621,7 @@ def _normalize_activity_item(run: dict[str, Any]) -> dict[str, Any]:
         "duration_ms": _duration_ms_from_run(run),
         "projects": project_names,
         "project_label": project_label,
-        "error": str(details.get("error") or ""),
+        "error": _public_error_message(details.get("error")),
     }
 
     if op_type == "maintain":
@@ -709,7 +714,7 @@ def _normalize_latest_run(run: dict[str, Any] | None) -> dict[str, Any] | None:
     details_payload: dict[str, Any] = {
         "projects": normalized.get("projects") or [],
         "project_label": normalized.get("project_label") or "",
-        "error": str(details.get("error") or ""),
+        "error": _public_error_message(details.get("error")),
     }
     if str(run.get("job_type") or "") == "maintain":
         details_payload["maintain_counts"] = normalized.get("maintain_counts") or {}
@@ -787,6 +792,26 @@ def _running_activity_rows(
     return items
 
 
+def _public_platforms(platforms: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return platform metadata without local agent paths."""
+    output: list[dict[str, Any]] = []
+    for item in platforms:
+        public_item: dict[str, Any] = {
+            "name": str(item.get("name") or ""),
+            "connected_at": item.get("connected_at") or "",
+            "session_count": int(item.get("session_count") or 0),
+            "exists": bool(item.get("exists")),
+        }
+        status = str(item.get("status") or "").strip()
+        if status:
+            public_item["status"] = status
+        validation = item.get("validation")
+        if isinstance(validation, dict):
+            public_item["validation"] = {"ok": bool(validation.get("ok"))}
+        output.append(public_item)
+    return output
+
+
 def api_status(
     *,
     scope: str = "all",
@@ -822,14 +847,13 @@ def api_status(
         projects_payload.append(
             {
                 "name": name,
-                "path": str(path),
                 "project_id": resolve_project_identity(path).project_id,
                 "record_count": record_count,
                 "indexed_sessions_count": indexed_sessions_count,
                 "latest_session_start_time": latest_session_start_time,
                 "queue": queue_counts,
                 "oldest_blocked_run_id": blocked_run_id,
-                "last_error": last_error,
+                "last_error": _public_error_message(last_error),
             }
         )
     if not projects_payload and normalized_scope == "all":
@@ -849,7 +873,7 @@ def api_status(
 
     selected_project_names = {name for name, _ in selected_projects}
 
-    platforms = list_platforms(config.platforms_path)
+    platforms = _public_platforms(list_platforms(config.platforms_path))
     recent_activity = (
         _running_activity_rows(selected_projects=selected_projects)
         + _recent_activity(
@@ -884,20 +908,22 @@ def api_status(
         "recent_activity": recent_activity,
     }
     if selection_error:
-        payload["error"] = selection_error
+        payload["error"] = _public_error_message(selection_error)
     return payload
 
 
 def api_connect_list() -> list[dict[str, Any]]:
     """Return list of connected platforms."""
     config = get_config()
-    return list_platforms(config.platforms_path)
+    return _public_platforms(list_platforms(config.platforms_path))
 
 
 def api_connect(platform: str, path: str | None = None) -> dict[str, Any]:
     """Connect a platform and return result."""
     config = get_config()
-    return connect_platform(config.platforms_path, platform, custom_path=path)
+    result = connect_platform(config.platforms_path, platform, custom_path=path)
+    public = _public_platforms([result])
+    return public[0] if public else {"name": platform, "status": "unknown_platform"}
 
 
 # ── Job queue management ─────────────────────────────────────────────
@@ -995,19 +1021,20 @@ def api_unscoped(*, limit: int = 50) -> dict[str, Any]:
 # ── Project management ───────────────────────────────────────────────
 
 
-def api_project_list() -> list[dict[str, Any]]:
+def api_project_list(*, include_paths: bool = True) -> list[dict[str, Any]]:
     """Return registered projects from config."""
     config = get_config()
     result: list[dict[str, Any]] = []
     for name, path_str in config.projects.items():
         resolved = Path(path_str).expanduser().resolve()
-        result.append(
-            {
-                "name": name,
-                "path": str(resolved),
-                "exists": resolved.exists(),
-            }
-        )
+        item: dict[str, Any] = {
+            "name": name,
+            "project_id": resolve_project_identity(resolved).project_id,
+            "exists": resolved.exists(),
+        }
+        if include_paths:
+            item["path"] = str(resolved)
+        result.append(item)
     return result
 
 
@@ -1021,11 +1048,12 @@ def _project_config_name(resolved: Path, existing_projects: dict[str, str]) -> s
     return f"{base_name}-{suffix}"
 
 
-def api_project_add(path_str: str) -> dict[str, Any]:
+def api_project_add(path_str: str, *, include_paths: bool = True) -> dict[str, Any]:
     """Register a project directory and return status."""
     resolved = Path(path_str).expanduser().resolve()
     if not resolved.is_dir():
-        return {"error": f"Not a directory: {resolved}", "name": None}
+        message = f"Not a directory: {resolved}" if include_paths else "Not a directory"
+        return {"error": message, "name": None}
 
     config = get_config()
     name = _project_config_name(resolved, config.projects or {})
@@ -1036,12 +1064,14 @@ def api_project_add(path_str: str) -> dict[str, Any]:
     identity = resolve_project_identity(resolved)
     store.register_project(identity)
 
-    return {
+    payload: dict[str, Any] = {
         "name": name,
-        "path": str(resolved),
         "project_id": identity.project_id,
-        "context_db_path": str(config.context_db_path),
     }
+    if include_paths:
+        payload["path"] = str(resolved)
+        payload["context_db_path"] = str(config.context_db_path)
+    return payload
 
 
 def api_project_remove(name: str) -> dict[str, Any]:

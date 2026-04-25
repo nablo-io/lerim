@@ -16,7 +16,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import sqlite_vec
 
@@ -27,12 +27,15 @@ from lerim.context.query_spec import (
     QUERY_MODES as QUERY_MODES,
     QUERY_ORDER_FIELDS as QUERY_ORDER_FIELDS,
 )
-from lerim.context.retrieval import SearchHit, search_records
+import lerim.context.retrieval as retrieval
 from lerim.context.spec import (
     ALLOWED_CHANGE_KINDS,
     normalize_record_payload,
     record_search_text,
 )
+
+if TYPE_CHECKING:
+    from lerim.context.retrieval import SearchHit
 
 SCHEMA_VERSION = "2"
 LOGGER = logging.getLogger(__name__)
@@ -863,7 +866,7 @@ class ContextStore:
     ) -> list[SearchHit]:
         """Run hybrid retrieval over records."""
         self.initialize()
-        return search_records(
+        return retrieval.search_records(
             self,
             project_ids=project_ids,
             query=query,
@@ -907,16 +910,31 @@ class ContextStore:
                 conn.execute(
                     f"""
                     SELECT COUNT(*)
-                    FROM records AS r
-                    LEFT JOIN records_fts AS f ON f.record_id = r.record_id
-                    WHERE (
-                        f.record_id IS NULL
-                        OR f.updated_at IS NULL
-                        OR f.updated_at != r.updated_at
+                    FROM (
+                        SELECT f.record_id
+                        FROM records AS r
+                        LEFT JOIN records_fts AS f ON f.record_id = r.record_id
+                        WHERE (
+                            f.record_id IS NULL
+                            OR f.updated_at IS NULL
+                            OR f.updated_at != r.updated_at
+                            OR COALESCE(f.title, '') != COALESCE(r.title, '')
+                            OR COALESCE(f.body, '') != COALESCE(r.body, '')
+                            OR COALESCE(f.decision, '') != COALESCE(r.decision, '')
+                            OR COALESCE(f.why, '') != COALESCE(r.why, '')
+                            OR COALESCE(f.user_intent, '') != COALESCE(r.user_intent, '')
+                            OR COALESCE(f.what_happened, '') != COALESCE(r.what_happened, '')
+                        )
+                        {stale_project_filter}
+                        UNION ALL
+                        SELECT f.record_id
+                        FROM records_fts AS f
+                        LEFT JOIN records AS r ON r.record_id = f.record_id
+                        WHERE r.record_id IS NULL
+                        {"AND f.project_id IN (" + placeholders + ")" if project_ids is not None else ""}
                     )
-                    {stale_project_filter}
                     """,
-                    params,
+                    [*params, *params],
                 ).fetchone()[0]
             )
             embeddings_exists = (
@@ -957,17 +975,26 @@ class ContextStore:
                 conn.execute(
                     f"""
                     SELECT COUNT(*)
-                    FROM records AS r
-                    LEFT JOIN record_embeddings AS e ON e.record_id = r.record_id
-                    WHERE (
-                        e.record_id IS NULL
-                        OR e.updated_at IS NULL
-                        OR e.updated_at != r.updated_at
-                        OR e.embedding_model != ?
+                    FROM (
+                        SELECT e.record_id
+                        FROM records AS r
+                        LEFT JOIN record_embeddings AS e ON e.record_id = r.record_id
+                        WHERE (
+                            e.record_id IS NULL
+                            OR e.updated_at IS NULL
+                            OR e.updated_at != r.updated_at
+                        OR COALESCE(e.embedding_model, '') != ?
+                        )
+                        {stale_project_filter}
+                        UNION ALL
+                        SELECT e.record_id
+                        FROM record_embeddings AS e
+                        LEFT JOIN records AS r ON r.record_id = e.record_id
+                        WHERE r.record_id IS NULL
+                        {"AND e.project_id IN (" + placeholders + ")" if project_ids is not None else ""}
                     )
-                    {stale_project_filter}
                     """,
-                    [provider.model_id, *params],
+                    [provider.model_id, *params, *params],
                 ).fetchone()[0]
             )
             return {
@@ -1526,12 +1553,20 @@ class ContextStore:
             conn.execute(
                 """
                 SELECT COUNT(*)
-                FROM records AS r
-                LEFT JOIN record_embeddings AS e ON e.record_id = r.record_id
-                WHERE e.record_id IS NULL
-                   OR e.updated_at IS NULL
-                   OR e.updated_at != r.updated_at
-                   OR e.embedding_model != ?
+                FROM (
+                    SELECT e.record_id
+                    FROM records AS r
+                    LEFT JOIN record_embeddings AS e ON e.record_id = r.record_id
+                    WHERE e.record_id IS NULL
+                       OR e.updated_at IS NULL
+                       OR e.updated_at != r.updated_at
+                       OR COALESCE(e.embedding_model, '') != ?
+                    UNION ALL
+                    SELECT e.record_id
+                    FROM record_embeddings AS e
+                    LEFT JOIN records AS r ON r.record_id = e.record_id
+                    WHERE r.record_id IS NULL
+                )
                 """,
                 (provider_model,),
             ).fetchone()[0]
@@ -1547,11 +1582,25 @@ class ContextStore:
             conn.execute(
                 """
                 SELECT COUNT(*)
-                FROM records AS r
-                LEFT JOIN records_fts AS f ON f.record_id = r.record_id
-                WHERE f.record_id IS NULL
-                   OR f.updated_at IS NULL
-                   OR f.updated_at != r.updated_at
+                FROM (
+                    SELECT f.record_id
+                    FROM records AS r
+                    LEFT JOIN records_fts AS f ON f.record_id = r.record_id
+                    WHERE f.record_id IS NULL
+                       OR f.updated_at IS NULL
+                       OR f.updated_at != r.updated_at
+                       OR COALESCE(f.title, '') != COALESCE(r.title, '')
+                       OR COALESCE(f.body, '') != COALESCE(r.body, '')
+                       OR COALESCE(f.decision, '') != COALESCE(r.decision, '')
+                       OR COALESCE(f.why, '') != COALESCE(r.why, '')
+                       OR COALESCE(f.user_intent, '') != COALESCE(r.user_intent, '')
+                       OR COALESCE(f.what_happened, '') != COALESCE(r.what_happened, '')
+                    UNION ALL
+                    SELECT f.record_id
+                    FROM records_fts AS f
+                    LEFT JOIN records AS r ON r.record_id = f.record_id
+                    WHERE r.record_id IS NULL
+                )
                 """
             ).fetchone()[0]
         )

@@ -12,7 +12,6 @@ import mimetypes
 import sqlite3
 import threading
 import uuid
-from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
@@ -20,7 +19,6 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
-from lerim.adapters.common import load_jsonl_dict_lines
 from lerim.config.logging import logger
 from lerim.server.api import (
     api_ask,
@@ -48,51 +46,14 @@ from lerim.config.settings import (
 )
 
 from lerim.config.providers import list_provider_models
+from lerim.server.dashboard_data import build_extract_report, extract_session_details
 from lerim.sessions.catalog import (
     count_session_jobs_by_status,
     fetch_session_doc,
     init_sessions_db,
     latest_service_run,
     list_session_jobs,
-    list_sessions_window,
 )
-
-
-def build_extract_report(
-    *,
-    window_start: datetime | None = None,
-    window_end: datetime | None = None,
-    agent_types: list[str] | None = None,
-) -> dict[str, Any]:
-    """Build aggregate extraction stats for dashboard and maintenance views."""
-    rows, _ = list_sessions_window(
-        limit=500,
-        offset=0,
-        agent_types=agent_types,
-        since=window_start,
-        until=window_end,
-    )
-    totals = defaultdict(int)
-    for row in rows:
-        totals["sessions"] += 1
-        totals["messages"] += int(row.get("message_count") or 0)
-        totals["tool_calls"] += int(row.get("tool_call_count") or 0)
-        totals["errors"] += int(row.get("error_count") or 0)
-        totals["tokens"] += int(row.get("total_tokens") or 0)
-    return {
-        "window_start": window_start.isoformat() if window_start else None,
-        "window_end": window_end.isoformat() if window_end else None,
-        "agent_filter": ",".join(agent_types) if agent_types else "all",
-        "aggregates": {"totals": dict(totals)},
-        "narratives": {
-            "at_a_glance": {
-                "working": "",
-                "hindering": "",
-                "quick_wins": "",
-                "horizon": "",
-            }
-        },
-    }
 
 
 _REPO_DASHBOARD = Path(__file__).resolve().parents[3] / "dashboard"
@@ -102,7 +63,6 @@ _LERIM_CLOUD_UI_URL = "https://lerim.dev"
 MAX_BODY_BYTES = 1_000_000
 READ_ONLY_MESSAGE = "Dashboard is read-only. Use CLI commands for write actions."
 _REPORT_CACHE: dict[str, Any] = {"at": None, "value": None}
-_SESSION_DETAILS_CACHE: dict[str, dict[str, Any]] = {}
 
 
 def _iso_now() -> str:
@@ -113,81 +73,6 @@ def _iso_now() -> str:
 def _query_param(query: dict[str, list[str]], key: str, default: str = "") -> str:
 	"""Extract a single query parameter value."""
 	return (query.get(key) or [default])[0]
-
-
-def _extract_session_details(session_path: str) -> dict[str, Any]:
-    """Extract model name and tool usage counts from a session JSONL trace.
-
-    Results are cached per session_path for the server lifetime.
-    Handles Claude, Codex, and OpenCode JSONL formats.
-    """
-    if session_path in _SESSION_DETAILS_CACHE:
-        return _SESSION_DETAILS_CACHE[session_path]
-    result: dict[str, Any] = {"model": "", "tools": {}}
-
-    def _pick_model(row: dict[str, Any], msg_obj: Any, payload_obj: Any) -> str:
-        """Pick best-effort model id from known trace formats."""
-        msg = msg_obj if isinstance(msg_obj, dict) else {}
-        payload = payload_obj if isinstance(payload_obj, dict) else {}
-        model_cfg = row.get("modelConfig")
-        model_info = row.get("modelInfo")
-        payload_info = payload.get("info")
-        collab = payload.get("collaboration_mode")
-        collab_settings = collab.get("settings") if isinstance(collab, dict) else None
-        payload_session = payload.get("session")
-        candidates: list[Any] = [
-            row.get("model"),
-            row.get("model_name"),
-            msg.get("model"),
-            model_cfg.get("modelName") if isinstance(model_cfg, dict) else "",
-            model_info.get("modelName") if isinstance(model_info, dict) else "",
-            payload.get("model"),
-            payload_info.get("model") if isinstance(payload_info, dict) else "",
-            collab_settings.get("model") if isinstance(collab_settings, dict) else "",
-            payload_session.get("model") if isinstance(payload_session, dict) else "",
-        ]
-        for value in candidates:
-            text = str(value or "").strip()
-            if text:
-                return text
-        return ""
-
-    try:
-        rows = load_jsonl_dict_lines(Path(session_path).expanduser())
-        for row in rows:
-            # Claude format: message.model, tool_use blocks in content
-            msg = row.get("message") if isinstance(row.get("message"), dict) else {}
-            payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
-
-            picked_model = _pick_model(row, msg, payload)
-            if picked_model and not result["model"]:
-                result["model"] = picked_model
-
-            for block in (
-                msg.get("content", []) if isinstance(msg.get("content"), list) else []
-            ):
-                if isinstance(block, dict) and block.get("type") == "tool_use":
-                    name = str(block.get("name", "unknown"))
-                    result["tools"][name] = result["tools"].get(name, 0) + 1
-
-            # OpenCode format: model field at top level, tool_name field
-            if row.get("tool_name"):
-                name = str(row["tool_name"])
-                result["tools"][name] = result["tools"].get(name, 0) + 1
-
-            # Cursor format tool call events
-            if row.get("type") == "tool_call" and row.get("name"):
-                name = str(row["name"])
-                result["tools"][name] = result["tools"].get(name, 0) + 1
-
-            # Codex format: type=response_item with function_call
-            if payload.get("type") == "function_call":
-                name = str(payload.get("name", "unknown"))
-                result["tools"][name] = result["tools"].get(name, 0) + 1
-    except Exception:
-        pass
-    _SESSION_DETAILS_CACHE[session_path] = result
-    return result
 
 
 def _parse_int(
@@ -842,7 +727,9 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
             "/api/health": lambda: self._json(api_health()),
             "/api/live": self._api_live,
             "/api/connect": lambda: self._json({"platforms": api_connect_list()}),
-            "/api/project/list": lambda: self._json({"projects": api_project_list()}),
+            "/api/project/list": lambda: self._json(
+                {"projects": api_project_list(include_paths=False)}
+            ),
             "/api/refine/status": self._api_refine_status,
             "/api/refine/report": self._api_refine_report,
             "/api/config": self._api_config,
@@ -1040,7 +927,7 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
             if not proj_path:
                 self._error(HTTPStatus.BAD_REQUEST, "Missing 'path'")
                 return
-            result = api_project_add(proj_path)
+            result = api_project_add(proj_path, include_paths=False)
             status_code = (
                 HTTPStatus.BAD_REQUEST if result.get("error") else HTTPStatus.OK
             )

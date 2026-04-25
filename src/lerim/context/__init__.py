@@ -37,7 +37,6 @@ from lerim.context.spec import (
 
 _LAZY_EXPORTS = {
     "ContextStore": ("lerim.context.store", "ContextStore"),
-    "SearchHit": ("lerim.context.store", "SearchHit"),
     "EMBEDDING_DIMS": ("lerim.context.embedding", "EMBEDDING_DIMS"),
     "EMBEDDING_MODEL_NAME": ("lerim.context.embedding", "EMBEDDING_MODEL_NAME"),
     "EmbeddingProvider": ("lerim.context.embedding", "EmbeddingProvider"),
@@ -87,7 +86,6 @@ __all__ = [
     "RecordChangeKind",
     "RecordKind",
     "RecordStatus",
-    "SearchHit",
     "clear_embedding_provider_cache",
     "format_durable_record_kinds",
     "format_allowed_finding_levels",

@@ -72,10 +72,12 @@ PROVIDER_CAPABILITIES: dict[str, dict] = {
 	"ollama": {
 		"roles": ["agent"],
 		"api_key_env": None,
+		"openai_base_url_suffix": "/v1",
 	},
 	"mlx": {
 		"roles": ["agent"],
 		"api_key_env": None,
+		"openai_base_url_suffix": "/v1",
 	},
 }
 
@@ -208,6 +210,18 @@ def _api_key_for_provider(config: Config, provider: str) -> str | None:
 	if provider == "opencode_go":
 		return config.opencode_api_key
 	return None
+
+
+def _normalize_openai_base_url(provider: str, base_url: str) -> str:
+	"""Apply provider-declared OpenAI-compatible base URL normalization."""
+	caps = PROVIDER_CAPABILITIES[provider]
+	suffix = caps.get("openai_base_url_suffix")
+	if not suffix or not base_url:
+		return base_url
+	normalized = base_url.rstrip("/")
+	if normalized.endswith(suffix):
+		return normalized
+	return normalized + suffix
 
 
 def parse_fallback_spec(
@@ -387,10 +401,7 @@ def _build_pydantic_model_for_provider(
 
 	# All other providers: OpenAI-compat path
 	base_url = api_base or _default_api_base(provider, cfg)
-	# Ollama's OpenAI-compat endpoint lives at /v1; provider SDKs may append
-	# this internally but pydantic_ai's OpenAIProvider does not.
-	if provider == "ollama" and base_url and not base_url.rstrip("/").endswith("/v1"):
-		base_url = base_url.rstrip("/") + "/v1"
+	base_url = _normalize_openai_base_url(provider, base_url)
 	if not base_url:
 		raise RuntimeError(
 			f"missing_api_base:no default base URL configured for "
