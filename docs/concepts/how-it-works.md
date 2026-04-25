@@ -12,6 +12,9 @@ The flow is:
 4. `maintain` cleans and supersedes records
 5. `ask` retrieves records and answers questions
 
+For operational targets and scale boundaries, see
+[Capacity and SLOs](capacity-and-slos.md).
+
 ## Storage
 
 Canonical storage is global:
@@ -50,6 +53,20 @@ Retrieval is hybrid:
 - vector storage and KNN lookup via `sqlite-vec`
 - lexical retrieval via SQLite FTS5
 - RRF fusion in the context store
+
+Search indexes are derived, not canonical:
+
+- `records` is the authoritative source for durable context.
+- `records_fts` mirrors canonical record text for lexical retrieval.
+- `record_embeddings` mirrors canonical record search text for semantic
+  retrieval.
+- Index health is measured with `record_count`, `fts_count`,
+  `embedding_count`, and `missing_embedding_count`.
+- A fresh index has matching record, FTS, and embedding counts with no missing
+  embeddings for the project scope being queried.
+- If counts diverge, `ask` can still run, but retrieval is operationally
+  degraded until maintenance or write-time refresh rebuilds derived rows from
+  canonical records.
 
 ## Why this design
 

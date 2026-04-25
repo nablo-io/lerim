@@ -152,7 +152,7 @@ The agent-facing tool contract is intentionally small:
 - `note_trace_findings`
 - `prune_trace_reads`
 
-This keeps the runtime easier to reason about and gives smaller future models a cleaner action space for training.
+These are the authoritative runtime tool names. Keeping the surface DB-era and semantic makes the runtime easier to reason about and gives smaller future models a cleaner action space for training.
 
 ## Common Commands
 

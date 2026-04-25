@@ -28,6 +28,6 @@ If you are new to the codebase, read in this order:
 3. `server/runtime.py` for runtime orchestration across extract/maintain/ask.
 4. `context/store.py` for the canonical SQLite schema and retrieval/write logic.
    This is where hybrid search happens: local ONNX embeddings, `sqlite-vec` KNN, SQLite FTS5, and RRF fusion.
-5. `agents/tools.py` for the semantic agent tool surface (`read_trace`, `list_context`, `search_context`, `get_context`, `save_context`, `revise_context`, `archive_context`, `supersede_context`, `count_context`, `note_trace_findings`, `prune_trace_reads`).
+5. `agents/tools.py` for the authoritative semantic agent tool surface (`read_trace`, `list_context`, `search_context`, `get_context`, `save_context`, `revise_context`, `archive_context`, `supersede_context`, `count_context`, `note_trace_findings`, `prune_trace_reads`).
 6. `agents/extract.py`, `agents/maintain.py`, `agents/ask.py` for PydanticAI agent behavior.
 7. `transcripts/transcript.py` only when you need to inspect how raw agent traces are normalized before extraction; it is not part of the durable context store.
