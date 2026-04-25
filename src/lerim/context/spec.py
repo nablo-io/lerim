@@ -4,9 +4,53 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from enum import StrEnum
 from typing import Any
 
-ALLOWED_STATUSES = ("active", "archived")
+
+class RecordKind(StrEnum):
+    """Canonical durable-context record kinds."""
+
+    DECISION = "decision"
+    PREFERENCE = "preference"
+    CONSTRAINT = "constraint"
+    FACT = "fact"
+    REFERENCE = "reference"
+    EPISODE = "episode"
+
+
+class RecordStatus(StrEnum):
+    """Canonical record lifecycle statuses."""
+
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+
+
+class RecordChangeKind(StrEnum):
+    """Canonical record-version change kinds."""
+
+    CREATE = "create"
+    UPDATE = "update"
+    ARCHIVE = "archive"
+    SUPERSEDE = "supersede"
+
+
+class FindingLevel(StrEnum):
+    """Canonical extracted-finding levels."""
+
+    DECISION = "decision"
+    PREFERENCE = "preference"
+    FEEDBACK = "feedback"
+    REFERENCE = "reference"
+    CONSTRAINT = "constraint"
+    FACT = "fact"
+    IMPLEMENTATION = "implementation"
+
+
+ALLOWED_KINDS = tuple(kind.value for kind in RecordKind)
+ALLOWED_STATUSES = tuple(status.value for status in RecordStatus)
+ALLOWED_CHANGE_KINDS = tuple(change_kind.value for change_kind in RecordChangeKind)
+ALLOWED_FINDING_LEVELS = tuple(level.value for level in FindingLevel)
 MAX_RECORD_TITLE_CHARS = 120
 MAX_EPISODE_BODY_CHARS = 420
 MAX_DURABLE_BODY_CHARS = 850
@@ -66,8 +110,8 @@ class FindingLevelSpec:
 
 
 RECORD_KIND_SPECS = {
-    "decision": RecordKindSpec(
-        name="decision",
+    RecordKind.DECISION.value: RecordKindSpec(
+        name=RecordKind.DECISION.value,
         body_max_chars=MAX_DURABLE_BODY_CHARS,
         body_too_long_code="record_body_too_long",
         typed_fields=(
@@ -78,28 +122,28 @@ RECORD_KIND_SPECS = {
         ),
         required_error_code="decision_requires_decision_and_why",
     ),
-    "preference": RecordKindSpec(
-        name="preference",
+    RecordKind.PREFERENCE.value: RecordKindSpec(
+        name=RecordKind.PREFERENCE.value,
         body_max_chars=MAX_DURABLE_BODY_CHARS,
         body_too_long_code="record_body_too_long",
     ),
-    "constraint": RecordKindSpec(
-        name="constraint",
+    RecordKind.CONSTRAINT.value: RecordKindSpec(
+        name=RecordKind.CONSTRAINT.value,
         body_max_chars=MAX_DURABLE_BODY_CHARS,
         body_too_long_code="record_body_too_long",
     ),
-    "fact": RecordKindSpec(
-        name="fact",
+    RecordKind.FACT.value: RecordKindSpec(
+        name=RecordKind.FACT.value,
         body_max_chars=MAX_DURABLE_BODY_CHARS,
         body_too_long_code="record_body_too_long",
     ),
-    "reference": RecordKindSpec(
-        name="reference",
+    RecordKind.REFERENCE.value: RecordKindSpec(
+        name=RecordKind.REFERENCE.value,
         body_max_chars=MAX_DURABLE_BODY_CHARS,
         body_too_long_code="record_body_too_long",
     ),
-    "episode": RecordKindSpec(
-        name="episode",
+    RecordKind.EPISODE.value: RecordKindSpec(
+        name=RecordKind.EPISODE.value,
         body_max_chars=MAX_EPISODE_BODY_CHARS,
         body_too_long_code="episode_body_too_long",
         typed_fields=(
@@ -125,39 +169,40 @@ RECORD_KIND_SPECS = {
         requires_session_id=True,
     ),
 }
-ALLOWED_KINDS = tuple(RECORD_KIND_SPECS)
 DURABLE_RECORD_KINDS = tuple(
-    kind_name for kind_name in RECORD_KIND_SPECS if kind_name != "episode"
+    kind_name for kind_name in ALLOWED_KINDS if kind_name != RecordKind.EPISODE.value
 )
 
 FINDING_LEVEL_SPECS = {
-    "decision": FindingLevelSpec(
-        name="decision",
+    FindingLevel.DECISION.value: FindingLevelSpec(
+        name=FindingLevel.DECISION.value,
         bucket="durable",
     ),
-    "preference": FindingLevelSpec(
-        name="preference",
+    FindingLevel.PREFERENCE.value: FindingLevelSpec(
+        name=FindingLevel.PREFERENCE.value,
         bucket="durable",
     ),
-    "feedback": FindingLevelSpec(
-        name="feedback",
+    FindingLevel.FEEDBACK.value: FindingLevelSpec(
+        name=FindingLevel.FEEDBACK.value,
         bucket="durable",
     ),
-    "reference": FindingLevelSpec(
-        name="reference",
+    FindingLevel.REFERENCE.value: FindingLevelSpec(
+        name=FindingLevel.REFERENCE.value,
         bucket="durable",
     ),
-    "constraint": FindingLevelSpec(
-        name="constraint",
+    FindingLevel.CONSTRAINT.value: FindingLevelSpec(
+        name=FindingLevel.CONSTRAINT.value,
         bucket="durable",
     ),
-    "fact": FindingLevelSpec(
-        name="fact",
+    FindingLevel.FACT.value: FindingLevelSpec(
+        name=FindingLevel.FACT.value,
         bucket="durable",
     ),
-    "implementation": FindingLevelSpec(name="implementation", bucket="implementation"),
+    FindingLevel.IMPLEMENTATION.value: FindingLevelSpec(
+        name=FindingLevel.IMPLEMENTATION.value,
+        bucket="implementation",
+    ),
 }
-ALLOWED_FINDING_LEVELS = tuple(FINDING_LEVEL_SPECS)
 DURABLE_FINDING_LEVELS = tuple(
     level.name for level in FINDING_LEVEL_SPECS.values() if level.bucket == "durable"
 )

@@ -10,15 +10,8 @@ from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 
 from lerim.agents.model_settings import LOW_VARIANCE_AGENT_MODEL_SETTINGS
-from lerim.agents.tools import (
-    ContextDeps,
-    archive_context,
-    get_context,
-    list_context,
-    revise_context,
-    search_context,
-    supersede_context,
-)
+from lerim.agents.toolsets import MAINTAIN_TOOLS
+from lerim.agents.tools import ContextDeps
 from lerim.context.project_identity import ProjectIdentity
 
 
@@ -187,7 +180,7 @@ def build_maintain_agent(model: Model) -> Agent[ContextDeps, MaintainResult]:
         deps_type=ContextDeps,
         output_type=MaintainResult,
         system_prompt=MAINTAIN_SYSTEM_PROMPT,
-        tools=[list_context, search_context, get_context, revise_context, archive_context, supersede_context],
+        tools=MAINTAIN_TOOLS,
         model_settings=LOW_VARIANCE_AGENT_MODEL_SETTINGS,
         retries=5,
         output_retries=2,

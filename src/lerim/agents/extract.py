@@ -15,16 +15,10 @@ from lerim.agents.history_processors import (
     prune_history_processor,
 )
 from lerim.agents.model_settings import LOW_VARIANCE_AGENT_MODEL_SETTINGS
+from lerim.agents.toolsets import EXTRACT_TOOLS
 from lerim.agents.tools import (
     ContextDeps,
     compute_request_budget,
-    save_context,
-    get_context,
-    note_trace_findings,
-    prune_trace_reads,
-    search_context,
-    read_trace,
-    revise_context,
 )
 from lerim.context import ContextStore, DURABLE_RECORD_KINDS, format_durable_record_kinds
 from lerim.context.project_identity import ProjectIdentity
@@ -357,7 +351,7 @@ def build_extract_agent(model: Model) -> Agent[ContextDeps, ExtractionResult]:
         deps_type=ContextDeps,
         output_type=ExtractionResult,
         system_prompt=SYSTEM_PROMPT,
-        tools=[read_trace, search_context, get_context, save_context, revise_context, note_trace_findings, prune_trace_reads],
+        tools=EXTRACT_TOOLS,
         model_settings=LOW_VARIANCE_AGENT_MODEL_SETTINGS,
         history_processors=[
             context_pressure_injector,

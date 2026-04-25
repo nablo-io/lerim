@@ -7,11 +7,13 @@ from typing import Any
 
 from lerim.context.project_identity import ProjectIdentity, resolve_project_identity
 from lerim.context.spec import (
+    ALLOWED_CHANGE_KINDS,
     ALLOWED_FINDING_LEVELS,
     ALLOWED_KINDS,
     ALLOWED_STATUSES,
     DURABLE_RECORD_KINDS,
     DURABLE_FINDING_LEVELS,
+    FindingLevel,
     IMPLEMENTATION_FINDING_LEVELS,
     MAX_DURABLE_BODY_CHARS,
     MAX_EPISODE_BODY_CHARS,
@@ -20,6 +22,9 @@ from lerim.context.spec import (
     MAX_EPISODE_WHAT_HAPPENED_CHARS,
     MAX_RECORD_TITLE_CHARS,
     RECORD_KIND_SPECS,
+    RecordChangeKind,
+    RecordKind,
+    RecordStatus,
     format_durable_record_kinds,
     format_allowed_finding_levels,
     normalize_finding_level,
@@ -59,6 +64,7 @@ def __dir__() -> list[str]:
     return sorted(set(globals()) | set(_LAZY_EXPORTS))
 
 __all__ = [
+    "ALLOWED_CHANGE_KINDS",
     "ALLOWED_FINDING_LEVELS",
     "ALLOWED_KINDS",
     "ALLOWED_STATUSES",
@@ -68,6 +74,7 @@ __all__ = [
     "EMBEDDING_DIMS",
     "EMBEDDING_MODEL_NAME",
     "EmbeddingProvider",
+    "FindingLevel",
     "IMPLEMENTATION_FINDING_LEVELS",
     "MAX_DURABLE_BODY_CHARS",
     "MAX_EPISODE_BODY_CHARS",
@@ -77,6 +84,9 @@ __all__ = [
     "MAX_RECORD_TITLE_CHARS",
     "ProjectIdentity",
     "RECORD_KIND_SPECS",
+    "RecordChangeKind",
+    "RecordKind",
+    "RecordStatus",
     "SearchHit",
     "clear_embedding_provider_cache",
     "format_durable_record_kinds",

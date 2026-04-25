@@ -14,35 +14,27 @@ import logging
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 import sqlite_vec
 
-from lerim.config.settings import get_config
 from lerim.context.embedding import get_embedding_provider
 from lerim.context.project_identity import ProjectIdentity
+from lerim.context.query_spec import (
+    QUERY_ENTITIES as QUERY_ENTITIES,
+    QUERY_MODES as QUERY_MODES,
+    QUERY_ORDER_FIELDS as QUERY_ORDER_FIELDS,
+)
+from lerim.context.retrieval import SearchHit, search_records
 from lerim.context.spec import (
-    ALLOWED_KINDS as ALLOWED_KINDS,
-    ALLOWED_STATUSES as ALLOWED_STATUSES,
-    MAX_DURABLE_BODY_CHARS as MAX_DURABLE_BODY_CHARS,
-    MAX_EPISODE_BODY_CHARS as MAX_EPISODE_BODY_CHARS,
-    MAX_EPISODE_OUTCOMES_CHARS as MAX_EPISODE_OUTCOMES_CHARS,
-    MAX_EPISODE_USER_INTENT_CHARS as MAX_EPISODE_USER_INTENT_CHARS,
-    MAX_EPISODE_WHAT_HAPPENED_CHARS as MAX_EPISODE_WHAT_HAPPENED_CHARS,
-    MAX_RECORD_TITLE_CHARS as MAX_RECORD_TITLE_CHARS,
+    ALLOWED_CHANGE_KINDS,
     normalize_record_payload,
     record_search_text,
 )
 
 SCHEMA_VERSION = "2"
-ALLOWED_CHANGE_KINDS = ("create", "update", "archive", "supersede")
-QUERY_ENTITIES = ("records", "versions", "sessions")
-QUERY_MODES = ("list", "count")
-QUERY_ORDER_FIELDS = ("created_at", "updated_at", "valid_from")
-RRF_K = 60
 LOGGER = logging.getLogger(__name__)
 TIMESTAMP_COLUMNS = {
     "projects": ("created_at", "updated_at"),
@@ -136,53 +128,6 @@ def _normalize_optional_text(value: Any) -> str | None:
     return text or None
 
 
-def _compile_safe_fts_query(raw: str) -> str | None:
-    """Compile free-form text into a conservative SQLite FTS query."""
-    if not raw or not raw.strip():
-        return None
-
-    normalized_chars: list[str] = []
-    for char in raw:
-        normalized_chars.append(char if char.isalnum() else " ")
-    normalized = "".join(normalized_chars)
-
-    terms: list[str] = []
-    seen: set[str] = set()
-    for token in normalized.split():
-        term = token.strip()
-        if not term:
-            continue
-        lowered = term.lower()
-        if lowered in seen:
-            continue
-        seen.add(lowered)
-        terms.append(term)
-        if len(terms) >= 8:
-            break
-
-    if not terms:
-        return None
-    return " OR ".join(f'"{term}"' for term in terms)
-
-
-@dataclass(frozen=True)
-class SearchHit:
-    """Compact retrieval hit returned by hybrid search."""
-
-    record_id: str
-    project_id: str
-    kind: str
-    title: str
-    body: str
-    status: str
-    created_at: str
-    updated_at: str
-    valid_from: str
-    valid_until: str | None
-    score: float
-    sources: list[str]
-
-
 class ContextStore:
     """Canonical global SQLite context store."""
 
@@ -211,6 +156,10 @@ class ContextStore:
             raise
         finally:
             conn.close()
+
+    def embedding_provider(self) -> Any:
+        """Return the embedding provider used by this store."""
+        return get_embedding_provider()
 
     def initialize(self) -> None:
         """Create all canonical tables and indexes idempotently."""
@@ -308,6 +257,7 @@ class ContextStore:
                 CREATE VIRTUAL TABLE IF NOT EXISTS records_fts USING fts5(
                     record_id UNINDEXED,
                     project_id UNINDEXED,
+                    updated_at UNINDEXED,
                     title,
                     body,
                     decision,
@@ -353,6 +303,7 @@ class ContextStore:
             "records_fts": {
                 "record_id",
                 "project_id",
+                "updated_at",
                 "title",
                 "body",
                 "decision",
@@ -415,7 +366,7 @@ class ContextStore:
 
     def _ensure_record_embeddings_index(self, conn: sqlite3.Connection) -> bool:
         """Ensure record_embeddings uses sqlite-vec and return whether to rebuild rows."""
-        provider = get_embedding_provider()
+        provider = self.embedding_provider()
         expected_fragment = f"float[{provider.embedding_dims}]"
         row = conn.execute(
             "SELECT sql FROM sqlite_master WHERE name = 'record_embeddings'"
@@ -451,6 +402,7 @@ class ContextStore:
         embedding_count = int(conn.execute("SELECT COUNT(*) FROM record_embeddings").fetchone()[0])
         if embedding_count != record_count:
             rebuild = True
+        rebuild = rebuild or self._stale_embedding_count(conn, provider_model=provider.model_id) > 0
         return rebuild
 
     def register_project(self, identity: ProjectIdentity) -> dict[str, Any]:
@@ -911,65 +863,121 @@ class ContextStore:
     ) -> list[SearchHit]:
         """Run hybrid retrieval over records."""
         self.initialize()
-        config = get_config()
+        return search_records(
+            self,
+            project_ids=project_ids,
+            query=query,
+            kind_filters=kind_filters,
+            statuses=statuses,
+            valid_at=valid_at,
+            include_archived=include_archived,
+            limit=limit,
+        )
+
+    def index_health(self, *, project_ids: list[str] | None = None) -> dict[str, int]:
+        """Return read-only derived index health counts without repairing indexes."""
+        self.initialize()
         with self.connect() as conn:
-            self._prepare_search_embeddings(conn)
-            conn.commit()
-            conn.execute("BEGIN")
-            semantic_rows = self._semantic_candidates(
-                project_ids=project_ids,
-                query=query,
-                kind_filters=kind_filters,
-                statuses=statuses,
-                valid_at=valid_at,
-                include_archived=include_archived,
-                limit=max(limit * 3, config.semantic_shortlist_size),
-                conn=conn,
+            record_where = ""
+            params: list[Any] = []
+            if project_ids is not None:
+                if not project_ids:
+                    return {
+                        "record_count": 0,
+                        "fts_count": 0,
+                        "embedding_count": 0,
+                        "missing_embedding_count": 0,
+                        "stale_fts_count": 0,
+                        "stale_embedding_count": 0,
+                    }
+                placeholders = ", ".join("?" for _ in project_ids)
+                record_where = f" WHERE project_id IN ({placeholders})"
+                params = [str(project_id) for project_id in project_ids]
+
+            record_count = int(
+                conn.execute(f"SELECT COUNT(*) FROM records{record_where}", params).fetchone()[0]
             )
-            lexical_rows = self._lexical_candidates(
-                project_ids=project_ids,
-                query=query,
-                kind_filters=kind_filters,
-                statuses=statuses,
-                valid_at=valid_at,
-                include_archived=include_archived,
-                limit=max(limit * 3, config.lexical_shortlist_size),
-                conn=conn,
+            fts_count = int(
+                conn.execute(f"SELECT COUNT(*) FROM records_fts{record_where}", params).fetchone()[0]
             )
-            combined = self._rrf_fuse(semantic_rows=semantic_rows, lexical_rows=lexical_rows)
-            if not combined:
-                return []
-            top_ids = [record_id for record_id, _score, _sources in combined[:limit]]
-            placeholders = ", ".join("?" for _ in top_ids)
-            rows = conn.execute(
-                f"SELECT * FROM records WHERE record_id IN ({placeholders})",
-                tuple(top_ids),
-            ).fetchall()
-        row_map = {str(row["record_id"]): row for row in rows}
-        hits: list[SearchHit] = []
-        for record_id, score, sources in combined:
-            row = row_map.get(record_id)
-            if row is None:
-                continue
-            hits.append(
-                SearchHit(
-                    record_id=record_id,
-                    project_id=str(row["project_id"]),
-                    kind=str(row["kind"]),
-                    title=str(row["title"]),
-                    body=str(row["body"]),
-                    status=str(row["status"]),
-                    created_at=str(row["created_at"]),
-                    updated_at=str(row["updated_at"]),
-                    valid_from=str(row["valid_from"]),
-                    valid_until=row["valid_until"],
-                    score=score,
-                    sources=sources,
-                )
+            stale_project_filter = ""
+            if project_ids is not None:
+                stale_project_filter = f" AND r.project_id IN ({placeholders})"
+            stale_fts_count = int(
+                conn.execute(
+                    f"""
+                    SELECT COUNT(*)
+                    FROM records AS r
+                    LEFT JOIN records_fts AS f ON f.record_id = r.record_id
+                    WHERE (
+                        f.record_id IS NULL
+                        OR f.updated_at IS NULL
+                        OR f.updated_at != r.updated_at
+                    )
+                    {stale_project_filter}
+                    """,
+                    params,
+                ).fetchone()[0]
             )
-            if len(hits) >= limit:
-                break
-        return hits
+            embeddings_exists = (
+                conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE name = 'record_embeddings'"
+                ).fetchone()
+                is not None
+            )
+            if not embeddings_exists:
+                return {
+                    "record_count": record_count,
+                    "fts_count": fts_count,
+                    "embedding_count": 0,
+                    "missing_embedding_count": record_count,
+                    "stale_fts_count": stale_fts_count,
+                    "stale_embedding_count": record_count,
+                }
+
+            embedding_count = int(
+                conn.execute(
+                    f"SELECT COUNT(*) FROM record_embeddings{record_where}", params
+                ).fetchone()[0]
+            )
+            missing_embedding_count = int(
+                conn.execute(
+                    f"""
+                    SELECT COUNT(*)
+                    FROM records AS r
+                    LEFT JOIN record_embeddings AS e ON e.record_id = r.record_id
+                    WHERE e.record_id IS NULL
+                    {"AND r.project_id IN (" + placeholders + ")" if project_ids is not None else ""}
+                    """,
+                    params,
+                ).fetchone()[0]
+            )
+            provider = self.embedding_provider()
+            stale_embedding_count = int(
+                conn.execute(
+                    f"""
+                    SELECT COUNT(*)
+                    FROM records AS r
+                    LEFT JOIN record_embeddings AS e ON e.record_id = r.record_id
+                    WHERE (
+                        e.record_id IS NULL
+                        OR e.updated_at IS NULL
+                        OR e.updated_at != r.updated_at
+                        OR e.embedding_model != ?
+                    )
+                    {stale_project_filter}
+                    """,
+                    [provider.model_id, *params],
+                ).fetchone()[0]
+            )
+            return {
+                "record_count": record_count,
+                "fts_count": fts_count,
+                "embedding_count": embedding_count,
+                "missing_embedding_count": missing_embedding_count,
+                "stale_fts_count": stale_fts_count,
+                "stale_embedding_count": stale_embedding_count,
+            }
 
     def query(
         self,
@@ -1432,9 +1440,10 @@ class ContextStore:
         project_id: str,
         record_id: str,
         text: str,
+        updated_at: str,
     ) -> None:
         """Refresh derived embedding storage for one record."""
-        provider = get_embedding_provider()
+        provider = self.embedding_provider()
         vector = sqlite_vec.serialize_float32(provider.embed_document(text))
         conn.execute("DELETE FROM record_embeddings WHERE record_id = ?", (record_id,))
         conn.execute(
@@ -1444,7 +1453,7 @@ class ContextStore:
             )
             VALUES (?, ?, ?, ?, ?)
             """,
-            (vector, project_id, record_id, provider.model_id, _utc_now()),
+            (vector, project_id, record_id, provider.model_id, updated_at),
         )
 
     def _upsert_fts(
@@ -1460,13 +1469,14 @@ class ContextStore:
         conn.execute(
             """
             INSERT INTO records_fts(
-                record_id, project_id, title, body, decision, why, user_intent, what_happened
+                record_id, project_id, updated_at, title, body, decision, why, user_intent, what_happened
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record_id,
                 project_id,
+                payload["updated_at"],
                 payload["title"],
                 payload["body"],
                 payload["decision"] or "",
@@ -1491,7 +1501,13 @@ class ContextStore:
                 project_id=str(row["project_id"]),
                 record_id=str(row["record_id"]),
                 text=self._search_text(payload),
+                updated_at=str(row["updated_at"]),
             )
+
+    def _prepare_search_indexes(self, conn: sqlite3.Connection) -> None:
+        """Ensure search sees fresh derived FTS and embedding tables."""
+        self._prepare_search_fts(conn)
+        self._prepare_search_embeddings(conn)
 
     def _prepare_search_embeddings(self, conn: sqlite3.Connection) -> None:
         """Ensure semantic search sees a complete derived embedding table."""
@@ -1499,11 +1515,47 @@ class ContextStore:
         if needs_embedding_rebuild:
             self._rebuild_embeddings(conn)
 
+    def _prepare_search_fts(self, conn: sqlite3.Connection) -> None:
+        """Ensure lexical search sees a fresh derived FTS table."""
+        if self._ensure_records_fts_index(conn):
+            self._rebuild_fts(conn)
+
+    def _stale_embedding_count(self, conn: sqlite3.Connection, *, provider_model: str) -> int:
+        """Return records missing a fresh embedding row for the active model."""
+        return int(
+            conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM records AS r
+                LEFT JOIN record_embeddings AS e ON e.record_id = r.record_id
+                WHERE e.record_id IS NULL
+                   OR e.updated_at IS NULL
+                   OR e.updated_at != r.updated_at
+                   OR e.embedding_model != ?
+                """,
+                (provider_model,),
+            ).fetchone()[0]
+        )
+
     def _ensure_records_fts_index(self, conn: sqlite3.Connection) -> bool:
         """Return whether the derived FTS table should be rebuilt from records."""
         record_count = int(conn.execute("SELECT COUNT(*) FROM records").fetchone()[0])
         fts_count = int(conn.execute("SELECT COUNT(*) FROM records_fts").fetchone()[0])
-        return fts_count != record_count
+        if fts_count != record_count:
+            return True
+        stale_count = int(
+            conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM records AS r
+                LEFT JOIN records_fts AS f ON f.record_id = r.record_id
+                WHERE f.record_id IS NULL
+                   OR f.updated_at IS NULL
+                   OR f.updated_at != r.updated_at
+                """
+            ).fetchone()[0]
+        )
+        return stale_count > 0
 
     def _rebuild_fts(self, conn: sqlite3.Connection) -> None:
         """Rebuild all derived FTS rows from canonical record text."""
@@ -1580,6 +1632,7 @@ class ContextStore:
                         project_id=str(row["project_id"]),
                         record_id=str(row["record_id"]),
                         text=self._search_text(payload),
+                        updated_at=str(row["updated_at"]),
                     )
         except Exception:
             LOGGER.warning("record_embedding_refresh_failed", exc_info=True)
@@ -1694,154 +1747,6 @@ class ContextStore:
             clauses.append("(valid_until IS NULL OR valid_until >= ?)")
             params.extend([effective_valid_at, effective_valid_at])
         return " AND ".join(clauses), params
-
-    def _semantic_candidates(
-        self,
-        *,
-        project_ids: list[str] | None,
-        query: str,
-        kind_filters: list[str] | None,
-        statuses: list[str] | None,
-        valid_at: str | None,
-        include_archived: bool,
-        limit: int,
-        conn: sqlite3.Connection | None = None,
-    ) -> list[tuple[str, float]]:
-        """Return ranked semantic candidates from sqlite-vec nearest neighbors."""
-        provider = get_embedding_provider()
-        query_vec = sqlite_vec.serialize_float32(provider.embed_query(query))
-        filter_sql, params = self._build_record_filter_sql(
-            project_ids=project_ids,
-            kind_filters=kind_filters,
-            statuses=statuses,
-            source_session_id=None,
-            created_since=None,
-            created_until=None,
-            updated_since=None,
-            updated_until=None,
-            valid_at=valid_at,
-            include_archived=include_archived,
-            table_alias="records",
-        )
-        vector_filter_sql = ""
-        vector_filter_params: list[Any] = []
-        if project_ids and len(project_ids) == 1:
-            vector_filter_sql = " AND record_embeddings.project_id = ?"
-            vector_filter_params.append(project_ids[0])
-
-        def read_candidates(active_conn: sqlite3.Connection) -> list[sqlite3.Row]:
-            """Read filtered semantic candidates from one active connection."""
-            max_candidates = int(
-                active_conn.execute(
-                    f"SELECT COUNT(*) FROM record_embeddings WHERE 1=1{vector_filter_sql}",
-                    tuple(vector_filter_params),
-                ).fetchone()[0]
-            )
-            candidate_limit = min(max_candidates, max(int(limit), 25))
-            if project_ids or kind_filters or statuses or valid_at or include_archived:
-                candidate_limit = min(max_candidates, max(candidate_limit, int(limit) * 4))
-            rows: list[sqlite3.Row] = []
-            while candidate_limit > 0:
-                rows = active_conn.execute(
-                    f"""
-                    SELECT records.record_id, record_embeddings.distance
-                    FROM record_embeddings
-                    JOIN records ON records.record_id = record_embeddings.record_id
-                    WHERE record_embeddings.embedding MATCH ?
-                      AND record_embeddings.k = ?
-                      {vector_filter_sql}
-                      AND {filter_sql}
-                    ORDER BY record_embeddings.distance ASC
-                    LIMIT ?
-                    """,
-                    tuple([query_vec, candidate_limit] + vector_filter_params + params + [candidate_limit]),
-                ).fetchall()
-                if len(rows) >= limit or candidate_limit >= max_candidates:
-                    break
-                candidate_limit = min(max_candidates, max(candidate_limit * 2, candidate_limit + 1))
-            return rows
-
-        if conn is None:
-            with self.connect() as active_conn:
-                self._prepare_search_embeddings(active_conn)
-                rows = read_candidates(active_conn)
-        else:
-            rows = read_candidates(conn)
-        return [(str(row["record_id"]), float(row["distance"])) for row in rows]
-
-    def _lexical_candidates(
-        self,
-        *,
-        project_ids: list[str] | None,
-        query: str,
-        kind_filters: list[str] | None,
-        statuses: list[str] | None,
-        valid_at: str | None,
-        include_archived: bool,
-        limit: int,
-        conn: sqlite3.Connection | None = None,
-    ) -> list[tuple[str, float]]:
-        """Return ranked lexical candidates from SQLite FTS."""
-        compiled_query = _compile_safe_fts_query(query)
-        if not compiled_query:
-            return []
-        filter_sql, params = self._build_record_filter_sql(
-            project_ids=project_ids,
-            kind_filters=kind_filters,
-            statuses=statuses,
-            source_session_id=None,
-            created_since=None,
-            created_until=None,
-            updated_since=None,
-            updated_until=None,
-            valid_at=valid_at,
-            include_archived=include_archived,
-            table_alias="records",
-        )
-
-        def read_candidates(active_conn: sqlite3.Connection) -> list[sqlite3.Row]:
-            """Read filtered lexical candidates from one active connection."""
-            return active_conn.execute(
-                f"""
-                SELECT records.record_id, bm25(records_fts) AS rank_score
-                FROM records_fts
-                JOIN records ON records.record_id = records_fts.record_id
-                WHERE records_fts MATCH ? AND {filter_sql}
-                ORDER BY rank_score ASC
-                LIMIT ?
-                """,
-                tuple([compiled_query] + params + [limit]),
-            ).fetchall()
-
-        if conn is None:
-            with self.connect() as active_conn:
-                rows = read_candidates(active_conn)
-        else:
-            rows = read_candidates(conn)
-        return [(str(row["record_id"]), float(row["rank_score"])) for row in rows]
-
-    def _rrf_fuse(
-        self,
-        *,
-        semantic_rows: list[tuple[str, float]],
-        lexical_rows: list[tuple[str, float]],
-    ) -> list[tuple[str, float, list[str]]]:
-        """Fuse ranked lists with Reciprocal Rank Fusion."""
-        scores: dict[str, float] = {}
-        sources: dict[str, set[str]] = {}
-        for rank, (record_id, _score) in enumerate(semantic_rows, start=1):
-            scores[record_id] = scores.get(record_id, 0.0) + 1.0 / (RRF_K + rank)
-            sources.setdefault(record_id, set()).add("semantic")
-        for rank, (record_id, _score) in enumerate(lexical_rows, start=1):
-            scores[record_id] = scores.get(record_id, 0.0) + 1.0 / (RRF_K + rank)
-            sources.setdefault(record_id, set()).add("fts")
-        combined = [
-            (record_id, score, sorted(sources.get(record_id, set())))
-            for record_id, score in scores.items()
-        ]
-        combined.sort(key=lambda item: item[1], reverse=True)
-        return combined
-
 
 if __name__ == "__main__":
     """Run a small schema and search smoke check."""

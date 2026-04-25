@@ -13,6 +13,8 @@ from pydantic_ai import ModelRetry, RunContext
 from lerim.context import ContextStore, ProjectIdentity
 from lerim.context.spec import (
     ALLOWED_FINDING_LEVELS,
+    ALLOWED_KINDS,
+    ALLOWED_STATUSES,
     RECORD_TYPED_FIELDS,
     format_allowed_finding_levels,
     normalize_finding_level,
@@ -29,15 +31,8 @@ CONTEXT_SOFT_PRESSURE_PCT = 0.60
 CONTEXT_HARD_PRESSURE_PCT = 0.80
 _TOKENS_PER_CHAR = 0.25
 
-ContextKind = Literal[
-    "decision",
-    "preference",
-    "constraint",
-    "fact",
-    "reference",
-    "episode",
-]
-ContextStatus = Literal["active", "archived"]
+ContextKind = Literal.__getitem__(ALLOWED_KINDS)
+ContextStatus = Literal.__getitem__(ALLOWED_STATUSES)
 ContextOrder = Literal["created_at", "updated_at", "valid_from"]
 DetailLevel = Literal["concise", "detailed"]
 
@@ -135,6 +130,7 @@ class ContextDeps:
     read_ranges: list[tuple[int, int]] = field(default_factory=list)
     notes: list[TraceFinding] = field(default_factory=list)
     pruned_offsets: set[int] = field(default_factory=set)
+    fetched_context_record_ids: set[str] = field(default_factory=set)
     last_context_tokens: int = 0
     last_context_fill_ratio: float = 0.0
 
@@ -466,6 +462,8 @@ def get_context(
         )
         if record is None:
             continue
+        fetched_record_id = str(record["record_id"])
+        ctx.deps.fetched_context_record_ids.add(fetched_record_id)
         if mode == "concise":
             records.append(
                 {
@@ -493,6 +491,25 @@ def get_context(
     return json.dumps(
         {"count": len(records), "records": records}, ensure_ascii=True, indent=2
     )
+
+
+def _require_fetched_context_records(
+    ctx: RunContext[ContextDeps], tool_name: str, *record_ids: str
+) -> list[str]:
+    """Require mutating context tools to operate only on fetched records."""
+    normalized_ids = [str(record_id or "").strip() for record_id in record_ids]
+    missing_ids = [
+        record_id
+        for record_id in normalized_ids
+        if not record_id or record_id not in ctx.deps.fetched_context_record_ids
+    ]
+    if missing_ids:
+        missing_text = ", ".join(record_id or "<blank>" for record_id in missing_ids)
+        raise ModelRetry(
+            f"{tool_name} can only mutate records fetched by get_context in this run. "
+            f"Fetch the full record(s) first, then retry. Unfetched record_id(s): {missing_text}."
+        )
+    return normalized_ids
 
 
 def _normalize_kind(kind: str) -> str:
@@ -686,11 +703,14 @@ def revise_context(
         context: Complete corrected context payload after revision.
         reason: Short reason for the revision.
     """
+    [target_record_id] = _require_fetched_context_records(
+        ctx, "revise_context", record_id
+    )
     _require_trace_ready_for_write(ctx)
     changes = _context_changes(context)
     store = _store(ctx)
     existing = store.fetch_record(
-        str(record_id or "").strip(),
+        target_record_id,
         project_ids=ctx.deps.project_ids or [ctx.deps.project_identity.project_id],
         include_versions=False,
     )
@@ -710,7 +730,7 @@ def revise_context(
             changes[field_name] = existing[field_name]
     try:
         result = store.update_record(
-            record_id=str(record_id or "").strip(),
+            record_id=target_record_id,
             session_id=ctx.deps.session_id,
             project_ids=ctx.deps.project_ids or [ctx.deps.project_identity.project_id],
             changes=changes,
@@ -733,10 +753,13 @@ def archive_context(
         record_id: Record to archive.
         reason: Short reason for archiving.
     """
+    [target_record_id] = _require_fetched_context_records(
+        ctx, "archive_context", record_id
+    )
     store = _store(ctx)
     try:
         result = store.archive_record(
-            record_id=str(record_id or "").strip(),
+            record_id=target_record_id,
             session_id=ctx.deps.session_id,
             project_ids=ctx.deps.project_ids or [ctx.deps.project_identity.project_id],
             reason=str(reason or "").strip() or None,
@@ -766,13 +789,16 @@ def supersede_context(
         reason: Short reason for supersession.
         valid_until: Optional validity end timestamp for the older record.
     """
+    target_record_id, target_replacement_record_id = _require_fetched_context_records(
+        ctx, "supersede_context", record_id, replacement_record_id
+    )
     store = _store(ctx)
     try:
         result = store.supersede_record(
-            record_id=str(record_id or "").strip(),
+            record_id=target_record_id,
             session_id=ctx.deps.session_id,
             project_ids=ctx.deps.project_ids or [ctx.deps.project_identity.project_id],
-            replacement_record_id=str(replacement_record_id or "").strip(),
+            replacement_record_id=target_replacement_record_id,
             reason=str(reason or "").strip() or None,
             valid_until=str(valid_until or "").strip() or None,
         )

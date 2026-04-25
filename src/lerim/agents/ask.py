@@ -11,13 +11,8 @@ from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 
 from lerim.agents.model_settings import LOW_VARIANCE_AGENT_MODEL_SETTINGS
-from lerim.agents.tools import (
-    ContextDeps,
-    count_context,
-    get_context,
-    list_context,
-    search_context,
-)
+from lerim.agents.toolsets import ASK_TOOLS
+from lerim.agents.tools import ContextDeps
 from lerim.context.project_identity import ProjectIdentity
 
 
@@ -125,7 +120,7 @@ def build_ask_agent(model: Model) -> Agent[ContextDeps, AskResult]:
         deps_type=ContextDeps,
         output_type=AskResult,
         system_prompt=ASK_SYSTEM_PROMPT,
-        tools=[count_context, list_context, search_context, get_context],
+        tools=ASK_TOOLS,
         model_settings=LOW_VARIANCE_AGENT_MODEL_SETTINGS,
         retries=5,
         output_retries=2,
