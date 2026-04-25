@@ -210,8 +210,8 @@ def test_cli_ask_verbose_renders_trace_in_order(
                     "parts": [
                         {
                             "part_kind": "tool-call",
-                            "tool_name": "context_query",
-                            "args": {"entity": "records", "mode": "count"},
+                            "tool_name": "count_context",
+                            "args": {},
                         }
                     ],
                 },
@@ -221,7 +221,7 @@ def test_cli_ask_verbose_renders_trace_in_order(
                     "parts": [
                         {
                             "part_kind": "tool-return",
-                            "tool_name": "context_query",
+                            "tool_name": "count_context",
                             "content_preview": '{"count": 3}',
                         }
                     ],
@@ -249,8 +249,8 @@ def test_cli_ask_verbose_renders_trace_in_order(
     assert output.index("--- Message 0 [request] ---") < output.index("--- Message 1 [response] ---")
     assert output.index("--- Message 1 [response] ---") < output.index("--- Message 2 [request] ---")
     assert output.index("--- Message 2 [request] ---") < output.index("--- Message 3 [response] ---")
-    assert "  [tool-call] context_query({\"entity\": \"records\", \"mode\": \"count\"})" in output
-    assert '  [tool-return] context_query -> {"count": 3}' in output
+    assert "  [tool-call] count_context({})" in output
+    assert '  [tool-return] count_context -> {"count": 3}' in output
 
 
 @pytest.mark.e2e
@@ -277,8 +277,8 @@ def test_cli_ask_json_contains_debug_payload(
                     ],
                 }
             ],
-            "tool_calls": [{"tool_name": "context_query"}],
-            "tool_results": [{"tool_name": "context_query", "content_preview": '{"count": 2}'}],
+            "tool_calls": [{"tool_name": "count_context"}],
+            "tool_results": [{"tool_name": "count_context", "content_preview": '{"count": 2}'}],
         },
     }
     cli = _build_cli_runner(tmp_path, port=port, project=surface_project)
@@ -290,7 +290,7 @@ def test_cli_ask_json_contains_debug_payload(
     assert server.requests[-1][0] == expectation["endpoint"]
     assert payload["answer"] == expectation["answer_text"]
     assert payload["debug"]["messages"][0]["parts"][0]["part_kind"] == "user-prompt"
-    assert payload["debug"]["tool_calls"][0]["tool_name"] == "context_query"
+    assert payload["debug"]["tool_calls"][0]["tool_name"] == "count_context"
 
 
 @pytest.mark.e2e

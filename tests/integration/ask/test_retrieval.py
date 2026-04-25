@@ -58,11 +58,13 @@ def _tool_call_index(tool_calls: list[dict[str, object]], target: dict[str, obje
 
 def _has_time_window(args: dict[str, object]) -> bool:
     """Return whether args contain an exact created or updated time window."""
-    has_created_window = bool(str(args.get("created_since") or "").strip()) and bool(
-        str(args.get("created_until") or "").strip()
+    filters = args.get("filters") if isinstance(args.get("filters"), dict) else {}
+    effective_args = filters or args
+    has_created_window = bool(str(effective_args.get("created_since") or "").strip()) and bool(
+        str(effective_args.get("created_until") or "").strip()
     )
-    has_updated_window = bool(str(args.get("updated_since") or "").strip()) and bool(
-        str(args.get("updated_until") or "").strip()
+    has_updated_window = bool(str(effective_args.get("updated_since") or "").strip()) and bool(
+        str(effective_args.get("updated_until") or "").strip()
     )
     return has_created_window or has_updated_window
 
@@ -70,10 +72,12 @@ def _has_time_window(args: dict[str, object]) -> bool:
 def _has_kind_filter(args: dict[str, object], kind: str) -> bool:
     """Return whether args restrict records to the expected kind."""
     expected = kind.strip().lower()
-    effective_kind = str(args.get("kind") or "").strip().lower()
+    filters = args.get("filters") if isinstance(args.get("filters"), dict) else {}
+    effective_args = filters or args
+    effective_kind = str(effective_args.get("kind") or "").strip().lower()
     if effective_kind == expected:
         return True
-    kind_filters = args.get("kind_filters") or []
+    kind_filters = effective_args.get("kind_filters") or []
     if isinstance(kind_filters, str):
         kind_filters = [kind_filters]
     return expected in {str(value).strip().lower() for value in kind_filters}
@@ -86,7 +90,7 @@ def _find_exact_time_window_call(
 ) -> dict[str, object]:
     """Return the earliest exact retrieval call carrying a time-window filter."""
     for call in tool_calls:
-        if call["tool_name"] not in {"list_records", "context_query"}:
+        if call["tool_name"] not in {"list_context", "count_context"}:
             continue
         args = call["args"] or {}
         assert isinstance(args, dict)
@@ -199,7 +203,7 @@ def _assert_no_widening_after_zero_result(
     exact_index = _tool_call_index(tool_calls, exact_call)
     for call in tool_calls[exact_index + 1:]:
         tool_name = str(call["tool_name"])
-        if tool_name not in {"context_query", "fetch_records", "list_records", "search_records"}:
+        if tool_name not in {"count_context", "get_context", "list_context", "search_context"}:
             continue
         args = call["args"] or {}
         if not isinstance(args, dict) or not _has_time_window(args):
@@ -212,15 +216,15 @@ def _assert_no_widening_after_zero_result(
 @pytest.mark.integration
 @pytest.mark.llm
 @pytest.mark.agent
-def test_ask_count_question_uses_context_query(
+def test_ask_count_question_uses_count_context(
     live_config,
     live_repo_root,
 ) -> None:
     """Count questions should use deterministic querying, not semantic retrieval."""
-    case = load_ask_expectation("count_question_uses_context_query")
+    case = load_ask_expectation("count_question_uses_count_context")
     expectation = case["expected"]
     outcome = run_ask_case(
-        case_name="count_question_uses_context_query",
+        case_name="count_question_uses_count_context",
         live_config=live_config,
         live_repo_root=live_repo_root,
     )
@@ -236,10 +240,9 @@ def test_ask_count_question_uses_context_query(
     for tool_name in expectation["must_not_use_tools"]:
         assert tool_name not in tool_names
 
-    count_call = _find_first_tool_call(outcome.tool_calls, "context_query")
+    count_call = _find_first_tool_call(outcome.tool_calls, "count_context")
     args = count_call["args"] or {}
-    assert str(args.get("mode") or "").strip().lower() == expectation["context_query"]["mode"]
-    assert str(args.get("entity") or "").strip().lower() in expectation["context_query"]["entity_any_of"]
+    assert set(args).issubset({"filters"})
 
     assert any(token in answer for token in expectation["answer_must_include_any"])
 
@@ -270,12 +273,12 @@ def test_ask_semantic_topic_uses_search_then_fetch(
     for tool_name in expectation["must_not_use_tools"]:
         assert tool_name not in tool_names
 
-    search_index = tool_names.index("search_records")
-    fetch_index = tool_names.index("fetch_records")
+    search_index = tool_names.index("search_context")
+    fetch_index = tool_names.index("get_context")
     assert search_index < fetch_index
 
-    fetched_records = _returned_records_for_tool(outcome.tool_calls, outcome.tool_returns, "fetch_records")
-    assert fetched_records, "expected fetch_records to return support payloads"
+    fetched_records = _returned_records_for_tool(outcome.tool_calls, outcome.tool_returns, "get_context")
+    assert fetched_records, "expected get_context to return support payloads"
     fetched_support = _records_text(fetched_records)
     for token in expectation["answer_must_include_all"]:
         assert token in fetched_support
@@ -310,24 +313,20 @@ def test_ask_latest_question_prefers_exact_listing(
     for tool_name in expectation["must_not_use_tools"]:
         assert tool_name not in tool_names
 
-    list_calls = _find_all_tool_calls(outcome.tool_calls, "list_records")
-    context_calls = _find_all_tool_calls(outcome.tool_calls, "context_query")
+    list_calls = _find_all_tool_calls(outcome.tool_calls, "list_context")
+    context_calls = _find_all_tool_calls(outcome.tool_calls, "count_context")
     assert list_calls or context_calls, "expected exact listing/querying for latest question"
     latest_tool_name = min(
-        ("list_records", "context_query"),
+        ("list_context", "count_context"),
         key=lambda name: tool_names.index(name) if name in tool_names else len(tool_names),
     )
     latest_call = _find_first_tool_call(outcome.tool_calls, latest_tool_name)
     args = latest_call["args"] or {}
     effective_order_by = str(args.get("order_by") or "updated_at").strip().lower()
-    assert effective_order_by in expectation["list_records"]["order_by_any_of"]
-    kind_filters = args.get("kind_filters") or []
-    if isinstance(kind_filters, str):
-        kind_filters = [kind_filters]
-    effective_kind = str(args.get("kind") or "").strip().lower()
-    assert effective_kind == "decision" or kind_filters == ["decision"]
-    if "search_records" in tool_names:
-        assert tool_names.index(latest_tool_name) < tool_names.index("search_records")
+    assert effective_order_by in expectation["list_context"]["order_by_any_of"]
+    assert _has_kind_filter(args, "decision")
+    if "search_context" in tool_names:
+        assert tool_names.index(latest_tool_name) < tool_names.index("search_context")
 
     for token in expectation["answer_must_include_all"]:
         assert token in answer
@@ -357,21 +356,21 @@ def test_ask_current_readiness_prefers_newer_support(
     assert_no_removed_tools(tool_names)
 
     exact_calls = _find_all_tool_calls(
-        outcome.tool_calls, "list_records"
-    ) + _find_all_tool_calls(outcome.tool_calls, "context_query")
+        outcome.tool_calls, "list_context"
+    ) + _find_all_tool_calls(outcome.tool_calls, "count_context")
     assert exact_calls, "expected exact current-row inspection before synthesis"
     first_exact_name = min(
-        ("list_records", "context_query"),
+        ("list_context", "count_context"),
         key=lambda name: tool_names.index(name) if name in tool_names else len(tool_names),
     )
     first_exact = _find_first_tool_call(outcome.tool_calls, first_exact_name)
     first_exact_args = first_exact["args"] or {}
     assert str(first_exact_args.get("order_by") or "updated_at").strip().lower() == "updated_at"
     first_exact_index = tool_names.index(first_exact_name)
-    if "search_records" in tool_names:
-        assert first_exact_index < tool_names.index("search_records")
+    if "search_context" in tool_names:
+        assert first_exact_index < tool_names.index("search_context")
 
-    fetch_calls = _find_all_tool_calls(outcome.tool_calls, "fetch_records")
+    fetch_calls = _find_all_tool_calls(outcome.tool_calls, "get_context")
     assert fetch_calls, "expected full current support to be fetched"
     fetched_records = _returned_records_for_calls(outcome.tool_returns, fetch_calls)
     fetched_ids = {str(record.get("record_id")) for record in fetched_records}
@@ -423,12 +422,12 @@ def test_ask_time_window_question_narrows_before_synthesis(
     assert _has_time_window(args)
     assert _has_kind_filter(args, "decision")
     exact_index = _tool_call_index(outcome.tool_calls, exact_call)
-    if "search_records" in tool_names:
-        assert exact_index < tool_names.index("search_records")
+    if "search_context" in tool_names:
+        assert exact_index < tool_names.index("search_context")
 
-    fetch_calls = _find_all_tool_calls(outcome.tool_calls, "fetch_records")
+    fetch_calls = _find_all_tool_calls(outcome.tool_calls, "get_context")
     if fetch_calls:
-        fetch_index = tool_names.index("fetch_records")
+        fetch_index = tool_names.index("get_context")
         assert exact_index < fetch_index
 
     returned_support = _records_text(
@@ -476,8 +475,8 @@ def test_ask_time_window_zero_results_do_not_expand_scope(
     assert isinstance(args, dict)
     assert _has_time_window(args)
     assert _has_kind_filter(args, "decision")
-    if "search_records" in tool_names:
-        assert _tool_call_index(outcome.tool_calls, exact_call) < tool_names.index("search_records")
+    if "search_context" in tool_names:
+        assert _tool_call_index(outcome.tool_calls, exact_call) < tool_names.index("search_context")
     _assert_no_widening_after_zero_result(
         tool_calls=outcome.tool_calls,
         tool_returns=outcome.tool_returns,
@@ -532,13 +531,13 @@ def test_ask_mixed_question_strategy(
 
     narrow_call = _find_exact_time_window_call(outcome.tool_calls)
     narrow_index = _tool_call_index(outcome.tool_calls, narrow_call)
-    fetch_index = tool_names.index("fetch_records")
+    fetch_index = tool_names.index("get_context")
     assert narrow_index < fetch_index
-    if "search_records" in tool_names:
-        search_index = tool_names.index("search_records")
+    if "search_context" in tool_names:
+        search_index = tool_names.index("search_context")
         assert narrow_index < search_index < fetch_index
 
-    fetch_calls = _find_all_tool_calls(outcome.tool_calls, "fetch_records")
+    fetch_calls = _find_all_tool_calls(outcome.tool_calls, "get_context")
     returned_support = _records_text(_returned_records_for_calls(outcome.tool_returns, fetch_calls))
     for token in expectation["answer_must_include_all"]:
         assert token in returned_support
@@ -579,8 +578,8 @@ def test_ask_mixed_time_topic_no_in_window_match_stays_negative(
     args = first_exact["args"] or {}
     assert isinstance(args, dict)
     assert _has_time_window(args)
-    if "search_records" in tool_names:
-        search_index = tool_names.index("search_records")
+    if "search_context" in tool_names:
+        search_index = tool_names.index("search_context")
         exact_index = _tool_call_index(outcome.tool_calls, first_exact)
         assert exact_index < search_index
     _assert_no_widening_after_zero_result(

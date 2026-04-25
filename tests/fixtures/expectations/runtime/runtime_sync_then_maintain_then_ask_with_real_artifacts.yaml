@@ -8,5 +8,5 @@ expected:
   answer_must_not_include:
     - runaway queue pressure
   ask_tool_call_order:
-    - list_records
-    - fetch_records
+    - list_context
+    - get_context

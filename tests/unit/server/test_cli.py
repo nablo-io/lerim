@@ -157,8 +157,8 @@ def test_ask_verbose_forwards_flag_and_prints_debug(monkeypatch: pytest.MonkeyPa
                         "parts": [
                             {
                                 "part_kind": "tool-call",
-                                "tool_name": "context_query",
-                                "args": {"entity": "records", "mode": "count"},
+                                "tool_name": "count_context",
+                                "args": {},
                             },
                         ],
                     },
@@ -168,7 +168,7 @@ def test_ask_verbose_forwards_flag_and_prints_debug(monkeypatch: pytest.MonkeyPa
                         "parts": [
                             {
                                 "part_kind": "tool-return",
-                                "tool_name": "context_query",
+                                "tool_name": "count_context",
                                 "content_preview": "{\"count\": 3}",
                             },
                         ],
@@ -182,8 +182,8 @@ def test_ask_verbose_forwards_flag_and_prints_debug(monkeypatch: pytest.MonkeyPa
     assert code == 0
     assert captured["body"]["verbose"] is True
     assert "ASK TRACE" in output
-    assert "[tool-call] context_query" in output
-    assert "[tool-return] context_query -> {\"count\": 3}" in output
+    assert "[tool-call] count_context" in output
+    assert "[tool-return] count_context -> {\"count\": 3}" in output
 
 
 def test_ask_returns_nonzero_on_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:

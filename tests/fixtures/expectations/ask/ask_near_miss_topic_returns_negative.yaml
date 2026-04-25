@@ -14,7 +14,7 @@ seed_records:
     why: "It keeps local search simple and portable."
 expected:
   must_use_tools:
-    - search_records
+    - search_context
   must_not_use_tools: []
   answer_must_include_any:
     - no direct stored support

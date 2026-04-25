@@ -29,20 +29,20 @@ Lerim does not expose raw SQL or file CRUD to the agent.
 
 The durable context tools are:
 
-- `trace_read`
-- `list_records`
-- `search_records`
-- `fetch_records`
-- `create_record`
-- `update_record`
-- `archive_record`
-- `supersede_record`
-- `context_query`
+- `read_trace`
+- `list_context`
+- `search_context`
+- `get_context`
+- `save_context`
+- `revise_context`
+- `archive_context`
+- `supersede_context`
+- `count_context`
 
 The extract flow also uses:
 
-- `note`
-- `prune`
+- `note_trace_findings`
+- `prune_trace_reads`
 
 Retrieval is hybrid:
 

@@ -41,10 +41,21 @@ FORBIDDEN_CONTEXT_TABLES = {
 }
 REMOVED_TOOL_NAMES = {
     "archive",
+    "archive_record",
+    "context_query",
+    "create_record",
     "edit",
+    "fetch_records",
     "grep",
+    "list_records",
+    "note",
+    "prune",
     "read",
     "scan",
+    "search_records",
+    "supersede_record",
+    "trace_read",
+    "update_record",
     "verify_index",
     "write",
 }
@@ -52,27 +63,27 @@ FRAMEWORK_TOOL_NAMES = {
     "final_result",
 }
 EXTRACT_TOOL_NAMES = {
-    "create_record",
-    "fetch_records",
-    "note",
-    "prune",
-    "search_records",
-    "trace_read",
-    "update_record",
+    "save_context",
+    "get_context",
+    "note_trace_findings",
+    "prune_trace_reads",
+    "search_context",
+    "read_trace",
+    "revise_context",
 }
 MAINTAIN_TOOL_NAMES = {
-    "archive_record",
-    "fetch_records",
-    "list_records",
-    "search_records",
-    "supersede_record",
-    "update_record",
+    "archive_context",
+    "get_context",
+    "list_context",
+    "search_context",
+    "supersede_context",
+    "revise_context",
 }
 ASK_TOOL_NAMES = {
-    "context_query",
-    "fetch_records",
-    "list_records",
-    "search_records",
+    "count_context",
+    "get_context",
+    "list_context",
+    "search_context",
 }
 _API_KEY_ATTRS = {
     "minimax": "minimax_api_key",

@@ -32,8 +32,8 @@ def test_extract_clear_decision_ignores_implementation_noise(
     )
 
     tool_names = outcome.tool_names
-    assert "trace_read" in tool_names
-    assert "create_record" in tool_names
+    assert "read_trace" in tool_names
+    assert "save_context" in tool_names
     assert set(tool_names).issubset(EXTRACT_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
     assert_no_removed_tools(tool_names)
     for tool_name in expectation["must_use_tools"]:

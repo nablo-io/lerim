@@ -18,13 +18,13 @@ from lerim.agents.model_settings import LOW_VARIANCE_AGENT_MODEL_SETTINGS
 from lerim.agents.tools import (
     ContextDeps,
     compute_request_budget,
-    create_record,
-    fetch_records,
-    note,
-    prune,
-    search_records,
-    trace_read,
-    update_record,
+    save_context,
+    get_context,
+    note_trace_findings,
+    prune_trace_reads,
+    search_context,
+    read_trace,
+    revise_context,
 )
 from lerim.context import ContextStore, DURABLE_RECORD_KINDS, format_durable_record_kinds
 from lerim.context.project_identity import ProjectIdentity
@@ -79,26 +79,25 @@ A temporary code-state finding, audit observation, open task, or release-risk re
 - rejected lures, discarded explanations, or implementation-only distractions
 </what_not_to_save>
 
-<tool_flow>
-- Use `trace_read` to read the trace in chunks until the full trace is covered. Do not start writing while unread trace lines remain.
-- Use `note` as a write-only scratchpad for findings from chunks you have already read. Notes are summarized back to you on later turns; do not re-note the same point unless you learned something new.
-- In `note`, keep the durable theme and its supporting implementation evidence together. Do not record a rejected lure or discarded explanation as its own durable finding/theme.
-- In `note`, if one apparent finding only applies, routes, or operationalizes another finding, keep them as one durable theme instead of separate durable themes.
-- If you need more than one `trace_read`, call `note` before any `create_record` or `update_record`.
-- If you read many chunks, call `prune` only after those chunks have already been captured in notes.
-- Use `search_records` before creating a durable record whenever the trace suggests an earlier record, duplicate risk, or "same meaning vs new meaning" judgment.
-- The injected existing-record manifest is only a shortlist. It is never enough evidence for `update_record`.
-- Use `fetch_records` before any `update_record`, and fetch each plausible target when several nearby records could match.
-- Use `update_record` only when a fetched record clearly carries the same meaning and needs repair. If the core claim differs, create a new record instead.
+<workflow>
+- Read the trace in chunks until the full trace is covered. Do not start writing while unread trace lines remain.
+- Use the findings scratchpad for evidence from chunks you have already read. Notes are summarized back to you on later turns; do not record the same point again unless you learned something new.
+- Keep each durable theme and its supporting implementation evidence together. Do not record a rejected lure or discarded explanation as its own durable finding/theme.
+- If one apparent finding only applies, routes, or operationalizes another finding, keep them as one durable theme instead of separate durable themes.
+- If the trace needs more than one read, record findings before saving or revising context.
+- If you read many chunks, prune older read results only after those chunks have already been captured in notes.
+- Search existing context before creating a durable record whenever the trace suggests an earlier record, duplicate risk, or "same meaning vs new meaning" judgment.
+- The injected existing-record manifest is only a shortlist. It is never enough evidence for a revision.
+- Fetch full records before any revision, and fetch each plausible target when several nearby records could match.
+- Revise only when a fetched record clearly carries the same meaning and needs repair. If the core claim differs, create a new record instead.
 - When the trace says an existing durable rule is correct but needs tightening, clarification, or a better why, fetch that record and update it rather than leaving the weaker wording unchanged.
-- Do not use `update_record` to polish a record you created earlier in the same run. Draft fresh records carefully and create them once.
-- `context_query` is intentionally not available in extraction. Extraction writes evidence-backed records; deterministic aggregate queries are reserved for ask.
-</tool_flow>
+- Avoid cosmetic same-run revisions. Revise a same-run record only to fix a concrete durable-context error or prevent a duplicate.
+</workflow>
 
 <dashboards>
 - The system may inject `CONTEXT:` messages showing approximate context pressure. At soft or hard pressure, prune old trace chunks after their findings are captured.
 - The system may inject `NOTES:` messages summarizing findings and trace coverage. Use them as a progress dashboard, not as a replacement for reading unread trace lines.
-- `note` writes the findings dashboard for future turns; do not try to reread the dashboard with tools.
+- The findings scratchpad writes the dashboard for future turns; do not try to reread the dashboard with tools.
 </dashboards>
 
 <selection_rules>
@@ -161,16 +160,6 @@ A temporary code-state finding, audit observation, open task, or release-risk re
 - If the session is mostly routine operational work with little future value and no durable record, create the episode with `status="archived"`.
 </writing_rules>
 
-<record_requirements>
-- Every record must have non-empty `title` and `body`.
-- Valid record statuses are only `active` and `archived`.
-- Episode records must include `body`, `user_intent`, and `what_happened`; `outcomes` is optional.
-- Episode records should use `status="active"` when they carry useful future context, and `status="archived"` for low-value routine sessions with no durable signal.
-- Decision records must include both `decision` and `why`; `alternatives` and `consequences` are optional.
-- If you cannot supply both `decision` and `why`, do not create a decision record.
-- Fact, preference, constraint, and reference records should usually only fill `title` and `body`.
-</record_requirements>
-
 <record_types>
 <type name="preference">
 Stable workflow guidance from the user. Save corrections and confirmed non-obvious working style that should carry into future sessions.
@@ -204,7 +193,7 @@ Use `reference` only when the enduring value is where to look later. If the trac
 Create one preference record about keeping replies terse and not appending redundant change recaps.
 </good>
 <bad>
-Store the file edit itself, or treat the correction as only a one-session note when it is clearly stable workflow guidance.
+Store the file edit itself, or treat the correction as only a one-session scratch finding when it is clearly stable workflow guidance.
 </bad>
 </example>
 
@@ -368,7 +357,7 @@ def build_extract_agent(model: Model) -> Agent[ContextDeps, ExtractionResult]:
         deps_type=ContextDeps,
         output_type=ExtractionResult,
         system_prompt=SYSTEM_PROMPT,
-        tools=[trace_read, search_records, fetch_records, create_record, update_record, note, prune],
+        tools=[read_trace, search_context, get_context, save_context, revise_context, note_trace_findings, prune_trace_reads],
         model_settings=LOW_VARIANCE_AGENT_MODEL_SETTINGS,
         history_processors=[
             context_pressure_injector,
@@ -487,10 +476,9 @@ def run_extraction(
             f"Source session started_at: {source_time_text}. Treat the trace as evidence from "
             "that time, not as a fresh verification of the current repository. "
             f"This trace has {trace_line_count} lines. Read all chunks before writing. "
-            "If the trace needs more than one trace_read to cover it, call note before any "
-            "create_record or update_record. "
+            "If the trace needs more than one read to cover it, record findings before any write. "
             "If relevant existing durable records are shown below, treat them as a shortlist only; "
-            "fetch the full record before any update_record."
+            "fetch the full record before any revision."
             + (f"\n\n{existing_record_manifest}" if existing_record_manifest else "")
         ),
         deps=deps,

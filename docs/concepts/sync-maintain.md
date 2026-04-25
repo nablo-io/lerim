@@ -20,7 +20,7 @@ records:
 2. **Index** -- new sessions are cataloged in `sessions.sqlite3`
 3. **Match to project** -- sessions matching a registered project are enqueued; unmatched sessions are indexed but not extracted
 4. **Compact** -- traces are compacted (tool outputs stripped) and cached
-5. **Extract flow** -- the PydanticAI extraction agent (`[roles.agent]`) reads the trace and uses `trace_read`, `note`, `prune`, `search_records`, `fetch_records`, `create_record`, and `update_record` to write one episode record plus a small number of durable records into `~/.lerim/context.sqlite3`
+5. **Extract flow** -- the PydanticAI extraction agent (`[roles.agent]`) reads the trace and uses `read_trace`, `note_trace_findings`, `prune_trace_reads`, `search_context`, `get_context`, `save_context`, and `revise_context` to write one episode record plus a small number of durable records into `~/.lerim/context.sqlite3`
 
 ### Record quality contract
 
@@ -54,11 +54,11 @@ lerim sync --max-sessions 10         # limit batch size
 The maintain path runs offline refinement over stored context records,
 iterating over all registered projects:
 
-1. **Browse** -- `list_records()` scans active records in one project scope with exact ordering and filters
-2. **Search** -- `search_records()` finds semantic duplicate candidates or topic-related records when needed
-3. **Inspect** -- `fetch_records()` loads only the records that may change
-4. **Refine or supersede** -- `update_record()` and `supersede_record()` improve or replace redundant truth
-5. **Archive low-value** -- `archive_record()` moves junk or routine rows to archived status in the DB
+1. **Browse** -- `list_context()` scans active records in one project scope with exact ordering and filters
+2. **Search** -- `search_context()` finds semantic duplicate candidates or topic-related records when needed
+3. **Inspect** -- `get_context()` loads only the records that may change
+4. **Refine or supersede** -- `revise_context()` and `supersede_context()` improve or replace redundant truth
+5. **Archive low-value** -- `archive_context()` moves junk or routine rows to archived status in the DB
 6. **Keep the store lean** -- the maintainer prefers stronger durable records over a noisy pile of routine episodes
 7. **Compress weak records** -- when records are too verbose or read like session reports, the maintainer should rewrite them into compact reusable context instead of preserving the recap style
 

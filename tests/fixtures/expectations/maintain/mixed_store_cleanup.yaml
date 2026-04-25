@@ -3,11 +3,11 @@ summary: Handle archive, supersede, and durable-record rewrite in one maintain p
 
 expected:
   must_use_tools:
-    - list_records
-    - fetch_records
-    - archive_record
-    - supersede_record
-    - update_record
+    - list_context
+    - get_context
+    - archive_context
+    - supersede_context
+    - revise_context
   required_change_kinds:
     - archive
     - supersede

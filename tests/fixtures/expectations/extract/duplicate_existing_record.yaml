@@ -7,10 +7,10 @@ expected:
   changed_record_count: 2
   changed_decision_count: 1
   must_use_tools:
-    - trace_read
-    - create_record
-    - fetch_records
-    - update_record
+    - read_trace
+    - save_context
+    - get_context
+    - revise_context
   must_not_use_tools:
     - prune
   updated_decision_text_must_include_all:

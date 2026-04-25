@@ -41,15 +41,15 @@ def test_ask_distinguishes_current_truth_from_historical_truth(
     assert set(tool_names).issubset(ASK_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
     assert_no_removed_tools(tool_names)
 
-    list_calls = _find_all_tool_calls(outcome.tool_calls, "list_records")
-    context_calls = _find_all_tool_calls(outcome.tool_calls, "context_query")
-    search_calls = _find_all_tool_calls(outcome.tool_calls, "search_records")
+    list_calls = _find_all_tool_calls(outcome.tool_calls, "list_context")
+    context_calls = _find_all_tool_calls(outcome.tool_calls, "count_context")
+    search_calls = _find_all_tool_calls(outcome.tool_calls, "search_context")
     assert list_calls or context_calls or search_calls
     if search_calls:
         first_search_args = search_calls[0]["args"] or {}
         assert bool(first_search_args.get("include_archived")) is True
 
-    fetch_calls = _find_all_tool_calls(outcome.tool_calls, "fetch_records")
+    fetch_calls = _find_all_tool_calls(outcome.tool_calls, "get_context")
     assert fetch_calls, "expected current and historical supporting records to be fetched"
     if fetch_calls:
         fetched_ids: set[str] = set()
@@ -122,9 +122,9 @@ def test_ask_as_of_date_uses_valid_at(
     assert outcome.result.answer.strip()
     assert set(tool_names).issubset(ASK_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
     assert_no_removed_tools(tool_names)
-    list_calls = _find_all_tool_calls(outcome.tool_calls, "list_records")
-    context_calls = _find_all_tool_calls(outcome.tool_calls, "context_query")
-    search_calls = _find_all_tool_calls(outcome.tool_calls, "search_records")
+    list_calls = _find_all_tool_calls(outcome.tool_calls, "list_context")
+    context_calls = _find_all_tool_calls(outcome.tool_calls, "count_context")
+    search_calls = _find_all_tool_calls(outcome.tool_calls, "search_context")
     assert list_calls or context_calls or search_calls
     first_call = list_calls[0] if list_calls else context_calls[0] if context_calls else search_calls[0]
     args = first_call["args"] or {}
@@ -201,7 +201,7 @@ def test_ask_calls_out_when_support_is_only_episodic(
     for tool_name in expectation["must_use_tools"]:
         assert tool_name in tool_names
 
-    assert "fetch_records" in tool_names
+    assert "get_context" in tool_names
     assert any(token in answer for token in expectation["answer_must_include_any"])
     assert any(token in answer for token in expectation["answer_must_include_any_missing_durable"])
 
@@ -261,7 +261,7 @@ def test_ask_multi_record_synthesis(
     for tool_name in expectation["must_not_use_tools"]:
         assert tool_name not in tool_names
 
-    fetch_calls = _find_all_tool_calls(outcome.tool_calls, "fetch_records")
+    fetch_calls = _find_all_tool_calls(outcome.tool_calls, "get_context")
     assert fetch_calls, "expected fetched records before synthesis"
     fetched_ids: set[str] = set()
     for call in fetch_calls:

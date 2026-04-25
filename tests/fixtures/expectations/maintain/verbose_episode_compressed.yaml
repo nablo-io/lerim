@@ -3,10 +3,10 @@ summary: Rewrite a verbose active episode into a compact recap instead of archiv
 
 expected:
   must_use_tools:
-    - fetch_records
-    - update_record
+    - get_context
+    - revise_context
   must_not_use_tools:
-    - archive_record
+    - archive_context
   max_body_sentences: 4
   episode_text_must_include_any:
     - boundary

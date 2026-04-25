@@ -52,13 +52,13 @@ class TestBuildExtractAgent:
     def test_tool_names(self):
         agent = build_extract_agent(_make_model())
         expected = {
-            "trace_read",
-            "search_records",
-            "fetch_records",
-            "create_record",
-            "update_record",
-            "note",
-            "prune",
+            "read_trace",
+            "search_context",
+            "get_context",
+            "save_context",
+            "revise_context",
+            "note_trace_findings",
+            "prune_trace_reads",
         }
         assert _get_tool_names(agent) == expected
 
@@ -93,18 +93,18 @@ class TestBuildMaintainAgent:
     def test_tool_names(self):
         agent = build_maintain_agent(_make_model())
         expected = {
-            "list_records",
-            "search_records",
-            "fetch_records",
-            "update_record",
-            "archive_record",
-            "supersede_record",
+            "list_context",
+            "search_context",
+            "get_context",
+            "revise_context",
+            "archive_context",
+            "supersede_context",
         }
         assert _get_tool_names(agent) == expected
 
-    def test_no_trace_read_tool(self):
+    def test_no_read_trace_tool(self):
         agent = build_maintain_agent(_make_model())
-        assert "trace_read" not in _get_tool_names(agent)
+        assert "read_trace" not in _get_tool_names(agent)
 
     def test_retries_five(self):
         agent = build_maintain_agent(_make_model())
@@ -132,18 +132,18 @@ class TestBuildAskAgent:
 
     def test_tool_names_read_only(self):
         agent = build_ask_agent(_make_model())
-        expected = {"context_query", "list_records", "search_records", "fetch_records"}
+        expected = {"count_context", "list_context", "search_context", "get_context"}
         assert _get_tool_names(agent) == expected
 
     def test_no_write_tools(self):
         agent = build_ask_agent(_make_model())
         write_tools = {
-            "create_record",
-            "update_record",
-            "archive_record",
-            "supersede_record",
-            "note",
-            "prune",
+            "save_context",
+            "revise_context",
+            "archive_context",
+            "supersede_context",
+            "note_trace_findings",
+            "prune_trace_reads",
         }
         assert _get_tool_names(agent).isdisjoint(write_tools)
 

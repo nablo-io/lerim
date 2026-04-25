@@ -38,7 +38,7 @@ def test_extract_long_trace_requires_note_before_writing(
         assert tool_name in tool_names
     for tool_name in expectation["must_not_use_tools"]:
         assert tool_name not in tool_names
-    assert tool_names.count("trace_read") >= expectation["trace_read_count_at_least"]
+    assert tool_names.count("read_trace") >= expectation["read_trace_count_at_least"]
     assert tool_names.count("note") >= expectation["note_count_at_least"]
 
     rows = outcome.rows
@@ -112,7 +112,7 @@ def test_extract_very_long_trace_requires_prune(
         assert tool_name in tool_names
     for tool_name in expectation["must_not_use_tools"]:
         assert tool_name not in tool_names
-    assert tool_names.count("trace_read") >= expectation["trace_read_count_at_least"]
+    assert tool_names.count("read_trace") >= expectation["read_trace_count_at_least"]
     assert tool_names.count("note") >= expectation["note_count_at_least"]
     assert tool_names.count("prune") >= expectation["prune_count_at_least"]
 
@@ -167,7 +167,7 @@ def test_extract_late_disambiguation_at_end_of_trace(
     assert_no_removed_tools(tool_names)
     for tool_name in expectation["must_use_tools"]:
         assert tool_name in tool_names
-    assert tool_names.count("trace_read") >= expectation["min_trace_read_calls"]
+    assert tool_names.count("read_trace") >= expectation["min_read_trace_calls"]
 
     rows = outcome.rows
     episode_rows = [row for row in rows if row["kind"] == "episode"]

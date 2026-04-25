@@ -6,10 +6,10 @@ expected:
   durable_count: 1
   constraint_count: 1
   must_use_tools:
-    - trace_read
-    - create_record
+    - read_trace
+    - save_context
   must_not_use_tools:
-    - update_record
+    - revise_context
   constraint_text_must_include_all:
     - at most one
     - checkpoint

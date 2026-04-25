@@ -105,9 +105,9 @@ The current system is:
 - canonical session catalog in `~/.lerim/index/sessions.sqlite3`
 - canonical run artifacts in `~/.lerim/workspace/`
 - local semantic retrieval via ONNX embeddings + `sqlite-vec` + FTS5 + RRF
-- extract tools: `trace_read`, `search_records`, `fetch_records`, `create_record`, `update_record`, `note`, `prune`
-- maintain tools: `list_records`, `search_records`, `fetch_records`, `update_record`, `archive_record`, `supersede_record`
-- ask tools: `list_records`, `search_records`, `fetch_records`, `context_query`
+- extract tools: `read_trace`, `search_context`, `get_context`, `save_context`, `revise_context`, `note_trace_findings`, `prune_trace_reads`
+- maintain tools: `list_context`, `search_context`, `get_context`, `revise_context`, `archive_context`, `supersede_context`
+- ask tools: `list_context`, `search_context`, `get_context`, `count_context`
 
 ## Fixtures
 

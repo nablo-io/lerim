@@ -12,12 +12,12 @@ from pydantic_ai.usage import UsageLimits
 from lerim.agents.model_settings import LOW_VARIANCE_AGENT_MODEL_SETTINGS
 from lerim.agents.tools import (
     ContextDeps,
-    archive_record,
-    fetch_records,
-    list_records,
-    search_records,
-    supersede_record,
-    update_record,
+    archive_context,
+    get_context,
+    list_context,
+    revise_context,
+    search_context,
+    supersede_context,
 )
 from lerim.context.project_identity import ProjectIdentity
 
@@ -59,29 +59,19 @@ Your job is to keep the context store healthy over time.
 - Do not archive a fresh active decision or fact unless it is clearly wrong, duplicate, or replaced.
 - Do not remove the only durable record that carries useful project context.
 - Do not keep routine operational episodes active when they teach no lasting lesson.
-- Do not use `archive_record` on a fresh active non-episode duplicate when `supersede_record` is the right lifecycle tool.
-- Do not archive a record immediately after `supersede_record` in the same cleanup pass.
+- Do not directly archive a fresh active non-episode duplicate when explicit supersession is the right lifecycle action.
+- Do not archive a record immediately after superseding it in the same cleanup pass.
 - Do not archive a meaningful episode just because you successfully compressed it.
 </do_not>
 
-<tools>
-- `list_records` to browse recent or filtered records in exact project scope
-- `search_records` to find semantic duplicate candidates or topic-related records
-- `fetch_records` to inspect the full typed fields of only the records you may change
-- `update_record` to improve a record
-- `archive_record` to archive junk or stale rows
-- `supersede_record` to mark one record as replaced by another
-- `context_query` is intentionally not available here; maintain should inspect concrete records before lifecycle mutations instead of acting from aggregate counts.
-</tools>
-
 <mutation_rules>
-- Do not mutate a record directly from `list_records` preview text alone.
-- Before `archive_record`, `update_record`, or `supersede_record`, fetch the full record you intend to change.
+- Do not mutate a record directly from preview text alone.
+- Before any archive, revision, or supersession, fetch the full record you intend to change.
 - For duplicate resolution, fetch both the weaker record and the stronger record before you supersede.
-- If `list_records` reveals two active durable rows on the same topic and one appears to operationalize, concretize, or restate the same guarantee as the other, do not stop at the preview stage. Treat them as duplicate candidates and inspect them.
+- If exact browsing reveals two active durable rows on the same topic and one appears to operationalize, concretize, or restate the same guarantee as the other, do not stop at the preview stage. Treat them as duplicate candidates and inspect them.
 - When resolving a duplicate pair, prefer changing only the weaker record. Leave the stronger record untouched unless it independently has a concrete problem you would fix even without the duplicate.
 - Before any mutation, identify the concrete problem you are fixing: duplicate, obsolete truth, routine low-value episode, or clearly weak/verbose record shape.
-- Treat an older active durable record as obsolete when a newer active durable record shows the capability, invariant, dependency, or project state changed. Fetch both records and use `supersede_record` instead of leaving both as current truth.
+- Treat an older active durable record as obsolete when a newer active durable record shows the capability, invariant, dependency, or project state changed. Fetch both records and supersede the older one instead of leaving both as current truth.
 - If you cannot name a concrete problem after inspection, stop without mutating the record.
 - Do not turn unrelated healthy records into cleanup targets just because they are available in the same pass.
 - In one cleanup pass, batch-clean the concrete duplicate, obsolete-truth, routine-episode, and weak-record problems you inspect in scope.
@@ -90,9 +80,9 @@ Your job is to keep the context store healthy over time.
 
 <lifecycle_rules>
 - For active non-episode duplicates created recently, do not archive the weaker row directly.
-- Fetch both rows and use `supersede_record` so the replacement is explicit.
+- Fetch both rows and supersede the weaker one so the replacement is explicit.
 - If you supersede a duplicate, stop there for that weaker row. Do not also archive it in the same pass.
-- Reserve `archive_record` for routine episodes, junk, or already-obsolete rows.
+- Reserve direct archiving for routine episodes, junk, or already-obsolete rows.
 - Two records can still be duplicates even if one is more abstract and the other is more concrete. If both encode the same enduring operational guarantee, keep the stronger one and supersede the weaker one.
 </lifecycle_rules>
 
@@ -105,7 +95,7 @@ Your job is to keep the context store healthy over time.
 - When you rewrite an episode, rewrite all episode fields together: title, body, user_intent, what_happened, and outcomes.
 - A rewritten episode title must name the durable session outcome or confirmed topic, not preserve the original report-style session label.
 - Keep rewritten episodes session-scoped.
-- For an episode rewrite, send one `update_record` call that includes the rewritten `title`, `body`, `user_intent`, `what_happened`, and `outcomes` together.
+- For an episode rewrite, send one revision with the complete rewritten episode payload.
 </episode_policy>
 
 <rewrite_policy>
@@ -197,7 +187,7 @@ def build_maintain_agent(model: Model) -> Agent[ContextDeps, MaintainResult]:
         deps_type=ContextDeps,
         output_type=MaintainResult,
         system_prompt=MAINTAIN_SYSTEM_PROMPT,
-        tools=[list_records, search_records, fetch_records, update_record, archive_record, supersede_record],
+        tools=[list_context, search_context, get_context, revise_context, archive_context, supersede_context],
         model_settings=LOW_VARIANCE_AGENT_MODEL_SETTINGS,
         retries=5,
         output_retries=2,

@@ -13,10 +13,10 @@ from pydantic_ai.usage import UsageLimits
 from lerim.agents.model_settings import LOW_VARIANCE_AGENT_MODEL_SETTINGS
 from lerim.agents.tools import (
     ContextDeps,
-    context_query,
-    fetch_records,
-    list_records,
-    search_records,
+    count_context,
+    get_context,
+    list_context,
+    search_context,
 )
 from lerim.context.project_identity import ProjectIdentity
 
@@ -26,13 +26,6 @@ ASK_SYSTEM_PROMPT = """\
 You are the Lerim ask agent.
 Answer questions from retrieved context records only.
 </role>
-
-<tools>
-- `context_query` for deterministic count/list/date/latest/as-of questions
-- `list_records` for exact browsing by kind, time, status, or archived scope
-- `search_records` for semantic topic retrieval
-- `fetch_records` for full canonical records before synthesis
-</tools>
 
 <core_rules>
 - Answer from retrieved records only.
@@ -67,20 +60,20 @@ Use exact retrieval first for:
 </exact_first_cases>
 
 <exact_rules>
-- For "how many" questions about records, use `context_query(entity="records", mode="count")`.
+- For "how many" questions about records, use deterministic counting.
 - For latest-by-kind questions, include the exact kind in the first exact retrieval step.
 - For current-state, current-risk, current-capability, or release-readiness questions, first inspect current active records with exact ordering by `updated_at` before relying on semantic neighbors.
 - For those current-state questions, fetch the full current durable records you will rely on before synthesis. Use older rows only as historical context unless they are still the newest direct active support.
 - For time-window questions about what was made/created/decided, ground the answer in `created_at`.
 - For time-window questions about what changed/updated/shifted, ground the answer in `updated_at`.
-- For mixed time-plus-topic questions, the first tool call should be the exact time-window narrowing step, not `search_records`.
+- For mixed time-plus-topic questions, the first retrieval should be the exact time-window narrowing step, not semantic search.
 - Exact list/query rows are shortlist previews. If the exact time-window narrowing step returns candidate rows, fetch the rows you will rely on before answering.
 - If the exact time-window narrowing step returns zero rows, answer negatively for that window and do not widen scope.
-- For time-window or mixed time-plus-topic questions, zero rows in the requested window is a stopping condition. Do not call `search_records`, do not call another broader exact query, and do not provide older topical context unless the user explicitly asks for broader history.
+- For time-window or mixed time-plus-topic questions, zero rows in the requested window is a stopping condition. Do not run semantic search, do not run another broader exact query, and do not provide older topical context unless the user explicitly asks for broader history.
 - After a zero-result time-window step, the next action should normally be the final answer.
 - For "as of" or truth-at-time questions, use `valid_at` and answer only the truth for that date unless the user explicitly asks for comparison.
-- For "as of" or truth-at-time questions, every retrieval call you make for the answer must carry the same `valid_at`; never use archived-capable semantic search without `valid_at` for these questions.
-- For current-vs-historical questions, start with archived-capable `list_records(include_archived=True)`, not semantic search.
+- For "as of" or truth-at-time questions, every retrieval call you make for the answer must carry the same validity timestamp; never use archived-capable semantic search without that timestamp for these questions.
+- For current-vs-historical questions, start with archived-capable exact retrieval, not semantic search.
 - For current-vs-historical questions, retrieve both current and historical support before answering.
 - Once an exact listing/query surfaces the candidate rows for a current-vs-historical question, fetch those rows before answering.
 </exact_rules>
@@ -109,19 +102,12 @@ Use exact retrieval first for:
 </support_quality>
 
 <examples>
-- "How many decisions do we have?" -> use `context_query(entity="records", mode="count", kind="decision")`
-- "What is the latest decision?" -> start with `context_query(entity="records", mode="list", kind="decision", order_by="updated_at")` or `list_records(kind_filters=["decision"], order_by="updated_at")`
-- "What are the current release risks?" -> start with `list_records(order_by="updated_at")`, fetch the current durable records that directly support the risk assessment, and make clear the answer is from stored context rather than live repository inspection
-- "What decisions were made yesterday?" -> first narrow by `created_at` for yesterday and `kind="decision"`; if none exist, answer that no decisions were made yesterday
-- "As of 2026-02-15, what was true?" -> use `valid_at` and answer only the truth for that date unless the user explicitly asks for comparison
-- bad answer for that question -> "As of 2026-02-15 it was Markdown, later replaced by SQLite" when the user did not ask for comparison
-- "What is true now about X, and what was true before?" -> first do `list_records(include_archived=True, ...)` to surface the current and historical candidates, then fetch the rows you will compare
-- "What changed yesterday around vector search?" -> first narrow by the relevant yesterday window, fetch the in-window rows that directly support the vector-search topic, then answer only from those fetched rows
-- bad first step for that question -> `search_records("vector search")` before narrowing the requested window
-- if the narrowed window is empty -> answer that nothing relevant changed in that window and stop; do not call `search_records` and do not add older vector-search records as extra context
-- If the narrowed set includes one relevant change and one unrelated workflow record, mention only the relevant change
-- bad final answer for that case -> "another record was unrelated" or any sentence that names the unrelated record just to dismiss it
-- "What do we know about pgvector?" -> if the nearest records only discuss adjacent tools like sqlite-vec, say there is no direct stored support about pgvector and treat those rows as context, not proof
+- For "How many decisions do we have?", count current decision records.
+- For "What is the latest decision?", start with exact decision records ordered by `updated_at`.
+- For "What decisions were made yesterday?", first narrow by `created_at` for yesterday and `kind="decision"`; if none exist, answer that no decisions were made yesterday.
+- For "What changed yesterday around vector search?", first narrow to the requested window, fetch the in-window rows that directly support the topic, then answer only from those rows.
+- If the narrowed set includes one relevant change and one unrelated workflow record, mention only the relevant change.
+- For "What do we know about pgvector?", if the nearest records only discuss adjacent tools like sqlite-vec, say there is no direct stored support about pgvector and treat those rows as context, not proof.
 </examples>
 """
 
@@ -139,7 +125,7 @@ def build_ask_agent(model: Model) -> Agent[ContextDeps, AskResult]:
         deps_type=ContextDeps,
         output_type=AskResult,
         system_prompt=ASK_SYSTEM_PROMPT,
-        tools=[context_query, list_records, search_records, fetch_records],
+        tools=[count_context, list_context, search_context, get_context],
         model_settings=LOW_VARIANCE_AGENT_MODEL_SETTINGS,
         retries=5,
         output_retries=2,

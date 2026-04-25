@@ -7,10 +7,10 @@ expected:
   decision_count: 0
   fact_count: 1
   must_use_tools:
-    - trace_read
-    - create_record
+    - read_trace
+    - save_context
   must_not_use_tools:
-    - update_record
+    - revise_context
   fact_text_must_include_all:
     - libvips
     - environment

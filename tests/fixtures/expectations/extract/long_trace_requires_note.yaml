@@ -5,14 +5,14 @@ expected:
   episode_count: 1
   durable_count: 1
   decision_count: 1
-  trace_read_count_at_least: 2
+  read_trace_count_at_least: 2
   note_count_at_least: 1
   must_use_tools:
-    - trace_read
+    - read_trace
     - note
-    - create_record
+    - save_context
   must_not_use_tools:
-    - update_record
+    - revise_context
   decision_text_must_include_all:
     - retry
     - budget

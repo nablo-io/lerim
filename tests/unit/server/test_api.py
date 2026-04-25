@@ -291,14 +291,14 @@ def test_api_ask_includes_debug_when_verbose(monkeypatch, tmp_path) -> None:
 				"3 records",
 				"sid-1",
 				0.0,
-				{"tool_calls": [{"tool_name": "context_query"}], "tool_results": []},
+				{"tool_calls": [{"tool_name": "count_context"}], "tool_results": []},
 			)
 
 	monkeypatch.setattr(api_mod, "LerimRuntime", lambda: _FakeRuntime())
 
 	payload = api_mod.api_ask("how many records", verbose=True)
 	assert payload["answer"] == "3 records"
-	assert payload["debug"]["tool_calls"][0]["tool_name"] == "context_query"
+	assert payload["debug"]["tool_calls"][0]["tool_name"] == "count_context"
 
 
 def test_api_query_empty_project_selection_returns_empty_scope(

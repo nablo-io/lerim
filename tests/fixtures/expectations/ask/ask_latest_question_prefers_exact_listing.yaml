@@ -39,7 +39,7 @@ seed_records:
 expected:
   must_use_tools: []
   must_not_use_tools: []
-  list_records:
+  list_context:
     order_by_any_of:
       - "created_at"
       - "updated_at"

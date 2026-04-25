@@ -327,8 +327,8 @@ class TestAskFlow:
 				AskResult(answer="answer text"),
 				[
 					ModelRequest(parts=[SystemPromptPart(content="system"), UserPromptPart(content="how many records?")]),
-					ModelResponse(parts=[ToolCallPart(tool_name="context_query", args={"entity": "records", "mode": "count"}, tool_call_id="call-1")]),
-					ModelRequest(parts=[ToolReturnPart(tool_name="context_query", content='{"count": 3}', tool_call_id="call-1")]),
+					ModelResponse(parts=[ToolCallPart(tool_name="count_context", args={}, tool_call_id="call-1")]),
+					ModelRequest(parts=[ToolReturnPart(tool_name="count_context", content='{"count": 3}', tool_call_id="call-1")]),
 				],
 			)
 
@@ -336,7 +336,7 @@ class TestAskFlow:
 		answer, _, _, debug = rt.ask("how many records?", repo_root=tmp_path, include_debug=True)
 		assert answer == "answer text"
 		assert debug is not None
-		assert debug["tool_calls"][0]["tool_name"] == "context_query"
-		assert debug["tool_results"][0]["tool_name"] == "context_query"
+		assert debug["tool_calls"][0]["tool_name"] == "count_context"
+		assert debug["tool_results"][0]["tool_name"] == "count_context"
 		assert debug["messages"][0]["parts"][0]["part_kind"] == "system-prompt"
 		assert debug["messages"][1]["parts"][0]["part_kind"] == "tool-call"

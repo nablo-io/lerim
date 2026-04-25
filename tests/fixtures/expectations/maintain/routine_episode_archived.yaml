@@ -3,8 +3,8 @@ summary: Archive routine low-value active episodes.
 
 expected:
   must_use_tools:
-    - list_records
-    - fetch_records
-    - archive_record
+    - list_context
+    - get_context
+    - archive_context
   must_not_use_tools:
-    - supersede_record
+    - supersede_context

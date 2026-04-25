@@ -8,11 +8,11 @@ expected:
     - decision
     - fact
     - constraint
-  min_trace_read_calls: 2
+  min_read_trace_calls: 2
   must_use_tools:
-    - trace_read
+    - read_trace
     - note
-    - create_record
+    - save_context
   must_not_use_tools: []
   durable_text_must_include_all:
     - lease

@@ -12,8 +12,8 @@ seed_records:
     body: "Queue-processing state behaves like runtime coordination state, not user-facing product state."
 expected:
   must_use_tools:
-    - "search_records"
-    - "fetch_records"
+    - "search_context"
+    - "get_context"
   must_not_use_tools: []
   answer_must_include_all:
     - "recovery"

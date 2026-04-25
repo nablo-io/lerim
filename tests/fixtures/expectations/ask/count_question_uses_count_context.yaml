@@ -21,15 +21,11 @@ seed_records:
     why: "It was replaced and is no longer current."
 expected:
   must_use_tools:
-    - "context_query"
+    - "count_context"
   must_not_use_tools:
-    - "search_records"
-    - "fetch_records"
-    - "list_records"
-  context_query:
-    mode: "count"
-    entity_any_of:
-      - "records"
+    - "search_context"
+    - "get_context"
+    - "list_context"
   answer_must_include_any:
     - "2"
     - "two"

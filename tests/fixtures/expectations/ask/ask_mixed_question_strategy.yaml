@@ -36,7 +36,7 @@ seed_records:
     why: "This keeps collaboration explicit."
 expected:
   must_use_tools:
-    - "fetch_records"
+    - "get_context"
   answer_must_include_all:
     - "sqlite-vec"
   answer_must_not_include:

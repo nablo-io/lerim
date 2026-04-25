@@ -28,10 +28,11 @@ class TestAskSystemPrompt:
         assert isinstance(ASK_SYSTEM_PROMPT, str)
         assert len(ASK_SYSTEM_PROMPT.strip()) > 0
 
-    def test_mentions_key_tools(self):
-        assert "context_query" in ASK_SYSTEM_PROMPT
-        assert "search_records" in ASK_SYSTEM_PROMPT
-        assert "fetch_records" in ASK_SYSTEM_PROMPT
+    def test_keeps_policy_outside_tool_catalog(self):
+        assert "<tools>" not in ASK_SYSTEM_PROMPT
+        assert "deterministic counting" in ASK_SYSTEM_PROMPT
+        assert "semantic search" in ASK_SYSTEM_PROMPT
+        assert "fetch the full current durable records" in ASK_SYSTEM_PROMPT
 
     def test_mentions_currentness_safety_rules(self):
         assert "current-state" in ASK_SYSTEM_PROMPT

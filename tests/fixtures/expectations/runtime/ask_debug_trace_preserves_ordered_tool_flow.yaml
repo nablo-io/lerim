@@ -1,8 +1,8 @@
 case: ask_debug_trace_preserves_ordered_tool_flow
 expected:
   tool_call_order:
-    - "list_records"
-    - "fetch_records"
+    - "list_context"
+    - "get_context"
   message_kinds:
     - "request"
     - "response"

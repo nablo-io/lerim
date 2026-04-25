@@ -25,11 +25,10 @@ class TestMaintainResult:
 class TestMaintainSystemPrompt:
     """Tests for MAINTAIN_SYSTEM_PROMPT."""
 
-    def test_mentions_key_tools(self):
-        assert "list_records" in MAINTAIN_SYSTEM_PROMPT
-        assert "archive_record" in MAINTAIN_SYSTEM_PROMPT
-        assert "supersede_record" in MAINTAIN_SYSTEM_PROMPT
-        assert "update_record" in MAINTAIN_SYSTEM_PROMPT
+    def test_keeps_policy_outside_tool_catalog(self):
+        assert "<tools>" not in MAINTAIN_SYSTEM_PROMPT
+        assert "Before any archive, revision, or supersession" in MAINTAIN_SYSTEM_PROMPT
+        assert "Fetch both rows and supersede" in MAINTAIN_SYSTEM_PROMPT
 
 
 class TestRunMaintainSignature:

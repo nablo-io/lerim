@@ -8,16 +8,16 @@ expected:
     - constraint
     - decision
     - fact
-  trace_read_count_at_least: 4
+  read_trace_count_at_least: 4
   note_count_at_least: 1
   prune_count_at_least: 1
   must_use_tools:
-    - trace_read
+    - read_trace
     - note
     - prune
-    - create_record
+    - save_context
   must_not_use_tools:
-    - update_record
+    - revise_context
   durable_text_must_include_all:
     - lease
     - ownership

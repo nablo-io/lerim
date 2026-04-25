@@ -10,8 +10,8 @@ seed_records:
     outcomes: "Service recovered, but no durable root-cause rule was confirmed."
 expected:
   must_use_tools:
-    - "search_records"
-    - "fetch_records"
+    - "search_context"
+    - "get_context"
   answer_must_include_any:
     - "episodic"
     - "episode"

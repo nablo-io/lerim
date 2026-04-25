@@ -105,7 +105,7 @@ def prune_history_processor(
     ctx: RunContext[ContextDeps],
     history: list[ModelMessage],
 ) -> list[ModelMessage]:
-    """Rewrite prior trace_read results to tiny stubs for pruned offsets."""
+    """Rewrite prior read_trace results to tiny stubs for pruned offsets."""
     if not ctx.deps.pruned_offsets:
         return history
     pruned = set(ctx.deps.pruned_offsets)
@@ -115,15 +115,12 @@ def prune_history_processor(
         parts = getattr(message, "parts", []) or []
         new_parts = []
         for part in parts:
-            if (
-                isinstance(part, ToolCallPart)
-                and getattr(part, "tool_name", "") == "trace_read"
-            ):
+            if isinstance(part, ToolCallPart) and getattr(part, "tool_name", "") == "read_trace":
                 args = getattr(part, "args", None)
                 offset = None
                 if isinstance(args, dict):
                     try:
-                        offset = int(args.get("offset", 0))
+                        offset = max(0, int(args.get("start_line", 1)) - 1)
                     except Exception:
                         offset = 0
                 pending_offset = offset

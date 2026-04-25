@@ -60,7 +60,7 @@ Lerim fixes that by turning raw traces into reusable context records and making 
 - Shared across agents. What Claude Code learns can be reused by Codex, Cursor, or another supported agent later.
 - Background maintenance. `sync` ingests sessions, `maintain` consolidates overlap and archives stale records, `ask` retrieves relevant precedent.
 - Hybrid retrieval. Lerim combines local ONNX embeddings stored through `sqlite-vec` with SQLite FTS5 and RRF fusion.
-- Clean agent tool surface. The runtime exposes semantic DB-era tools like `list_records`, `search_records`, `fetch_records`, `create_record`, `update_record`, and `context_query` instead of file CRUD.
+- Clean agent tool surface. The runtime exposes semantic DB-era tools like `list_context`, `search_context`, `get_context`, `save_context`, `revise_context`, and `count_context` instead of file CRUD.
 
 ## Quick Start
 
@@ -140,17 +140,17 @@ There is no per-project durable store on disk.
 
 The agent-facing tool contract is intentionally small:
 
-- `trace_read`
-- `list_records`
-- `search_records`
-- `fetch_records`
-- `create_record`
-- `update_record`
-- `archive_record`
-- `supersede_record`
-- `context_query`
-- `note`
-- `prune`
+- `read_trace`
+- `list_context`
+- `search_context`
+- `get_context`
+- `save_context`
+- `revise_context`
+- `archive_context`
+- `supersede_context`
+- `count_context`
+- `note_trace_findings`
+- `prune_trace_reads`
 
 This keeps the runtime easier to reason about and gives smaller future models a cleaner action space for training.
 

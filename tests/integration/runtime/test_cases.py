@@ -84,11 +84,11 @@ def test_ask_debug_trace_preserves_ordered_tool_flow(monkeypatch, live_config, l
 	assert cost == 0.0
 	assert debug is not None
 	assert [item["tool_name"] for item in debug["tool_calls"]] == expectation["tool_call_order"]
-	assert [item["tool_name"] for item in debug["tool_results"]] == ["list_records", "fetch_records"]
+	assert [item["tool_name"] for item in debug["tool_results"]] == ["list_context", "get_context"]
 	assert debug["message_count"] == 6
 	assert [item["kind"] for item in debug["messages"]] == expectation["message_kinds"]
 	assert debug["messages"][1]["parts"][0]["part_kind"] == "tool-call"
-	assert debug["messages"][1]["parts"][0]["tool_name"] == "list_records"
+	assert debug["messages"][1]["parts"][0]["tool_name"] == "list_context"
 	assert debug["messages"][2]["parts"][0]["part_kind"] == "tool-return"
 	assert len(debug["messages"][2]["parts"][0]["content_preview"]) == 200
 	assert debug["messages"][5]["parts"][0]["part_kind"] == "text"

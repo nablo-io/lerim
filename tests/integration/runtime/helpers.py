@@ -98,9 +98,9 @@ def build_ordered_ask_messages() -> list[ModelRequest | ModelResponse]:
     long_result = json.dumps({"rows": [{"record_id": "rec_1", "body": "x" * 260}]})
     return [
         ModelRequest(parts=[SystemPromptPart(content="system prompt"), UserPromptPart(content="What changed recently?")]),
-        ModelResponse(parts=[ToolCallPart(tool_name="list_records", args={"limit": 5, "order_by": "updated_at"}, tool_call_id="call-1")]),
-        ModelRequest(parts=[ToolReturnPart(tool_name="list_records", content=long_result, tool_call_id="call-1")]),
-        ModelResponse(parts=[ToolCallPart(tool_name="fetch_records", args={"record_ids": ["rec_1"]}, tool_call_id="call-2")]),
-        ModelRequest(parts=[ToolReturnPart(tool_name="fetch_records", content=json.dumps({"records": [{"record_id": "rec_1", "title": "Recent change"}]}), tool_call_id="call-2")]),
+        ModelResponse(parts=[ToolCallPart(tool_name="list_context", args={"limit": 5, "order_by": "updated_at"}, tool_call_id="call-1")]),
+        ModelRequest(parts=[ToolReturnPart(tool_name="list_context", content=long_result, tool_call_id="call-1")]),
+        ModelResponse(parts=[ToolCallPart(tool_name="get_context", args={"record_ids": ["rec_1"]}, tool_call_id="call-2")]),
+        ModelRequest(parts=[ToolReturnPart(tool_name="get_context", content=json.dumps({"records": [{"record_id": "rec_1", "title": "Recent change"}]}), tool_call_id="call-2")]),
         ModelResponse(parts=[TextPart(content="The latest change updated the recent record.")]),
     ]
