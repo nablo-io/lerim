@@ -9,7 +9,6 @@ from tests.live_helpers import (
     EXTRACT_TOOL_NAMES,
     FRAMEWORK_TOOL_NAMES,
     assert_clean_context_schema,
-    assert_no_removed_tools,
     assert_quality_metrics,
     audit_context_db,
     connect_context_db,
@@ -23,7 +22,7 @@ def test_extract_long_trace_requires_note_before_writing(
     live_config,
     live_repo_root,
 ) -> None:
-    """Long traces should trigger multi-read extraction with note-backed compression."""
+    """Long traces should trigger multi-read extraction with note_trace_findings compression."""
     expectation = load_extract_expectation("long_trace_requires_note")["expected"]
     outcome = run_extract_case(
         case_name="long_trace_requires_note",
@@ -33,13 +32,12 @@ def test_extract_long_trace_requires_note_before_writing(
 
     tool_names = outcome.tool_names
     assert set(tool_names).issubset(EXTRACT_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    assert_no_removed_tools(tool_names)
     for tool_name in expectation["must_use_tools"]:
         assert tool_name in tool_names
     for tool_name in expectation["must_not_use_tools"]:
         assert tool_name not in tool_names
     assert tool_names.count("read_trace") >= expectation["read_trace_count_at_least"]
-    assert tool_names.count("note") >= expectation["note_count_at_least"]
+    assert tool_names.count("note_trace_findings") >= expectation["note_trace_findings_count_at_least"]
 
     rows = outcome.rows
     episode_rows = [row for row in rows if row["kind"] == "episode"]
@@ -97,7 +95,7 @@ def test_extract_very_long_trace_requires_prune(
     live_config,
     live_repo_root,
 ) -> None:
-    """Very long traces should prune old reads after notes preserve the signal."""
+    """Very long traces should prune_trace_reads old reads after note_trace_findings preserves the signal."""
     expectation = load_extract_expectation("very_long_trace_requires_prune")["expected"]
     outcome = run_extract_case(
         case_name="very_long_trace_requires_prune",
@@ -107,14 +105,13 @@ def test_extract_very_long_trace_requires_prune(
 
     tool_names = outcome.tool_names
     assert set(tool_names).issubset(EXTRACT_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    assert_no_removed_tools(tool_names)
     for tool_name in expectation["must_use_tools"]:
         assert tool_name in tool_names
     for tool_name in expectation["must_not_use_tools"]:
         assert tool_name not in tool_names
     assert tool_names.count("read_trace") >= expectation["read_trace_count_at_least"]
-    assert tool_names.count("note") >= expectation["note_count_at_least"]
-    assert tool_names.count("prune") >= expectation["prune_count_at_least"]
+    assert tool_names.count("note_trace_findings") >= expectation["note_trace_findings_count_at_least"]
+    assert tool_names.count("prune_trace_reads") >= expectation["prune_trace_reads_count_at_least"]
 
     rows = outcome.rows
     episode_rows = [row for row in rows if row["kind"] == "episode"]
@@ -164,7 +161,6 @@ def test_extract_late_disambiguation_at_end_of_trace(
 
     tool_names = outcome.tool_names
     assert set(tool_names).issubset(EXTRACT_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    assert_no_removed_tools(tool_names)
     for tool_name in expectation["must_use_tools"]:
         assert tool_name in tool_names
     assert tool_names.count("read_trace") >= expectation["min_read_trace_calls"]

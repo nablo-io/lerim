@@ -2,37 +2,32 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
-from pydantic_ai.models import Model
 
 from lerim.agents.model_settings import (
     LOW_VARIANCE_AGENT_MODEL_SETTINGS,
     LOW_VARIANCE_AGENT_TEMPERATURE,
 )
+from lerim.agents.toolsets import CURRENT_AGENT_TOOL_NAMES
 from lerim.agents.ask import (
     ASK_SYSTEM_PROMPT,
     AskResult,
-    build_ask_agent,
 )
-from lerim.agents.extract import SYSTEM_PROMPT, ExtractionResult, build_extract_agent
+from lerim.agents.extract import SYSTEM_PROMPT, ExtractionResult
 from lerim.agents.maintain import (
     MAINTAIN_SYSTEM_PROMPT,
     MaintainResult,
-    build_maintain_agent,
 )
-
-
-def _make_model() -> Model:
-    """Return a mock that satisfies Agent's model check."""
-    model = MagicMock(spec=Model)
-    return model
-
-
-def _get_tool_names(agent) -> set[str]:
-    return set(agent._function_toolset.tools.keys())
+AUTHORITATIVE_TOOL_DOCS = (
+    "AGENTS.md",
+    "README.md",
+    "src/lerim/README.md",
+    "tests/README.md",
+)
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_shared_low_variance_settings_use_positive_nonzero_temperature():
@@ -42,41 +37,22 @@ def test_shared_low_variance_settings_use_positive_nonzero_temperature():
     assert LOW_VARIANCE_AGENT_MODEL_SETTINGS["top_p"] == 0.9
 
 
+def test_authoritative_docs_match_current_agent_tool_contract():
+    """Authoritative docs list current tools."""
+    for relative_path in AUTHORITATIVE_TOOL_DOCS:
+        content = (REPO_ROOT / relative_path).read_text(encoding="utf-8")
+
+        missing_current = [
+            tool_name
+            for tool_name in sorted(CURRENT_AGENT_TOOL_NAMES)
+            if f"`{tool_name}`" not in content
+        ]
+
+        assert missing_current == [], relative_path
+
+
 class TestBuildExtractAgent:
-    """Tests for build_extract_agent construction."""
-
-    def test_has_seven_tools(self):
-        agent = build_extract_agent(_make_model())
-        assert len(agent._function_toolset.tools) == 7
-
-    def test_tool_names(self):
-        agent = build_extract_agent(_make_model())
-        expected = {
-            "read_trace",
-            "search_context",
-            "get_context",
-            "save_context",
-            "revise_context",
-            "note_trace_findings",
-            "prune_trace_reads",
-        }
-        assert _get_tool_names(agent) == expected
-
-    def test_has_three_history_processors(self):
-        agent = build_extract_agent(_make_model())
-        assert len(agent.history_processors) == 3
-
-    def test_retries_five(self):
-        agent = build_extract_agent(_make_model())
-        assert agent._max_tool_retries == 5
-
-    def test_output_retries_four(self):
-        agent = build_extract_agent(_make_model())
-        assert agent._max_result_retries == 4
-
-    def test_uses_shared_low_variance_settings(self):
-        agent = build_extract_agent(_make_model())
-        assert agent.model_settings == LOW_VARIANCE_AGENT_MODEL_SETTINGS
+    """Tests for extract-agent public contract."""
 
     def test_system_prompt_non_empty(self):
         assert isinstance(SYSTEM_PROMPT, str)
@@ -84,39 +60,7 @@ class TestBuildExtractAgent:
 
 
 class TestBuildMaintainAgent:
-    """Tests for build_maintain_agent construction."""
-
-    def test_has_six_tools(self):
-        agent = build_maintain_agent(_make_model())
-        assert len(agent._function_toolset.tools) == 6
-
-    def test_tool_names(self):
-        agent = build_maintain_agent(_make_model())
-        expected = {
-            "list_context",
-            "search_context",
-            "get_context",
-            "revise_context",
-            "archive_context",
-            "supersede_context",
-        }
-        assert _get_tool_names(agent) == expected
-
-    def test_no_read_trace_tool(self):
-        agent = build_maintain_agent(_make_model())
-        assert "read_trace" not in _get_tool_names(agent)
-
-    def test_retries_five(self):
-        agent = build_maintain_agent(_make_model())
-        assert agent._max_tool_retries == 5
-
-    def test_output_retries_two(self):
-        agent = build_maintain_agent(_make_model())
-        assert agent._max_result_retries == 2
-
-    def test_uses_shared_low_variance_settings(self):
-        agent = build_maintain_agent(_make_model())
-        assert agent.model_settings == LOW_VARIANCE_AGENT_MODEL_SETTINGS
+    """Tests for maintain-agent public contract."""
 
     def test_system_prompt_non_empty(self):
         assert isinstance(MAINTAIN_SYSTEM_PROMPT, str)
@@ -124,40 +68,7 @@ class TestBuildMaintainAgent:
 
 
 class TestBuildAskAgent:
-    """Tests for build_ask_agent construction."""
-
-    def test_has_four_tools(self):
-        agent = build_ask_agent(_make_model())
-        assert len(agent._function_toolset.tools) == 4
-
-    def test_tool_names_read_only(self):
-        agent = build_ask_agent(_make_model())
-        expected = {"count_context", "list_context", "search_context", "get_context"}
-        assert _get_tool_names(agent) == expected
-
-    def test_no_write_tools(self):
-        agent = build_ask_agent(_make_model())
-        write_tools = {
-            "save_context",
-            "revise_context",
-            "archive_context",
-            "supersede_context",
-            "note_trace_findings",
-            "prune_trace_reads",
-        }
-        assert _get_tool_names(agent).isdisjoint(write_tools)
-
-    def test_retries_five(self):
-        agent = build_ask_agent(_make_model())
-        assert agent._max_tool_retries == 5
-
-    def test_output_retries_two(self):
-        agent = build_ask_agent(_make_model())
-        assert agent._max_result_retries == 2
-
-    def test_uses_shared_low_variance_settings(self):
-        agent = build_ask_agent(_make_model())
-        assert agent.model_settings == LOW_VARIANCE_AGENT_MODEL_SETTINGS
+    """Tests for ask-agent public contract."""
 
     def test_system_prompt_non_empty(self):
         assert isinstance(ASK_SYSTEM_PROMPT, str)

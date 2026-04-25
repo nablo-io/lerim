@@ -80,6 +80,8 @@ Rules:
 - test file names match source file names (without `_adapter`/`_functions` suffix)
 - each subpackage has its own `conftest.py` with domain-specific fixtures
 - agent tool tests also cover source-session provenance defaults so historical traces do not look freshly created when indexed later
+- agent tool tests enforce fetch-before-mutate: `revise_context`, `archive_context`, and `supersede_context` only accept records returned by `get_context` in the same run
+- agent build tests guard the runtime tool contract against documentation and helper drift
 - adapter tests cover compact-trace visibility for canonical message fields and structured event messages without keyword heuristics
 - session catalog tests cover queue claim availability, content-hash refresh/change detection, and stable pagination ordering
 - config tests cover provider client lifecycle, provider-specific model settings, fallback-model parsing, strict config parsing, and SDK log-noise filters

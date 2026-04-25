@@ -9,7 +9,7 @@ expected:
     - read_trace
     - save_context
   must_not_use_tools:
-    - prune
+    - prune_trace_reads
   preference_text_must_include_all:
     - tightly coupled
   preference_text_must_include_any:

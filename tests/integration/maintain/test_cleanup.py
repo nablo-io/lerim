@@ -11,7 +11,6 @@ from tests.live_helpers import (
     FRAMEWORK_TOOL_NAMES,
     MAINTAIN_TOOL_NAMES,
     assert_clean_context_schema,
-    assert_no_removed_tools,
     assert_quality_metrics,
     audit_context_db,
 )
@@ -55,7 +54,6 @@ def test_maintain_routine_episode_archived(
 
     tool_names = outcome.tool_names
     assert set(tool_names).issubset(MAINTAIN_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    assert_no_removed_tools(tool_names)
     for tool_name in expectation["must_use_tools"]:
         assert tool_name in tool_names
     for tool_name in expectation["must_not_use_tools"]:
@@ -107,7 +105,6 @@ def test_maintain_verbose_episode_compressed(
 
     tool_names = outcome.tool_names
     assert set(tool_names).issubset(MAINTAIN_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    assert_no_removed_tools(tool_names)
     for tool_name in expectation["must_use_tools"]:
         assert tool_name in tool_names
     for tool_name in expectation["must_not_use_tools"]:
@@ -174,7 +171,6 @@ def test_maintain_durable_record_rewritten_from_session_report_style(
 
     tool_names = outcome.tool_names
     assert set(tool_names).issubset(MAINTAIN_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    assert_no_removed_tools(tool_names)
     for tool_name in expectation["must_use_tools"]:
         assert tool_name in tool_names
     for tool_name in expectation["must_not_use_tools"]:
@@ -227,7 +223,6 @@ def test_maintain_valuable_recent_record_preserved(
 
     tool_names = outcome.tool_names
     assert set(tool_names).issubset(MAINTAIN_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    assert_no_removed_tools(tool_names)
     for tool_name in expectation["must_use_tools"]:
         assert tool_name in tool_names
     for tool_name in expectation["must_not_use_tools"]:
@@ -306,7 +301,6 @@ def test_maintain_mixed_store_cleanup(
 
     tool_names = outcome.tool_names
     assert set(tool_names).issubset(MAINTAIN_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    assert_no_removed_tools(tool_names)
     for tool_name in expectation["must_use_tools"]:
         assert tool_name in tool_names
 
@@ -380,7 +374,6 @@ def test_maintain_meaningful_episode_preserved_with_durable_neighbor(
 
     tool_names = outcome.tool_names
     assert set(tool_names).issubset(MAINTAIN_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    assert_no_removed_tools(tool_names)
     for tool_name in expectation["must_use_tools"]:
         assert tool_name in tool_names
     for tool_name in expectation["must_not_use_tools"]:
@@ -422,7 +415,6 @@ def test_maintain_concise_report_style_durable_rewritten(
 
     tool_names = outcome.tool_names
     assert set(tool_names).issubset(MAINTAIN_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    assert_no_removed_tools(tool_names)
     for tool_name in expectation["must_use_tools"]:
         assert tool_name in tool_names
     for tool_name in expectation["must_not_use_tools"]:

@@ -15,6 +15,14 @@ from lerim.config.settings import reload_config
 from tests.helpers import make_config, run_cli, run_cli_json, write_test_config
 
 
+def _raise_api_error(*_args, **_kwargs) -> None:
+    """Raise the explicit CLI API client failure used by command tests."""
+    raise cli.ApiClientError(
+        kind="unreachable",
+        message="Lerim server is not reachable: refused",
+    )
+
+
 def test_help_lists_minimal_commands() -> None:
     parser = cli.build_parser()
     out = io.StringIO()
@@ -199,7 +207,7 @@ def test_ask_returns_nonzero_on_auth_error(monkeypatch: pytest.MonkeyPatch) -> N
 def test_ask_returns_nonzero_when_server_not_running(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(cli, "_api_post", lambda _path, _body: None)
+    monkeypatch.setattr(cli, "_api_post", _raise_api_error)
     code, _output = run_cli(["ask", "how to deploy"])
     assert code == 1
 

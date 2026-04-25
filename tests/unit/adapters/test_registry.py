@@ -6,6 +6,7 @@ from __future__ import annotations
 from lerim.adapters.registry import (
     auto_seed,
     connect_platform,
+    default_path_for,
     get_adapter,
     get_connected_agents,
     get_connected_platform_paths,
@@ -29,6 +30,18 @@ def test_get_adapter_unknown_platform():
     """get_adapter('unknown') returns None."""
     adapter = get_adapter("unknown_platform_xyz")
     assert adapter is None
+
+
+def test_default_path_for_known_platform():
+    """default_path_for returns adapter default path for known platforms."""
+    result = default_path_for("claude")
+    assert result is not None
+    assert result.name == "projects"
+
+
+def test_default_path_for_unknown_platform():
+    """default_path_for returns None for unknown platforms."""
+    assert default_path_for("unknown_platform_xyz") is None
 
 
 def test_load_save_platforms_roundtrip(tmp_path):

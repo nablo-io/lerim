@@ -7,7 +7,7 @@ import re
 import pytest
 
 from tests.integration.ask.helpers import load_ask_expectation, run_ask_case
-from tests.live_helpers import ASK_TOOL_NAMES, FRAMEWORK_TOOL_NAMES, assert_no_removed_tools
+from tests.live_helpers import ASK_TOOL_NAMES, FRAMEWORK_TOOL_NAMES
 
 
 def _normalize_answer_text(text: str) -> str:
@@ -234,7 +234,6 @@ def test_ask_count_question_uses_count_context(
 
     assert outcome.result.answer.strip()
     assert set(tool_names).issubset(ASK_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    assert_no_removed_tools(tool_names)
     for tool_name in expectation["must_use_tools"]:
         assert tool_name in tool_names
     for tool_name in expectation["must_not_use_tools"]:
@@ -267,7 +266,6 @@ def test_ask_semantic_topic_uses_search_then_fetch(
 
     assert outcome.result.answer.strip()
     assert set(tool_names).issubset(ASK_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    assert_no_removed_tools(tool_names)
     for tool_name in expectation["must_use_tools"]:
         assert tool_name in tool_names
     for tool_name in expectation["must_not_use_tools"]:
@@ -307,7 +305,6 @@ def test_ask_latest_question_prefers_exact_listing(
 
     assert outcome.result.answer.strip()
     assert set(tool_names).issubset(ASK_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    assert_no_removed_tools(tool_names)
     for tool_name in expectation["must_use_tools"]:
         assert tool_name in tool_names
     for tool_name in expectation["must_not_use_tools"]:
@@ -353,7 +350,6 @@ def test_ask_current_readiness_prefers_newer_support(
 
     assert outcome.result.answer.strip()
     assert set(tool_names).issubset(ASK_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    assert_no_removed_tools(tool_names)
 
     exact_calls = _find_all_tool_calls(
         outcome.tool_calls, "list_context"
@@ -411,7 +407,6 @@ def test_ask_time_window_question_narrows_before_synthesis(
 
     assert outcome.result.answer.strip()
     assert set(tool_names).issubset(ASK_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    assert_no_removed_tools(tool_names)
     assert any(tool_name in tool_names for tool_name in expectation["must_use_any_tools"])
     for tool_name in expectation.get("must_not_use_tools", []):
         assert tool_name not in tool_names
@@ -465,7 +460,6 @@ def test_ask_time_window_zero_results_do_not_expand_scope(
 
     assert outcome.result.answer.strip()
     assert set(tool_names).issubset(ASK_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    assert_no_removed_tools(tool_names)
     assert any(tool_name in tool_names for tool_name in expectation["must_use_any_tools"])
     for tool_name in expectation["must_not_use_tools"]:
         assert tool_name not in tool_names
@@ -525,7 +519,6 @@ def test_ask_mixed_question_strategy(
 
     assert outcome.result.answer.strip()
     assert set(tool_names).issubset(ASK_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    assert_no_removed_tools(tool_names)
     for tool_name in expectation["must_use_tools"]:
         assert tool_name in tool_names
 
@@ -571,7 +564,6 @@ def test_ask_mixed_time_topic_no_in_window_match_stays_negative(
 
     assert outcome.result.answer.strip()
     assert set(tool_names).issubset(ASK_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    assert_no_removed_tools(tool_names)
     assert any(tool_name in tool_names for tool_name in expectation["must_use_any_tools"])
 
     first_exact = _find_exact_time_window_call(outcome.tool_calls)

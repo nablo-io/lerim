@@ -193,9 +193,16 @@ def test_config_public_dict(tmp_path):
     assert "anthropic_api_key" not in d
     assert "openai_api_key" not in d
     assert "zai_api_key" not in d
-    # Should have public fields
-    assert "global_data_dir" in d
-    assert d["context_db_path"] == str(tmp_path / "context.sqlite3")
+    assert "global_data_dir" not in d
+    assert "sessions_db_path" not in d
+    assert "context_db_path" not in d
+    assert "platforms_path" not in d
+    assert "embedding_cache_dir" not in d
+    assert "provider_api_bases" not in d
+    assert "agents" not in d
+    assert "projects" not in d
+    assert d["connected_agents"] == sorted(cfg.agents)
+    assert d["project_names"] == sorted(cfg.projects)
 
 
 def test_config_rejects_unknown_role_keys(tmp_path, monkeypatch):

@@ -8,18 +8,21 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from lerim.context.store import (
+from lerim.context import (
     ALLOWED_CHANGE_KINDS,
     ALLOWED_KINDS,
     ALLOWED_STATUSES,
+)
+from lerim.context.spec import (
     MAX_DURABLE_BODY_CHARS,
     MAX_EPISODE_BODY_CHARS,
     MAX_EPISODE_OUTCOMES_CHARS,
     MAX_EPISODE_USER_INTENT_CHARS,
     MAX_EPISODE_WHAT_HAPPENED_CHARS,
     MAX_RECORD_TITLE_CHARS,
+)
+from lerim.context.store import (
     QUERY_ORDER_FIELDS,
-    RRF_K,
     SCHEMA_VERSION,
     ContextStore,
     _new_id,
@@ -237,9 +240,6 @@ class TestConstants:
 
     def test_query_order_fields(self):
         assert QUERY_ORDER_FIELDS == ("created_at", "updated_at", "valid_from")
-
-    def test_rrf_k(self):
-        assert RRF_K == 60
 
 
 class TestContextStoreInit:
@@ -1041,10 +1041,12 @@ class TestUpdateRecord:
         )
 
         fetched = store.fetch_record(rec["record_id"], project_ids=[pid], include_versions=True)
+        health = store.index_health(project_ids=[pid])
         assert updated["title"] == "Canonical FTS-independent title"
         assert fetched is not None
         assert fetched["title"] == "Canonical FTS-independent title"
         assert len(fetched["versions"]) == 2
+        assert health["stale_fts_count"] == 1
 
     def test_embedding_failure_does_not_roll_back_canonical_update(
         self, mock_seeded, monkeypatch
@@ -1065,10 +1067,12 @@ class TestUpdateRecord:
         )
 
         fetched = store.fetch_record(rec["record_id"], project_ids=[pid], include_versions=True)
+        health = store.index_health(project_ids=[pid])
         assert updated["title"] == "Canonical update"
         assert fetched is not None
         assert fetched["title"] == "Canonical update"
         assert len(fetched["versions"]) == 2
+        assert health["stale_embedding_count"] == 1
 
 
 class TestArchiveRecord:

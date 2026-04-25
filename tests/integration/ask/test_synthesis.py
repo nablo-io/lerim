@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from tests.integration.ask.helpers import load_ask_expectation, run_ask_case
-from tests.live_helpers import ASK_TOOL_NAMES, FRAMEWORK_TOOL_NAMES, assert_no_removed_tools
+from tests.live_helpers import ASK_TOOL_NAMES, FRAMEWORK_TOOL_NAMES
 
 
 def _find_first_tool_call(tool_calls: list[dict[str, object]], tool_name: str) -> dict[str, object]:
@@ -39,7 +39,6 @@ def test_ask_distinguishes_current_truth_from_historical_truth(
 
     assert outcome.result.answer.strip()
     assert set(tool_names).issubset(ASK_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    assert_no_removed_tools(tool_names)
 
     list_calls = _find_all_tool_calls(outcome.tool_calls, "list_context")
     context_calls = _find_all_tool_calls(outcome.tool_calls, "count_context")
@@ -91,7 +90,6 @@ def test_ask_durable_support_beats_episode_support(
 
     assert outcome.result.answer.strip()
     assert set(tool_names).issubset(ASK_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    assert_no_removed_tools(tool_names)
     for tool_name in expectation["must_use_tools"]:
         assert tool_name in tool_names
     for token in expectation["answer_must_include_all"]:
@@ -121,7 +119,6 @@ def test_ask_as_of_date_uses_valid_at(
 
     assert outcome.result.answer.strip()
     assert set(tool_names).issubset(ASK_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    assert_no_removed_tools(tool_names)
     list_calls = _find_all_tool_calls(outcome.tool_calls, "list_context")
     context_calls = _find_all_tool_calls(outcome.tool_calls, "count_context")
     search_calls = _find_all_tool_calls(outcome.tool_calls, "search_context")
@@ -168,7 +165,6 @@ def test_ask_near_miss_topic_returns_negative(
 
     assert outcome.result.answer.strip()
     assert set(tool_names).issubset(ASK_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    assert_no_removed_tools(tool_names)
     for tool_name in expectation["must_use_tools"]:
         assert tool_name in tool_names
     assert any(token in answer for token in expectation["answer_must_include_any"])
@@ -197,7 +193,6 @@ def test_ask_calls_out_when_support_is_only_episodic(
 
     assert outcome.result.answer.strip()
     assert set(tool_names).issubset(ASK_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    assert_no_removed_tools(tool_names)
     for tool_name in expectation["must_use_tools"]:
         assert tool_name in tool_names
 
@@ -226,7 +221,6 @@ def test_ask_no_relevant_records(
 
     assert outcome.result.answer.strip()
     assert set(tool_names).issubset(ASK_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    assert_no_removed_tools(tool_names)
     for tool_name in expectation["must_use_tools"]:
         assert tool_name in tool_names
     for tool_name in expectation["must_not_use_tools"]:
@@ -255,7 +249,6 @@ def test_ask_multi_record_synthesis(
 
     assert outcome.result.answer.strip()
     assert set(tool_names).issubset(ASK_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    assert_no_removed_tools(tool_names)
     for tool_name in expectation["must_use_tools"]:
         assert tool_name in tool_names
     for tool_name in expectation["must_not_use_tools"]:

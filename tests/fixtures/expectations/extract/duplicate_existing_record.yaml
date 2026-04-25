@@ -12,7 +12,7 @@ expected:
     - get_context
     - revise_context
   must_not_use_tools:
-    - prune
+    - prune_trace_reads
   updated_decision_text_must_include_all:
     - separate
   updated_decision_text_must_include_any:

@@ -1,5 +1,5 @@
 case: very_long_trace_requires_prune
-summary: A very long trace should require note-backed compression and pruning before the final writes.
+summary: A very long trace should require note_trace_findings-backed compression and prune_trace_reads before the final writes.
 
 expected:
   episode_count: 1
@@ -9,12 +9,12 @@ expected:
     - decision
     - fact
   read_trace_count_at_least: 4
-  note_count_at_least: 1
-  prune_count_at_least: 1
+  note_trace_findings_count_at_least: 1
+  prune_trace_reads_count_at_least: 1
   must_use_tools:
     - read_trace
-    - note
-    - prune
+    - note_trace_findings
+    - prune_trace_reads
     - save_context
   must_not_use_tools:
     - revise_context

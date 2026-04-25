@@ -36,6 +36,14 @@ def _ns(**kwargs: Any) -> argparse.Namespace:
 	return argparse.Namespace(**defaults)
 
 
+def _raise_api_error(*_args: Any, **_kwargs: Any) -> None:
+	"""Raise the explicit CLI API client failure used by command tests."""
+	raise cli.ApiClientError(
+		kind="unreachable",
+		message="Lerim server is not reachable: refused",
+	)
+
+
 # ===================================================================
 # _emit / _emit_structured
 # ===================================================================
@@ -87,26 +95,30 @@ class TestEmitStructured:
 
 
 # ===================================================================
-# _not_running
+# _api_request_failed
 # ===================================================================
 
 
-class TestNotRunning:
-	"""Tests for the _not_running helper."""
+class TestApiRequestFailed:
+	"""Tests for explicit API client failure rendering."""
 
 	def test_returns_one(self) -> None:
-		"""_not_running returns exit code 1."""
+		"""_api_request_failed returns exit code 1."""
 		buf = io.StringIO()
 		with redirect_stderr(buf):
-			code = cli._not_running()
+			code = cli._api_request_failed(
+				cli.ApiClientError(kind="unreachable", message="Lerim server is not reachable")
+			)
 		assert code == 1
 
 	def test_prints_to_stderr(self) -> None:
-		"""_not_running writes an error message to stderr."""
+		"""_api_request_failed writes the explicit client error to stderr."""
 		buf = io.StringIO()
 		with redirect_stderr(buf):
-			cli._not_running()
-		assert "not running" in buf.getvalue().lower()
+			cli._api_request_failed(
+				cli.ApiClientError(kind="unreachable", message="Lerim server is not reachable")
+			)
+		assert "not reachable" in buf.getvalue().lower()
 
 
 # ===================================================================
@@ -349,7 +361,7 @@ class TestCmdSync:
 
 	def test_sync_not_running(self, monkeypatch: pytest.MonkeyPatch) -> None:
 		"""Sync returns 1 when the server is unreachable."""
-		monkeypatch.setattr(cli, "_api_post", lambda _p, _b: None)
+		monkeypatch.setattr(cli, "_api_post", _raise_api_error)
 		args = _ns(
 			command="sync", json=False,
 			agent=None, window=None, max_sessions=None,
@@ -410,7 +422,7 @@ class TestCmdMaintain:
 
 	def test_maintain_not_running(self, monkeypatch: pytest.MonkeyPatch) -> None:
 		"""Maintain returns 1 when the server is unreachable."""
-		monkeypatch.setattr(cli, "_api_post", lambda _p, _b: None)
+		monkeypatch.setattr(cli, "_api_post", _raise_api_error)
 		args = _ns(command="maintain", json=False, force=False, dry_run=False)
 		buf = io.StringIO()
 		with redirect_stderr(buf):
@@ -496,7 +508,7 @@ class TestCmdAsk:
 
 	def test_ask_not_running(self, monkeypatch: pytest.MonkeyPatch) -> None:
 		"""Ask returns 1 when server is unreachable."""
-		monkeypatch.setattr(cli, "_api_post", lambda _p, _b: None)
+		monkeypatch.setattr(cli, "_api_post", _raise_api_error)
 		args = _ns(command="ask", json=False, question="q", limit=5)
 		code = cli._cmd_ask(args)
 		assert code == 1
@@ -614,7 +626,7 @@ class TestCmdStatus:
 
 	def test_status_not_running(self, monkeypatch: pytest.MonkeyPatch) -> None:
 		"""Status returns 1 when server is unreachable."""
-		monkeypatch.setattr(cli, "_api_get", lambda _p: None)
+		monkeypatch.setattr(cli, "_api_get", _raise_api_error)
 		args = _ns(command="status", json=False)
 		code = cli._cmd_status(args)
 		assert code == 1
@@ -676,7 +688,7 @@ class TestCmdStatusLive:
 
 	def test_status_live_not_running(self, monkeypatch: pytest.MonkeyPatch) -> None:
 		"""Live status returns 1 when server is unreachable."""
-		monkeypatch.setattr(cli, "_api_get", lambda _p: None)
+		monkeypatch.setattr(cli, "_api_get", _raise_api_error)
 		args = _ns(command="status", json=False, interval=1.0, scope="all", project=None)
 		code = cli._cmd_status_live(args)
 		assert code == 1
@@ -756,7 +768,7 @@ class TestCmdConnect:
 			cli, "connect_platform",
 			lambda _p, _n, custom_path=None: {"status": "connected"},
 		)
-		monkeypatch.setattr(cli, "is_container_running", lambda: True)
+		monkeypatch.setattr(cli, "is_docker_container_running", lambda: True)
 		up_calls = []
 		monkeypatch.setattr(cli, "api_up", lambda **kw: up_calls.append(1) or {})
 
@@ -796,7 +808,7 @@ class TestCmdConnect:
 		cfg = make_config(Path("/tmp/fake"))
 		monkeypatch.setattr(cli, "get_config", lambda: cfg)
 		monkeypatch.setattr(cli, "remove_platform", lambda _p, _n: True)
-		monkeypatch.setattr(cli, "is_container_running", lambda: True)
+		monkeypatch.setattr(cli, "is_docker_container_running", lambda: True)
 		up_calls = []
 		monkeypatch.setattr(cli, "api_up", lambda **kw: up_calls.append(1) or {})
 
@@ -862,7 +874,7 @@ class TestCmdConnect:
 				"status": "connected", "path": "/home/.claude", "session_count": 5,
 			},
 		)
-		monkeypatch.setattr(cli, "is_container_running", lambda: True)
+		monkeypatch.setattr(cli, "is_docker_container_running", lambda: True)
 		up_calls = []
 		monkeypatch.setattr(cli, "api_up", lambda **kw: up_calls.append(1) or {})
 
@@ -1264,7 +1276,7 @@ class TestCmdProject:
 		monkeypatch.setattr(cli, "api_project_add", lambda p: {
 			"name": "myapp", "path": p, "error": None,
 		})
-		monkeypatch.setattr(cli, "is_container_running", lambda: False)
+		monkeypatch.setattr(cli, "is_docker_container_running", lambda: False)
 		args = _ns(command="project", json=False, project_action="add", path="/home/user/myapp")
 		buf = io.StringIO()
 		with redirect_stdout(buf):
@@ -1290,7 +1302,7 @@ class TestCmdProject:
 		monkeypatch.setattr(cli, "api_project_add", lambda p: {
 			"name": "myapp", "path": p, "error": None,
 		})
-		monkeypatch.setattr(cli, "is_container_running", lambda: True)
+		monkeypatch.setattr(cli, "is_docker_container_running", lambda: True)
 		up_calls = []
 		monkeypatch.setattr(cli, "api_up", lambda **kw: up_calls.append(1) or {})
 		args = _ns(command="project", json=False, project_action="add", path="/home/user/myapp")
@@ -1311,7 +1323,7 @@ class TestCmdProject:
 	def test_project_remove_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
 		"""Project remove with valid name succeeds."""
 		monkeypatch.setattr(cli, "api_project_remove", lambda n: {"error": None})
-		monkeypatch.setattr(cli, "is_container_running", lambda: False)
+		monkeypatch.setattr(cli, "is_docker_container_running", lambda: False)
 		args = _ns(command="project", json=False, project_action="remove", name="myapp")
 		buf = io.StringIO()
 		with redirect_stdout(buf):
@@ -2150,7 +2162,7 @@ class TestApiGetPost:
 		assert result == {"ok": True}
 
 	def test_api_get_unreachable(self, monkeypatch: pytest.MonkeyPatch) -> None:
-		"""_api_get returns None when server is unreachable."""
+		"""_api_get raises a classified error when server is unreachable."""
 		import urllib.error
 
 		cfg = make_config(Path("/tmp/fake"))
@@ -2159,8 +2171,9 @@ class TestApiGetPost:
 			"urllib.request.urlopen",
 			lambda req, timeout=30: (_ for _ in ()).throw(urllib.error.URLError("refused")),
 		)
-		result = cli._api_get("/api/status")
-		assert result is None
+		with pytest.raises(cli.ApiClientError) as exc:
+			cli._api_get("/api/status")
+		assert exc.value.kind == "unreachable"
 
 	def test_api_post_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
 		"""_api_post returns parsed JSON on success."""
@@ -2183,7 +2196,7 @@ class TestApiGetPost:
 		assert result == {"created": True}
 
 	def test_api_post_unreachable(self, monkeypatch: pytest.MonkeyPatch) -> None:
-		"""_api_post returns None when server is unreachable."""
+		"""_api_post raises a classified error when server is unreachable."""
 		import urllib.error
 
 		cfg = make_config(Path("/tmp/fake"))
@@ -2192,11 +2205,12 @@ class TestApiGetPost:
 			"urllib.request.urlopen",
 			lambda req, timeout=300: (_ for _ in ()).throw(urllib.error.URLError("refused")),
 		)
-		result = cli._api_post("/api/sync", {})
-		assert result is None
+		with pytest.raises(cli.ApiClientError) as exc:
+			cli._api_post("/api/sync", {})
+		assert exc.value.kind == "unreachable"
 
 	def test_api_get_json_decode_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-		"""_api_get returns None on malformed JSON response."""
+		"""_api_get raises a classified error on malformed JSON response."""
 		cfg = make_config(Path("/tmp/fake"))
 		monkeypatch.setattr(cli, "get_config", lambda: cfg)
 
@@ -2212,8 +2226,9 @@ class TestApiGetPost:
 				pass
 
 		monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout=30: FakeResp())
-		result = cli._api_get("/api/status")
-		assert result is None
+		with pytest.raises(cli.ApiClientError) as exc:
+			cli._api_get("/api/status")
+		assert exc.value.kind == "invalid_json"
 
 
 # ===================================================================

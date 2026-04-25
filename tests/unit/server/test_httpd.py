@@ -239,10 +239,6 @@ def test_server(tmp_path, monkeypatch):
 
 	# Mock config and catalog functions at the httpd module level
 	monkeypatch.setattr("lerim.server.httpd.get_config", lambda: config)
-	monkeypatch.setattr("lerim.server.httpd.get_config_sources", lambda: [
-		{"source": "test", "path": str(tmp_path / "config.toml")},
-	])
-	monkeypatch.setattr("lerim.server.httpd.get_user_config_path", lambda: tmp_path / "config.toml")
 	monkeypatch.setattr("lerim.server.httpd.init_sessions_db", lambda: None)
 
 	# Mock api module functions used by GET handlers
@@ -370,13 +366,11 @@ def test_get_config(test_server):
 	status, body = _api_get(port, "/api/config")
 	assert status == 200
 	assert "effective" in body
-	assert "sources" in body
-	assert "user_config_path" in body
 	# Verify effective config structure
 	effective = body["effective"]
 	assert "server" in effective
 	assert "roles" in effective
-	assert "data" in effective
+	assert "data" not in effective
 
 
 def test_get_config_models(test_server):
@@ -950,8 +944,10 @@ def test_serialize_full_config(tmp_path):
 	result = _serialize_full_config(config)
 	assert "server" in result
 	assert "roles" in result
-	assert "data" in result
+	assert "embedding" in result
 	assert "mlflow_enabled" in result
+	assert "data" not in result
+	assert "global_data_dir" not in result
 	assert result["server"]["port"] == 8765
 	assert "agent" in result["roles"]
 

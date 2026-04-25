@@ -9,7 +9,7 @@ expected:
     - save_context
   must_not_use_tools:
     - get_context
-    - prune
+    - prune_trace_reads
   episode_text_must_include_any:
     - stale
     - fixture

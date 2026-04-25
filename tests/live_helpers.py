@@ -12,6 +12,12 @@ import pytest
 import sqlite_vec
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 
+from lerim.agents.toolsets import (
+    ASK_TOOL_NAMES as ASK_TOOL_NAMES,
+    CURRENT_AGENT_TOOL_NAMES as CURRENT_AGENT_TOOL_NAMES,
+    EXTRACT_TOOL_NAMES as EXTRACT_TOOL_NAMES,
+    MAINTAIN_TOOL_NAMES as MAINTAIN_TOOL_NAMES,
+)
 from lerim.config.settings import Config, get_config, reload_config
 from lerim.context.spec import RECORD_KIND_SPECS
 
@@ -39,51 +45,8 @@ FORBIDDEN_CONTEXT_TABLES = {
     "record_links",
     "session_findings",
 }
-REMOVED_TOOL_NAMES = {
-    "archive",
-    "archive_record",
-    "context_query",
-    "create_record",
-    "edit",
-    "fetch_records",
-    "grep",
-    "list_records",
-    "note",
-    "prune",
-    "read",
-    "scan",
-    "search_records",
-    "supersede_record",
-    "trace_read",
-    "update_record",
-    "verify_index",
-    "write",
-}
 FRAMEWORK_TOOL_NAMES = {
     "final_result",
-}
-EXTRACT_TOOL_NAMES = {
-    "save_context",
-    "get_context",
-    "note_trace_findings",
-    "prune_trace_reads",
-    "search_context",
-    "read_trace",
-    "revise_context",
-}
-MAINTAIN_TOOL_NAMES = {
-    "archive_context",
-    "get_context",
-    "list_context",
-    "search_context",
-    "supersede_context",
-    "revise_context",
-}
-ASK_TOOL_NAMES = {
-    "count_context",
-    "get_context",
-    "list_context",
-    "search_context",
 }
 _API_KEY_ATTRS = {
     "minimax": "minimax_api_key",
@@ -288,7 +251,3 @@ def assert_quality_metrics(metrics: dict[str, Any]) -> None:
     assert metrics["embedding_models"] == [get_config().embedding_model_id]
     assert metrics["fts_count"] == metrics["record_count"]
 
-
-def assert_no_removed_tools(tool_names: list[str]) -> None:
-    """Assert that one agent trace avoids removed tool names."""
-    assert not (set(tool_names) & REMOVED_TOOL_NAMES)

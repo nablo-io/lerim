@@ -1,24 +1,28 @@
-"""Unit tests for the hybrid search system in lerim.context.store.
+"""Unit tests for the hybrid search system in lerim.context.retrieval.
 
-Covers _compile_safe_fts_query, _rrf_fuse, ContextStore.search, and SearchHit.
+Covers compile_safe_fts_query, rrf_fuse, ContextStore.search, and SearchHit.
 """
 
 from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import FrozenInstanceError
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
 
+import lerim.context.retrieval as retrieval
 from lerim.context.project_identity import resolve_project_identity
-from lerim.context.store import (
+from lerim.context.retrieval import (
     RRF_K,
-    ContextStore,
     SearchHit,
-    _compile_safe_fts_query,
+    compile_safe_fts_query,
+    rrf_fuse,
+    semantic_candidates,
+)
+from lerim.context.store import (
+    ContextStore,
 )
 
 
@@ -94,75 +98,73 @@ class _FakeProvider:
 
 class TestCompileSafeFtsQuery:
     def test_none_returns_none(self):
-        assert _compile_safe_fts_query(None) is None
+        assert compile_safe_fts_query(None) is None
 
     def test_empty_string_returns_none(self):
-        assert _compile_safe_fts_query("") is None
+        assert compile_safe_fts_query("") is None
 
     def test_whitespace_only_returns_none(self):
-        assert _compile_safe_fts_query("   \t  \n  ") is None
+        assert compile_safe_fts_query("   \t  \n  ") is None
 
     def test_single_word_is_quoted(self):
-        result = _compile_safe_fts_query("hello")
+        result = compile_safe_fts_query("hello")
         assert result == '"hello"'
 
     def test_two_words_are_or_joined(self):
-        result = _compile_safe_fts_query("hello world")
+        result = compile_safe_fts_query("hello world")
         assert result == '"hello" OR "world"'
 
     def test_special_chars_become_spaces(self):
-        result = _compile_safe_fts_query("hello! world? test@foo#bar")
+        result = compile_safe_fts_query("hello! world? test@foo#bar")
         assert result == '"hello" OR "world" OR "test" OR "foo" OR "bar"'
 
     def test_punctuation_only_returns_none(self):
-        assert _compile_safe_fts_query("!@#$%^&*()") is None
+        assert compile_safe_fts_query("!@#$%^&*()") is None
 
     def test_max_eight_terms(self):
         words = " ".join(f"word{i}" for i in range(12))
-        result = _compile_safe_fts_query(words)
+        result = compile_safe_fts_query(words)
         terms = result.split(" OR ")
         assert len(terms) == 8
 
     def test_case_insensitive_dedup(self):
-        result = _compile_safe_fts_query("Hello HELLO hello World world")
+        result = compile_safe_fts_query("Hello HELLO hello World world")
         assert result == '"Hello" OR "World"'
 
     def test_mixed_case_dedup_keeps_first(self):
-        result = _compile_safe_fts_query("Python python PYTHON")
+        result = compile_safe_fts_query("Python python PYTHON")
         assert result == '"Python"'
 
     def test_digits_preserved(self):
-        result = _compile_safe_fts_query("python3 version 3.11")
+        result = compile_safe_fts_query("python3 version 3.11")
         assert result == '"python3" OR "version" OR "3" OR "11"'
 
     def test_dashes_become_spaces(self):
-        result = _compile_safe_fts_query("well-known pattern")
+        result = compile_safe_fts_query("well-known pattern")
         assert result == '"well" OR "known" OR "pattern"'
 
     def test_multiple_spaces_collapsed(self):
-        result = _compile_safe_fts_query("a   b    c")
+        result = compile_safe_fts_query("a   b    c")
         assert result == '"a" OR "b" OR "c"'
 
     def test_unicode_preserved(self):
-        result = _compile_safe_fts_query("donnée käytäntö")
+        result = compile_safe_fts_query("donnée käytäntö")
         assert result == '"donnée" OR "käytäntö"'
 
     def test_exactly_eight_terms_not_truncated(self):
         words = " ".join(f"w{i}" for i in range(8))
-        result = _compile_safe_fts_query(words)
+        result = compile_safe_fts_query(words)
         terms = result.split(" OR ")
         assert len(terms) == 8
 
 
 class TestRRFFusion:
     def test_empty_both_returns_empty(self):
-        store = ContextStore(Path("/dev/null"))
-        result = store._rrf_fuse(semantic_rows=[], lexical_rows=[])
+        result = rrf_fuse(semantic_rows=[], lexical_rows=[])
         assert result == []
 
     def test_semantic_only(self):
-        store = ContextStore(Path("/dev/null"))
-        result = store._rrf_fuse(
+        result = rrf_fuse(
             semantic_rows=[("r1", 0.1), ("r2", 0.5)],
             lexical_rows=[],
         )
@@ -172,8 +174,7 @@ class TestRRFFusion:
         assert result[1][2] == ["semantic"]
 
     def test_lexical_only(self):
-        store = ContextStore(Path("/dev/null"))
-        result = store._rrf_fuse(
+        result = rrf_fuse(
             semantic_rows=[],
             lexical_rows=[("r1", -5.0), ("r2", -10.0)],
         )
@@ -182,8 +183,7 @@ class TestRRFFusion:
         assert result[0][2] == ["fts"]
 
     def test_both_sources_dual_hit(self):
-        store = ContextStore(Path("/dev/null"))
-        result = store._rrf_fuse(
+        result = rrf_fuse(
             semantic_rows=[("r1", 0.1)],
             lexical_rows=[("r1", -5.0)],
         )
@@ -194,20 +194,18 @@ class TestRRFFusion:
         assert "fts" in sources
 
     def test_dual_source_higher_score_than_single(self):
-        store = ContextStore(Path("/dev/null"))
-        semantic_only = store._rrf_fuse(
+        semantic_only = rrf_fuse(
             semantic_rows=[("r_single", 0.1)],
             lexical_rows=[],
         )
-        both = store._rrf_fuse(
+        both = rrf_fuse(
             semantic_rows=[("r_dual", 0.1)],
             lexical_rows=[("r_dual", -5.0)],
         )
         assert both[0][1] > semantic_only[0][1]
 
     def test_ordering_by_score_descending(self):
-        store = ContextStore(Path("/dev/null"))
-        result = store._rrf_fuse(
+        result = rrf_fuse(
             semantic_rows=[("r1", 0.1), ("r2", 0.2)],
             lexical_rows=[("r1", -5.0)],
         )
@@ -215,8 +213,7 @@ class TestRRFFusion:
         assert scores == sorted(scores, reverse=True)
 
     def test_rrf_formula_rank1(self):
-        store = ContextStore(Path("/dev/null"))
-        result = store._rrf_fuse(
+        result = rrf_fuse(
             semantic_rows=[("r1", 0.0)],
             lexical_rows=[],
         )
@@ -224,24 +221,21 @@ class TestRRFFusion:
         assert abs(result[0][1] - expected) < 1e-10
 
     def test_rrf_formula_rank60(self):
-        store = ContextStore(Path("/dev/null"))
         rows = [(f"r{i}", float(i)) for i in range(60)]
-        result = store._rrf_fuse(semantic_rows=rows, lexical_rows=[])
+        result = rrf_fuse(semantic_rows=rows, lexical_rows=[])
         last = result[-1]
         expected = 1.0 / (RRF_K + 60)
         assert abs(last[1] - expected) < 1e-10
 
     def test_sources_sorted_alphabetically(self):
-        store = ContextStore(Path("/dev/null"))
-        result = store._rrf_fuse(
+        result = rrf_fuse(
             semantic_rows=[("r1", 0.1)],
             lexical_rows=[("r1", -1.0)],
         )
         assert result[0][2] == ["fts", "semantic"]
 
     def test_disjoint_lists_combined(self):
-        store = ContextStore(Path("/dev/null"))
-        result = store._rrf_fuse(
+        result = rrf_fuse(
             semantic_rows=[("s1", 0.1), ("s2", 0.2)],
             lexical_rows=[("l1", -1.0), ("l2", -2.0)],
         )
@@ -249,8 +243,7 @@ class TestRRFFusion:
         assert ids == {"s1", "s2", "l1", "l2"}
 
     def test_lexical_rank_contributes_correctly(self):
-        store = ContextStore(Path("/dev/null"))
-        result = store._rrf_fuse(
+        result = rrf_fuse(
             semantic_rows=[("r1", 0.0)],
             lexical_rows=[("r1", 0.0)],
         )
@@ -334,7 +327,8 @@ class TestSearchIntegration:
             why="It is the in-scope decision result.",
         )
 
-        hits = store._semantic_candidates(
+        hits = semantic_candidates(
+            store,
             project_ids=[pid],
             query="needle query",
             kind_filters=["decision"],
@@ -623,8 +617,8 @@ class TestSearchIntegration:
         opened_connections = []
         helper_connections = []
         original_connect = store.connect
-        original_semantic = store._semantic_candidates
-        original_lexical = store._lexical_candidates
+        original_semantic = retrieval.semantic_candidates
+        original_lexical = retrieval.lexical_candidates
 
         @contextmanager
         def tracked_connect():
@@ -641,8 +635,8 @@ class TestSearchIntegration:
             return original_lexical(*args, **kwargs)
 
         monkeypatch.setattr(store, "connect", tracked_connect)
-        monkeypatch.setattr(store, "_semantic_candidates", tracked_semantic)
-        monkeypatch.setattr(store, "_lexical_candidates", tracked_lexical)
+        monkeypatch.setattr(retrieval, "semantic_candidates", tracked_semantic)
+        monkeypatch.setattr(retrieval, "lexical_candidates", tracked_lexical)
 
         hits = store.search(project_ids=[pid], query="Redis cache TTL")
 

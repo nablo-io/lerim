@@ -6,13 +6,14 @@ Docker-unavailable and missing-Dockerfile scenarios gracefully.
 """
 
 from __future__ import annotations
+import json
 import os
 from pathlib import Path
 
 import pytest
 
 from lerim import __version__
-from lerim.server.api import (
+from lerim.server.docker_runtime import (
     GHCR_IMAGE,
     _generate_compose_yml,
     api_up,
@@ -24,7 +25,7 @@ from tests.helpers import make_config
 def _isolate_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Monkeypatch reload_config so compose generation uses a temp config."""
     cfg = make_config(tmp_path)
-    monkeypatch.setattr("lerim.server.api.reload_config", lambda: cfg)
+    monkeypatch.setattr("lerim.server.docker_runtime.reload_config", lambda: cfg)
 
 
 def test_default_compose_uses_ghcr_image() -> None:
@@ -37,7 +38,7 @@ def test_default_compose_uses_ghcr_image() -> None:
 def test_build_local_uses_build_directive(monkeypatch: pytest.MonkeyPatch) -> None:
     """build_local=True emits a build directive instead of an image directive."""
     fake_root = Path("/fake/lerim-root")
-    monkeypatch.setattr("lerim.server.api._find_package_root", lambda: fake_root)
+    monkeypatch.setattr("lerim.server.docker_runtime._find_package_root", lambda: fake_root)
     content = _generate_compose_yml(build_local=True)
     assert f"build: {fake_root}" in content
     assert "image:" not in content
@@ -45,7 +46,7 @@ def test_build_local_uses_build_directive(monkeypatch: pytest.MonkeyPatch) -> No
 
 def test_build_local_no_dockerfile_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     """build_local=True raises FileNotFoundError when Dockerfile is missing."""
-    monkeypatch.setattr("lerim.server.api._find_package_root", lambda: None)
+    monkeypatch.setattr("lerim.server.docker_runtime._find_package_root", lambda: None)
     with pytest.raises(FileNotFoundError, match="Cannot find Dockerfile"):
         _generate_compose_yml(build_local=True)
 
@@ -66,7 +67,7 @@ def test_version_tag_matches_dunder_version() -> None:
 
 def test_api_up_docker_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
     """api_up returns an error dict when Docker is not available."""
-    monkeypatch.setattr("lerim.server.api.docker_available", lambda: False)
+    monkeypatch.setattr("lerim.server.docker_runtime.docker_available", lambda: False)
     result = api_up()
     assert "error" in result
     assert "Docker" in result["error"]
@@ -74,8 +75,8 @@ def test_api_up_docker_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_api_up_build_local_no_dockerfile(monkeypatch: pytest.MonkeyPatch) -> None:
     """api_up(build_local=True) returns error dict when Dockerfile is missing."""
-    monkeypatch.setattr("lerim.server.api.docker_available", lambda: True)
-    monkeypatch.setattr("lerim.server.api._find_package_root", lambda: None)
+    monkeypatch.setattr("lerim.server.docker_runtime.docker_available", lambda: True)
+    monkeypatch.setattr("lerim.server.docker_runtime._find_package_root", lambda: None)
     result = api_up(build_local=True)
     assert "error" in result
     assert "Dockerfile" in result["error"]
@@ -133,7 +134,7 @@ def test_compose_mounts_only_global_lerim_and_agent_dirs(tmp_path, monkeypatch) 
     from dataclasses import replace
     cfg = make_config(tmp_path)
     cfg = replace(cfg, projects={"test": str(tmp_path / "myproject")})
-    monkeypatch.setattr("lerim.server.api.reload_config", lambda: cfg)
+    monkeypatch.setattr("lerim.server.docker_runtime.reload_config", lambda: cfg)
 
     content = _generate_compose_yml(build_local=False)
     assert f"{cfg.global_data_dir}:{cfg.global_data_dir}" in content
@@ -152,8 +153,8 @@ def test_compose_mounts_explicit_config_outside_data_dir(
     config_path.parent.mkdir(parents=True)
     config_path.write_text("[data]\n", encoding="utf-8")
     cfg = replace(make_config(data_dir), global_data_dir=data_dir)
-    monkeypatch.setattr("lerim.server.api.reload_config", lambda: cfg)
-    monkeypatch.setattr("lerim.server.api.get_user_config_path", lambda: config_path)
+    monkeypatch.setattr("lerim.server.docker_runtime.reload_config", lambda: cfg)
+    monkeypatch.setattr("lerim.server.docker_runtime.get_user_config_path", lambda: config_path)
     monkeypatch.setenv("LERIM_CONFIG", str(config_path))
 
     content = _generate_compose_yml(build_local=False)
@@ -171,8 +172,8 @@ def test_compose_mounts_env_file_outside_data_dir(tmp_path, monkeypatch) -> None
     env_path.parent.mkdir(parents=True)
     env_path.write_text("OPENROUTER_API_KEY=secret\n", encoding="utf-8")
     cfg = replace(make_config(data_dir), global_data_dir=data_dir)
-    monkeypatch.setattr("lerim.server.api.reload_config", lambda: cfg)
-    monkeypatch.setattr("lerim.server.api.get_user_env_path", lambda: env_path)
+    monkeypatch.setattr("lerim.server.docker_runtime.reload_config", lambda: cfg)
+    monkeypatch.setattr("lerim.server.docker_runtime.get_user_env_path", lambda: env_path)
 
     content = _generate_compose_yml(build_local=False)
     resolved = str(env_path.resolve())
@@ -185,7 +186,7 @@ def test_compose_does_not_set_project_local_working_dir(tmp_path, monkeypatch) -
 
     cfg = make_config(tmp_path)
     cfg = replace(cfg, projects={"test": str(tmp_path / "myproject")})
-    monkeypatch.setattr("lerim.server.api.reload_config", lambda: cfg)
+    monkeypatch.setattr("lerim.server.docker_runtime.reload_config", lambda: cfg)
 
     content = _generate_compose_yml(build_local=False)
     assert "working_dir:" not in content
@@ -198,13 +199,30 @@ def test_compose_does_not_pin_container_name() -> None:
     assert "container_name:" not in content
 
 
-def test_compose_agent_dirs_read_only(tmp_path, monkeypatch) -> None:
-    """Agent session directories should be mounted read-only."""
+def test_compose_mounts_connected_platform_dirs_read_only(tmp_path, monkeypatch) -> None:
+    """Connected platform session directories should be mounted read-only."""
     from dataclasses import replace
     cfg = make_config(tmp_path)
     agent_path = str(tmp_path / "sessions")
-    cfg = replace(cfg, agents={"claude": agent_path})
-    monkeypatch.setattr("lerim.server.api.reload_config", lambda: cfg)
+    Path(agent_path).mkdir(parents=True)
+    cfg.platforms_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg.platforms_path.write_text(
+        json.dumps(
+            {
+                "platforms": {
+                    "claude": {
+                        "path": agent_path,
+                        "connected_at": "2026-01-01T00:00:00+00:00",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    ignored_agent_config_path = tmp_path / "ignored-agent-config"
+    cfg = replace(cfg, agents={"claude": str(ignored_agent_config_path)})
+    monkeypatch.setattr("lerim.server.docker_runtime.reload_config", lambda: cfg)
 
     content = _generate_compose_yml(build_local=False)
     assert f"{agent_path}:{agent_path}:ro" in content
+    assert str(ignored_agent_config_path) not in content

@@ -1,7 +1,7 @@
 """Unit tests for api.py functions: detect_agents, write_init_config,
 api_sync, api_maintain, api_health, api_status, api_project_*,
 api_retry_all_dead_letter, api_skip_all_dead_letter, looks_like_auth_error,
-and docker_available.
+and Docker runtime exports.
 
 Focuses on functions testable without Docker/Ollama by mocking the runtime,
 filesystem, and subprocess calls.
@@ -21,9 +21,10 @@ from unittest.mock import MagicMock
 import pytest
 
 import lerim.server.api as api_mod
+import lerim.server.docker_runtime as docker_mod
+from lerim.adapters.registry import KNOWN_PLATFORMS
 from lerim.context import ContextStore, resolve_project_identity
 from lerim.server.api import (
-	AGENT_DEFAULT_PATHS,
 	api_connect,
 	api_connect_list,
 	api_health,
@@ -36,10 +37,10 @@ from lerim.server.api import (
 	api_status,
 	api_sync,
 	detect_agents,
-	docker_available,
 	looks_like_auth_error,
 	write_init_config,
 )
+from lerim.server.docker_runtime import docker_available
 from lerim.server.daemon import SyncSummary
 from tests.helpers import make_config
 
@@ -96,7 +97,7 @@ def test_api_health_returns_ok() -> None:
 def test_detect_agents_returns_all_known() -> None:
 	"""detect_agents returns entries for all known agent default paths."""
 	agents = detect_agents()
-	for name in AGENT_DEFAULT_PATHS:
+	for name in KNOWN_PLATFORMS:
 		assert name in agents
 		assert "path" in agents[name]
 		assert "exists" in agents[name]
@@ -768,35 +769,35 @@ def test_api_connect(monkeypatch, tmp_path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# api_up / api_down / is_container_running
+# api_up / api_down / is_docker_container_running
 # ---------------------------------------------------------------------------
 
 
 def test_api_up_docker_not_available(monkeypatch) -> None:
 	"""api_up returns error when Docker is not running."""
-	monkeypatch.setattr(api_mod, "docker_available", lambda: False)
+	monkeypatch.setattr(docker_mod, "docker_available", lambda: False)
 
-	result = api_mod.api_up()
+	result = docker_mod.api_up()
 	assert "error" in result
 	assert "Docker" in result["error"]
 
 
 def test_api_up_build_local_no_dockerfile(monkeypatch) -> None:
 	"""api_up returns error when build_local=True but no Dockerfile found."""
-	monkeypatch.setattr(api_mod, "docker_available", lambda: True)
-	monkeypatch.setattr(api_mod, "_find_package_root", lambda: None)
-	monkeypatch.setattr(api_mod, "reload_config", lambda: make_config(Path("/tmp")))
+	monkeypatch.setattr(docker_mod, "docker_available", lambda: True)
+	monkeypatch.setattr(docker_mod, "_find_package_root", lambda: None)
+	monkeypatch.setattr(docker_mod, "reload_config", lambda: make_config(Path("/tmp")))
 
-	result = api_mod.api_up(build_local=True)
+	result = docker_mod.api_up(build_local=True)
 	assert "error" in result
 	assert "Dockerfile" in result["error"]
 
 
 def test_api_up_compose_timeout(monkeypatch, tmp_path) -> None:
 	"""api_up returns error when docker compose times out."""
-	monkeypatch.setattr(api_mod, "docker_available", lambda: True)
-	monkeypatch.setattr(api_mod, "reload_config", lambda: make_config(tmp_path))
-	monkeypatch.setattr(api_mod, "COMPOSE_PATH", tmp_path / "docker-compose.yml")
+	monkeypatch.setattr(docker_mod, "docker_available", lambda: True)
+	monkeypatch.setattr(docker_mod, "reload_config", lambda: make_config(tmp_path))
+	monkeypatch.setattr(docker_mod, "COMPOSE_PATH", tmp_path / "docker-compose.yml")
 
 	def raise_timeout(*args, **kwargs):
 		"""Simulate compose timeout."""
@@ -804,36 +805,36 @@ def test_api_up_compose_timeout(monkeypatch, tmp_path) -> None:
 
 	monkeypatch.setattr(subprocess, "run", raise_timeout)
 
-	result = api_mod.api_up()
+	result = docker_mod.api_up()
 	assert "error" in result
 	assert "timed out" in result["error"]
 
 
 def test_api_up_compose_failure(monkeypatch, tmp_path) -> None:
 	"""api_up returns error when docker compose up fails."""
-	monkeypatch.setattr(api_mod, "docker_available", lambda: True)
-	monkeypatch.setattr(api_mod, "reload_config", lambda: make_config(tmp_path))
-	monkeypatch.setattr(api_mod, "COMPOSE_PATH", tmp_path / "docker-compose.yml")
+	monkeypatch.setattr(docker_mod, "docker_available", lambda: True)
+	monkeypatch.setattr(docker_mod, "reload_config", lambda: make_config(tmp_path))
+	monkeypatch.setattr(docker_mod, "COMPOSE_PATH", tmp_path / "docker-compose.yml")
 	monkeypatch.setattr(
 		subprocess, "run", lambda cmd, **kw: MagicMock(returncode=1)
 	)
 
-	result = api_mod.api_up()
+	result = docker_mod.api_up()
 	assert "error" in result
 	assert "failed" in result["error"]
 
 
 def test_api_up_success(monkeypatch, tmp_path) -> None:
 	"""api_up returns success when compose starts cleanly."""
-	monkeypatch.setattr(api_mod, "docker_available", lambda: True)
-	monkeypatch.setattr(api_mod, "reload_config", lambda: make_config(tmp_path))
+	monkeypatch.setattr(docker_mod, "docker_available", lambda: True)
+	monkeypatch.setattr(docker_mod, "reload_config", lambda: make_config(tmp_path))
 	compose_path = tmp_path / "docker-compose.yml"
-	monkeypatch.setattr(api_mod, "COMPOSE_PATH", compose_path)
+	monkeypatch.setattr(docker_mod, "COMPOSE_PATH", compose_path)
 	monkeypatch.setattr(
 		subprocess, "run", lambda cmd, **kw: MagicMock(returncode=0)
 	)
 
-	result = api_mod.api_up()
+	result = docker_mod.api_up()
 	assert result["status"] == "started"
 	assert compose_path.exists()
 
@@ -841,9 +842,9 @@ def test_api_up_success(monkeypatch, tmp_path) -> None:
 def test_generate_compose_mounts_effective_global_data_dir(monkeypatch, tmp_path) -> None:
 	"""Compose generation should mount the configured global data dir, not ~/.lerim."""
 	cfg = make_config(tmp_path / "custom-root")
-	monkeypatch.setattr(api_mod, "reload_config", lambda: cfg)
+	monkeypatch.setattr(docker_mod, "reload_config", lambda: cfg)
 
-	compose = api_mod._generate_compose_yml()
+	compose = docker_mod._generate_compose_yml()
 
 	assert str(cfg.global_data_dir) in compose
 	assert f"{Path.home()}/.lerim:{Path.home()}/.lerim" not in compose
@@ -852,10 +853,10 @@ def test_generate_compose_mounts_effective_global_data_dir(monkeypatch, tmp_path
 def test_api_down_no_compose_file(monkeypatch, tmp_path) -> None:
 	"""api_down returns not_running when compose file does not exist."""
 	monkeypatch.setattr(
-		api_mod, "COMPOSE_PATH", tmp_path / "nonexistent-compose.yml"
+		docker_mod, "COMPOSE_PATH", tmp_path / "nonexistent-compose.yml"
 	)
 
-	result = api_mod.api_down()
+	result = docker_mod.api_down()
 	assert result["status"] == "not_running"
 
 
@@ -863,14 +864,14 @@ def test_api_down_success(monkeypatch, tmp_path) -> None:
 	"""api_down returns stopped after successful compose down."""
 	compose_path = tmp_path / "docker-compose.yml"
 	compose_path.write_text("services: {}", encoding="utf-8")
-	monkeypatch.setattr(api_mod, "COMPOSE_PATH", compose_path)
-	monkeypatch.setattr(api_mod, "is_container_running", lambda: True)
+	monkeypatch.setattr(docker_mod, "COMPOSE_PATH", compose_path)
+	monkeypatch.setattr(docker_mod, "is_docker_container_running", lambda: True)
 	monkeypatch.setattr(
 		subprocess, "run",
 		lambda cmd, **kw: MagicMock(returncode=0),
 	)
 
-	result = api_mod.api_down()
+	result = docker_mod.api_down()
 	assert result["status"] == "stopped"
 	assert result["was_running"] is True
 
@@ -879,29 +880,46 @@ def test_api_down_failure(monkeypatch, tmp_path) -> None:
 	"""api_down returns error when compose down fails."""
 	compose_path = tmp_path / "docker-compose.yml"
 	compose_path.write_text("services: {}", encoding="utf-8")
-	monkeypatch.setattr(api_mod, "COMPOSE_PATH", compose_path)
-	monkeypatch.setattr(api_mod, "is_container_running", lambda: False)
+	monkeypatch.setattr(docker_mod, "COMPOSE_PATH", compose_path)
+	monkeypatch.setattr(docker_mod, "is_docker_container_running", lambda: False)
 	monkeypatch.setattr(
 		subprocess, "run",
 		lambda cmd, **kw: MagicMock(returncode=1, stderr="compose error"),
 	)
 
-	result = api_mod.api_down()
+	result = docker_mod.api_down()
 	assert "error" in result
 
 
-def test_is_container_running_unreachable(monkeypatch, tmp_path) -> None:
-	"""is_container_running returns False when health endpoint is unreachable."""
+def test_is_docker_container_running_false_when_compose_service_is_not_running(
+	monkeypatch, tmp_path
+) -> None:
+	"""is_docker_container_running returns False when compose reports no service."""
+	compose_path = tmp_path / "docker-compose.yml"
+	compose_path.write_text("services: {}", encoding="utf-8")
+	monkeypatch.setattr(docker_mod, "COMPOSE_PATH", compose_path)
+	monkeypatch.setattr(
+		subprocess,
+		"run",
+		lambda cmd, **kw: MagicMock(returncode=0, stdout=""),
+	)
+
+	result = docker_mod.is_docker_container_running()
+	assert result is False
+
+
+def test_is_server_healthy_unreachable(monkeypatch, tmp_path) -> None:
+	"""is_server_healthy returns False when the health endpoint is unreachable."""
 	cfg = make_config(tmp_path)
-	monkeypatch.setattr(api_mod, "get_config", lambda: cfg)
+	monkeypatch.setattr(docker_mod, "get_config", lambda: cfg)
 
 	def raise_url_error(*args, **kwargs):
-		"""Simulate unreachable container."""
+		"""Simulate unreachable server."""
 		raise urllib.error.URLError("connection refused")
 
 	monkeypatch.setattr(urllib.request, "urlopen", raise_url_error)
 
-	result = api_mod.is_container_running()
+	result = docker_mod.is_server_healthy()
 	assert result is False
 
 
@@ -968,7 +986,7 @@ def test_parse_duration_empty_raises() -> None:
 
 def test_find_package_root_returns_path_or_none() -> None:
 	"""_find_package_root returns a Path or None without crashing."""
-	result = api_mod._find_package_root()
+	result = docker_mod._find_package_root()
 	assert result is None or isinstance(result, Path)
 
 

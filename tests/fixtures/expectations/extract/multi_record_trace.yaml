@@ -11,7 +11,7 @@ expected:
     - save_context
   must_not_use_tools:
     - revise_context
-    - prune
+    - prune_trace_reads
   decision_text_must_include_all:
     - raw sql
     - typed

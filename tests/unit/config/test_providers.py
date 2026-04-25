@@ -87,6 +87,7 @@ def test_api_key_resolution(tmp_path) -> None:
 	assert _api_key_for_provider(cfg, "minimax") == "mm-key"
 	assert _api_key_for_provider(cfg, "opencode_go") == "oc-key"
 	assert _api_key_for_provider(cfg, "ollama") is None
+	assert _api_key_for_provider(cfg, "mlx") is None
 
 
 def test_build_pydantic_model_missing_api_key_raises(tmp_path) -> None:
@@ -105,6 +106,19 @@ def test_build_pydantic_model_ollama_no_key(tmp_path) -> None:
 	cfg = replace(
 		cfg,
 		agent_role=RoleConfig(provider="ollama", model="qwen3:8b"),
+	)
+	model = build_pydantic_model("agent", config=cfg)
+	assert model is not None
+
+
+def test_build_pydantic_model_mlx_no_key(tmp_path) -> None:
+	cfg = make_config(tmp_path)
+	cfg = replace(
+		cfg,
+		agent_role=RoleConfig(
+			provider="mlx",
+			model="mlx-community/Qwen3.5-9B-4bit",
+		),
 	)
 	model = build_pydantic_model("agent", config=cfg)
 	assert model is not None
