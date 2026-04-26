@@ -467,6 +467,10 @@ def test_api_status_returns_expected_keys(monkeypatch, tmp_path, mock_embeddings
 	assert result["sessions_indexed_count"] == 5
 	assert result["queue"] == {"pending": 0, "done": 3}
 	assert result["sync_window_days"] == cfg.sync_window_days
+	assert result["schedule"]["sync"]["interval_minutes"] == cfg.sync_interval_minutes
+	assert result["schedule"]["sync"]["seconds_until_next"] == 0
+	assert result["schedule"]["maintain"]["interval_minutes"] == cfg.maintain_interval_minutes
+	assert result["schedule"]["maintain"]["seconds_until_next"] == 0
 	assert "queue_health" in result
 	assert result["scope"]["strict_project_only"] is True
 

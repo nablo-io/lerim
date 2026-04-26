@@ -10,7 +10,7 @@ import hashlib
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -661,6 +661,39 @@ def _duration_ms_from_run(run: dict[str, Any]) -> int | None:
     return int((completed - started).total_seconds() * 1000)
 
 
+def _schedule_item(
+    *,
+    latest: dict[str, Any] | None,
+    interval_minutes: int,
+    now: datetime,
+) -> dict[str, Any]:
+    """Build public schedule metadata for one recurring daemon task."""
+    interval_seconds = max(int(interval_minutes) * 60, 30)
+    latest = latest or {}
+    status = str(latest.get("status") or "").strip().lower()
+    started_at = str(latest.get("started_at") or "").strip()
+    completed_at = str(latest.get("completed_at") or "").strip()
+    running = status == "started" and not completed_at
+
+    anchor = _parse_iso_time(completed_at) or _parse_iso_time(started_at)
+    next_due: datetime | None = None
+    seconds_until: int | None = None
+    if not running:
+        next_due = (anchor + timedelta(seconds=interval_seconds)) if anchor else now
+        seconds_until = max(0, int((next_due - now).total_seconds()))
+
+    return {
+        "interval_minutes": int(interval_minutes),
+        "interval_seconds": interval_seconds,
+        "running": running,
+        "last_status": status or None,
+        "last_started_at": started_at or None,
+        "last_completed_at": completed_at or None,
+        "next_due_at": next_due.isoformat() if next_due else None,
+        "seconds_until_next": seconds_until,
+    }
+
+
 def _sync_metrics_from_details(details: dict[str, Any]) -> dict[str, Any]:
     """Return the structured sync metrics payload from service-run details."""
     sync_metrics = details.get("sync_metrics")
@@ -934,6 +967,7 @@ def api_status(
     if not projects_payload and normalized_scope == "all":
         total_records = 0
 
+    now = datetime.now(timezone.utc)
     latest_sync_raw = latest_service_run("sync")
     latest_maintain_raw = latest_service_run("maintain")
     queue = count_session_jobs_by_status()
@@ -960,7 +994,7 @@ def api_status(
     latest_sync = _normalize_latest_run(latest_sync_raw)
 
     payload: dict[str, Any] = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now.isoformat(),
         "connected_agents": [str(item.get("name") or "") for item in platforms if item.get("name")],
         "platforms": platforms,
         "record_count": total_records,
@@ -969,6 +1003,18 @@ def api_status(
         "queue_health": queue_health,
         "projects": projects_payload,
         "sync_window_days": config.sync_window_days,
+        "schedule": {
+            "sync": _schedule_item(
+                latest=latest_sync_raw,
+                interval_minutes=config.sync_interval_minutes,
+                now=now,
+            ),
+            "maintain": _schedule_item(
+                latest=latest_maintain_raw,
+                interval_minutes=config.maintain_interval_minutes,
+                now=now,
+            ),
+        },
         "unscoped_sessions": {
             "total": sum(unscoped_by_agent.values()),
             "by_agent": unscoped_by_agent,

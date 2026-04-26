@@ -69,6 +69,52 @@ def _parse_iso(raw: str | None) -> datetime | None:
 		return None
 
 
+def _format_minutes(minutes: Any) -> str:
+	"""Format an interval in minutes for status output."""
+	try:
+		value = int(minutes)
+	except (TypeError, ValueError):
+		return "unknown"
+	if value < 60:
+		return f"{value}m"
+	hours, rem = divmod(value, 60)
+	if rem == 0:
+		return f"{hours}h"
+	return f"{hours}h {rem}m"
+
+
+def _format_countdown(seconds: Any) -> str:
+	"""Format seconds until a scheduled task is due."""
+	if seconds is None:
+		return "unknown"
+	try:
+		value = max(0, int(seconds))
+	except (TypeError, ValueError):
+		return "unknown"
+	if value == 0:
+		return "due now"
+	if value < 60:
+		return f"in {value}s"
+	minutes, sec = divmod(value, 60)
+	if minutes < 60:
+		return f"in {minutes}m {sec}s" if sec else f"in {minutes}m"
+	hours, minutes = divmod(minutes, 60)
+	return f"in {hours}h {minutes}m" if minutes else f"in {hours}h"
+
+
+def _format_schedule_item(item: dict[str, Any]) -> str:
+	"""Render one daemon schedule row."""
+	interval = _format_minutes(item.get("interval_minutes"))
+	if item.get("running"):
+		return f"every {interval}; running now"
+	countdown = _format_countdown(item.get("seconds_until_next"))
+	due = _parse_iso(str(item.get("next_due_at") or ""))
+	if due:
+		due_text = due.astimezone(timezone.utc).strftime("%H:%M:%SZ")
+		return f"every {interval}; next {countdown} ({due_text})"
+	return f"every {interval}; next {countdown}"
+
+
 def _render_activity_line(item: dict[str, Any]) -> str:
 	"""Render one compact activity line for sync or maintain."""
 	when = _parse_iso(str(item.get("time") or item.get("started_at") or ""))
@@ -123,6 +169,7 @@ def render_status_output(payload: dict[str, Any], *, refreshed_at: str) -> Group
 	unscoped = payload.get("unscoped_sessions") or {}
 	queue_health = payload.get("queue_health") or {}
 	recent_activity = payload.get("recent_activity") or []
+	schedule = payload.get("schedule") or {}
 	blocked_projects = [p for p in projects if _project_state(p) == "blocked"]
 
 	summary = Table.grid(expand=True, padding=(0, 2))
@@ -140,6 +187,11 @@ def render_status_output(payload: dict[str, Any], *, refreshed_at: str) -> Group
 	summary.add_row(
 		"Sync window",
 		sync_window_text,
+	)
+	summary.add_row("Sync interval", _format_schedule_item(schedule.get("sync") or {}))
+	summary.add_row(
+		"Maintain interval",
+		_format_schedule_item(schedule.get("maintain") or {}),
 	)
 	summary.add_row("Queue", _format_queue_counts(queue))
 	summary.add_row(

@@ -221,3 +221,27 @@ class TestRenderStatusOutput:
         output = self._render(result)
         assert "proj-a" in output
         assert "sync" in output
+
+    def test_with_schedule(self):
+        payload = {
+            "schedule": {
+                "sync": {
+                    "interval_minutes": 20,
+                    "running": False,
+                    "seconds_until_next": 90,
+                    "next_due_at": "2026-04-26T12:30:00+00:00",
+                },
+                "maintain": {
+                    "interval_minutes": 60,
+                    "running": True,
+                    "seconds_until_next": None,
+                    "next_due_at": None,
+                },
+            }
+        }
+        result = render_status_output(payload, refreshed_at="now")
+        output = self._render(result)
+        assert "Sync interval" in output
+        assert "every 20m; next in 1m 30s (12:30:00Z)" in output
+        assert "Maintain interval" in output
+        assert "every 1h; running now" in output
