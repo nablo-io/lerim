@@ -37,7 +37,15 @@ def e2e_home(tmp_path: Path) -> Path:
 	"""Create an isolated ~/.lerim directory for E2E tests."""
 	lerim_home = tmp_path / ".lerim"
 	lerim_home.mkdir(parents=True)
-	for subdir in ("cache", "index", "logs", "workspace/sync", "workspace/maintain"):
+	for subdir in (
+		"cache/traces",
+		"index",
+		"logs",
+		"models/embeddings",
+		"models/huggingface/hub",
+		"workspace/sync",
+		"workspace/maintain",
+	):
 		(lerim_home / subdir).mkdir(parents=True, exist_ok=True)
 	(lerim_home / "platforms.json").write_text("{}\n", encoding="utf-8")
 	return lerim_home
@@ -72,7 +80,7 @@ def e2e_config(e2e_home: Path, e2e_project: Path) -> Path:
 		"",
 		"[semantic_search]",
 		'embedding_model_id = "mixedbread-ai/mxbai-embed-xsmall-v1"',
-		f'embedding_cache_dir = "{e2e_home}/cache/embeddings"',
+		f'embedding_cache_dir = "{e2e_home}/models/embeddings"',
 		"semantic_shortlist_size = 40",
 		"lexical_shortlist_size = 40",
 		"",

@@ -27,6 +27,7 @@ def test_load_default_toml():
     assert isinstance(cfg, Config)
     assert cfg.global_data_dir is not None
     assert cfg.context_db_path == cfg.global_data_dir / "context.sqlite3"
+    assert cfg.embedding_cache_dir == cfg.global_data_dir / "models" / "embeddings"
 
 
 def test_deep_merge_override():
@@ -167,6 +168,16 @@ def test_config_env_var_override(tmp_path, monkeypatch):
     cfg = reload_config()
     assert cfg.global_data_dir == tmp_path
     assert cfg.context_db_path == tmp_path / "context.sqlite3"
+    assert cfg.embedding_cache_dir == tmp_path / "models" / "embeddings"
+    for relative in (
+        Path("cache") / "traces" / "claude",
+        Path("cache") / "traces" / "codex",
+        Path("cache") / "traces" / "cursor",
+        Path("cache") / "traces" / "opencode",
+        Path("models") / "embeddings",
+        Path("models") / "huggingface" / "hub",
+    ):
+        assert (tmp_path / relative).is_dir()
 
 
 def test_config_context_db_path_user_override(tmp_path, monkeypatch):

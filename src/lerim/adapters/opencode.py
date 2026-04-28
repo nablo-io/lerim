@@ -32,6 +32,7 @@ from lerim.adapters.common import (
     validate_canonical_entry,
     write_session_cache,
 )
+from lerim.config.settings import get_trace_cache_dir
 
 
 def _clean_entry(obj: dict[str, Any]) -> dict[str, Any] | None:
@@ -76,7 +77,7 @@ def default_path() -> Path | None:
 
 def _default_cache_dir() -> Path:
     """Return the default cache directory for exported OpenCode JSONL files."""
-    return Path("~/.lerim/cache/opencode").expanduser()
+    return get_trace_cache_dir("opencode")
 
 
 def _resolve_db_path(root: Path) -> Path | None:

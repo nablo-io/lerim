@@ -11,6 +11,7 @@ API keys are read from environment variables only.
 from __future__ import annotations
 
 import os
+import shutil
 import tomllib
 from dataclasses import dataclass
 from functools import lru_cache
@@ -76,13 +77,6 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
         else:
             merged[key] = value
     return merged
-
-
-def _expand(value: Any, default: Path) -> Path:
-    """Expand a configured path, using default only when no value is provided."""
-    if value in (None, ""):
-        return default
-    return Path(str(value)).expanduser()
 
 
 def _to_non_empty_string(value: Any) -> str:
@@ -234,6 +228,14 @@ def get_global_data_dir_path() -> Path:
 def get_user_env_path() -> Path:
     """Return the effective ``.env`` path under the active global data dir."""
     return get_global_data_dir_path() / ".env"
+
+
+def get_trace_cache_dir(agent_name: str) -> Path:
+    """Return the compacted trace cache directory for one agent."""
+    safe_name = str(agent_name or "").strip().lower()
+    if not safe_name:
+        raise ValueError("agent_name is required")
+    return get_global_data_dir_path() / "cache" / "traces" / safe_name
 
 
 def ensure_user_config_exists() -> Path:
@@ -495,10 +497,26 @@ def _ensure_global_infrastructure(global_data_dir: Path) -> None:
     for path in (
         root / "workspace",
         root / "index",
-        root / "cache",
+        root / "cache" / "traces" / "claude",
+        root / "cache" / "traces" / "codex",
+        root / "cache" / "traces" / "cursor",
+        root / "cache" / "traces" / "opencode",
+        root / "models" / "embeddings",
+        root / "models" / "huggingface" / "hub",
         root / "logs",
     ):
         path.mkdir(parents=True, exist_ok=True)
+
+
+def remove_legacy_memory_dir(global_data_dir: Path) -> bool:
+    """Remove the retired file-backed memory directory, if present."""
+    legacy_dir = global_data_dir.expanduser() / "memory"
+    if not legacy_dir.exists():
+        return False
+    if not legacy_dir.is_dir():
+        return False
+    shutil.rmtree(legacy_dir)
+    return True
 
 
 @lru_cache(maxsize=1)
@@ -559,7 +577,7 @@ def load_config() -> Config:
         embedding_cache_dir=_read_optional_path(
             semantic_search,
             "embedding_cache_dir",
-            global_data_dir / "cache" / "embeddings",
+            global_data_dir / "models" / "embeddings",
         ),
         semantic_shortlist_size=_require_int(
             semantic_search, "semantic_shortlist_size", minimum=1

@@ -32,6 +32,7 @@ from lerim.adapters.common import (
     readonly_connect,
     write_session_cache,
 )
+from lerim.config.settings import get_trace_cache_dir
 
 
 def _clean_entry(obj: dict[str, Any]) -> dict[str, Any] | None:
@@ -154,7 +155,7 @@ def _resolve_db_paths(root: Path) -> list[Path]:
 
 def _default_cache_dir() -> Path:
     """Return the default cache directory for exported Cursor JSONL files."""
-    return Path("~/.lerim/cache/cursor").expanduser()
+    return get_trace_cache_dir("cursor")
 
 
 # ---------------------------------------------------------------------------

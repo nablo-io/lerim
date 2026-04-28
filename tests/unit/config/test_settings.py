@@ -1,6 +1,6 @@
 """Unit tests for settings.py coverage gaps not covered by test_config.py.
 
-Tests: load_toml_file, _expand, strict typed readers, _to_fallback_models,
+Tests: load_toml_file, strict typed readers, _to_fallback_models,
 _parse_string_table, _toml_value, _toml_write_dict,
 save_config_patch, layer precedence, port validation.
 """
@@ -13,16 +13,17 @@ import pytest
 
 from lerim.config.settings import (
     _deep_merge,
-    _expand,
     _to_fallback_models,
     _parse_string_table,
     _toml_value,
     _toml_write_dict,
     _build_role,
     get_global_data_dir_path,
+    get_trace_cache_dir,
     get_user_config_path,
     get_user_env_path,
     load_toml_file,
+    remove_legacy_memory_dir,
     save_config_patch,
     reload_config,
 )
@@ -59,38 +60,14 @@ def test_load_toml_file_invalid(tmp_path):
         load_toml_file(bad)
 
 
-# ---------------------------------------------------------------------------
-# _expand
-# ---------------------------------------------------------------------------
+def test_get_trace_cache_dir_uses_active_data_root(tmp_path, monkeypatch):
+    """Compacted trace caches live under cache/traces/<agent>."""
+    explicit = tmp_path / "config.toml"
+    data_dir = tmp_path / "data"
+    explicit.write_text(f'[data]\ndir = "{data_dir}"\n', encoding="utf-8")
+    monkeypatch.setenv("LERIM_CONFIG", str(explicit))
 
-
-def test_expand_with_valid_path(tmp_path):
-    """_expand resolves a provided path string."""
-    result = _expand(str(tmp_path), default=Path("/default"))
-    assert result == tmp_path
-
-
-def test_expand_with_none():
-    """_expand returns default when value is None."""
-    default = Path("/fallback")
-    assert _expand(None, default) == default
-
-
-def test_expand_with_empty_string():
-    """_expand returns default when value is empty string."""
-    default = Path("/fallback")
-    assert _expand("", default) == default
-
-
-def test_expand_with_tilde():
-    """_expand expands ~ to home directory."""
-    result = _expand("~/test", default=Path("/default"))
-    assert result == Path.home() / "test"
-
-
-# ---------------------------------------------------------------------------
-# _to_fallback_models
-# ---------------------------------------------------------------------------
+    assert get_trace_cache_dir("codex") == data_dir / "cache" / "traces" / "codex"
 
 
 def test_fallback_models_from_list():
@@ -268,6 +245,17 @@ def test_user_env_path_tracks_effective_data_dir(tmp_path, monkeypatch):
 
     assert get_global_data_dir_path() == tmp_path / "custom-root"
     assert get_user_env_path() == tmp_path / "custom-root" / ".env"
+
+
+def test_remove_legacy_memory_dir_ignores_files(tmp_path):
+    """Only the retired directory is removed; an unexpected file is left alone."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    legacy_path = data_dir / "memory"
+    legacy_path.write_text("not a directory", encoding="utf-8")
+
+    assert remove_legacy_memory_dir(data_dir) is False
+    assert legacy_path.is_file()
 
 
 # ---------------------------------------------------------------------------

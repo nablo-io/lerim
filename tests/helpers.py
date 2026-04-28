@@ -19,7 +19,7 @@ def make_config(base: Path) -> Config:
         context_db_path=base / "context.sqlite3",
         platforms_path=base / "platforms.json",
         embedding_model_id="mixedbread-ai/mxbai-embed-xsmall-v1",
-        embedding_cache_dir=base / "cache" / "embeddings",
+        embedding_cache_dir=base / "models" / "embeddings",
         semantic_shortlist_size=40,
         lexical_shortlist_size=40,
         server_host="127.0.0.1",

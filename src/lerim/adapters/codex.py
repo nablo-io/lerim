@@ -19,6 +19,7 @@ from lerim.adapters.common import (
     parse_timestamp,
     write_session_cache,
 )
+from lerim.config.settings import get_trace_cache_dir
 
 
 def _clean_entry(obj: dict[str, Any]) -> dict[str, Any] | None:
@@ -135,7 +136,7 @@ def compact_trace(raw_text: str) -> str:
 
 def _default_cache_dir() -> Path:
     """Return the default cache directory for compacted Codex JSONL files."""
-    return Path("~/.lerim/cache/codex").expanduser()
+    return get_trace_cache_dir("codex")
 
 
 def default_path() -> Path | None:

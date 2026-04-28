@@ -17,6 +17,7 @@ from lerim.adapters.common import (
     parse_timestamp,
     write_session_cache,
 )
+from lerim.config.settings import get_trace_cache_dir
 
 
 _DROP_TYPES = {"progress", "file-history-snapshot", "queue-operation", "pr-link"}
@@ -79,7 +80,7 @@ def compact_trace(raw_text: str) -> str:
 
 def _default_cache_dir() -> Path:
     """Return the default cache directory for compacted Claude JSONL files."""
-    return Path("~/.lerim/cache/claude").expanduser()
+    return get_trace_cache_dir("claude")
 
 
 def default_path() -> Path | None:

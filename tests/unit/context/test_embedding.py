@@ -194,7 +194,7 @@ class TestGetEmbeddingProvider:
     def test_returns_provider(self, tmp_path, monkeypatch):
         mock_config = MagicMock()
         mock_config.embedding_model_id = "test/model"
-        mock_config.embedding_cache_dir = tmp_path / "cache"
+        mock_config.embedding_cache_dir = tmp_path / "models" / "embeddings"
         monkeypatch.setattr("lerim.context.embedding.get_config", lambda: mock_config)
         provider = get_embedding_provider()
         assert isinstance(provider, EmbeddingProvider)

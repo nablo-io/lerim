@@ -97,9 +97,11 @@ def build_live_config(base: Path) -> Config:
     source = require_live_agent_config()
     base.mkdir(parents=True, exist_ok=True)
     for relative in (
-        Path("cache"),
+        Path("cache") / "traces",
         Path("index"),
         Path("logs"),
+        Path("models") / "embeddings",
+        Path("models") / "huggingface" / "hub",
         Path("observability") / "backups",
         Path("workspace") / "maintain",
         Path("workspace") / "sync",
@@ -112,6 +114,7 @@ def build_live_config(base: Path) -> Config:
         sessions_db_path=base / "index" / "sessions.sqlite3",
         context_db_path=base / "context.sqlite3",
         platforms_path=base / "platforms.json",
+        embedding_cache_dir=base / "models" / "embeddings",
         mlflow_enabled=False,
         agents={},
         projects={},
@@ -250,4 +253,3 @@ def assert_quality_metrics(metrics: dict[str, Any]) -> None:
     assert metrics["embedding_count"] == metrics["record_count"]
     assert metrics["embedding_models"] == [get_config().embedding_model_id]
     assert metrics["fts_count"] == metrics["record_count"]
-

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 from lerim.config import logging as logging_mod
@@ -29,6 +30,14 @@ def test_configure_logging_keeps_anthropic_sdk_at_warning() -> None:
     logging.getLogger("anthropic").setLevel(logging.INFO)
     logging_mod.configure_logging("INFO")
     assert logging.getLogger("anthropic").level == logging.WARNING
+
+
+def test_log_file_path_uses_utc_dated_layout(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(logging_mod, "LOG_DIR", tmp_path)
+    path = logging_mod.log_file_path(
+        "lerim.jsonl", datetime(2026, 4, 26, 12, 0, tzinfo=timezone.utc)
+    )
+    assert path == tmp_path / "2026" / "04" / "26" / "lerim.jsonl"
 
 
 def test_loguru_messages_do_not_use_percent_style_placeholders() -> None:
