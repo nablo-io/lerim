@@ -1,6 +1,6 @@
 site_name: Lerim
 site_url: https://docs.lerim.dev
-site_description: Continual learning layer for coding agents and software projects
+site_description: Persistent context for coding agents
 repo_url: https://github.com/lerim-dev/lerim-cli
 repo_name: lerim-dev/lerim-cli
 edit_uri: edit/main/docs/
@@ -95,19 +95,24 @@ nav:
     - Quickstart: quickstart.md
   - Concepts:
     - How It Works: concepts/how-it-works.md
-    - Memory Model: concepts/memory-model.md
+    - Context Model: concepts/context-model.md
     - Supported Agents: concepts/supported-agents.md
     - Sync & Maintain: concepts/sync-maintain.md
   - CLI Reference:
     - Overview: cli/overview.md
     - lerim init: cli/init.md
     - lerim project: cli/project.md
-    - lerim up / down / logs: cli/up-down-logs.md
     - lerim connect: cli/connect.md
+    - lerim up / down / logs: cli/up-down-logs.md
     - lerim sync: cli/sync.md
     - lerim maintain: cli/maintain.md
     - lerim ask: cli/ask.md
-    - lerim memory: cli/memory.md
+    - lerim query: cli/query.md
+    - lerim queue: cli/queue.md
+    - lerim unscoped: cli/unscoped.md
+    - lerim retry / skip: cli/retry-skip.md
+    - lerim skill: cli/skill.md
+    - lerim auth: cli/auth.md
     - lerim status: cli/status.md
     - lerim serve: cli/serve.md
     - Background loop: cli/daemon.md
@@ -120,6 +125,5 @@ nav:
   - Guides:
     - Connecting Agents: guides/connecting-agents.md
     - Dashboard: guides/dashboard.md
-    - Querying Memories: guides/querying-memories.md
+    - Querying Context: guides/querying-context.md
   - Contributing: contributing/getting-started.md
-  - Changelog: changelog.md

@@ -1,0 +1,10 @@
+case: routine_episode_archived
+summary: Archive routine low-value active episodes.
+
+expected:
+  must_use_tools:
+    - list_context
+    - get_context
+    - archive_context
+  must_not_use_tools:
+    - supersede_context

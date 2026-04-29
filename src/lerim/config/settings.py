@@ -11,6 +11,7 @@ API keys are read from environment variables only.
 from __future__ import annotations
 
 import os
+import shutil
 import tomllib
 from dataclasses import dataclass
 from functools import lru_cache
@@ -19,14 +20,13 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from lerim.config.project_scope import resolve_data_dirs
-
 PACKAGE_DIR = Path(__file__).parent
 DEFAULT_CONFIG_PATH = PACKAGE_DIR / "default.toml"
 USER_CONFIG_PATH = Path.home() / ".lerim" / "config.toml"
 GLOBAL_DATA_DIR = Path.home() / ".lerim"
 
 _LAST_CONFIG_SOURCES: list[dict[str, str]] = []
+_MISSING = object()
 
 
 @dataclass(frozen=True)
@@ -40,8 +40,6 @@ class RoleConfig:
 	model: str
 	api_base: str = ""
 	fallback_models: tuple[str, ...] = ()
-	openrouter_provider_order: tuple[str, ...] = ()
-	thinking: bool = True
 	# MiniMax-M2 official preset: temperature=1.0, top_p=0.95, top_k=40
 	temperature: float = 1.0
 	top_p: float = 0.95
@@ -51,21 +49,21 @@ class RoleConfig:
 	# PydanticAI single-pass sync now auto-scales its request_limit from
 	# trace size via lerim.agents.tools.compute_request_budget(trace_path).
 	# No static extract-budget field on RoleConfig — the budget is derived
-	# at run start from the actual trace's line count, clamped [50, 100].
+	# at run start from the actual trace's line count, clamped [40, 100].
 	# PydanticAI request-turn limits for maintain/ask flows.
 	max_iters_maintain: int = 30
 	max_iters_ask: int = 30
 
 
 def load_toml_file(path: Path | None) -> dict[str, Any]:
-    """Load TOML file into a dict; return empty dict on failures."""
+    """Load TOML file into a dict, failing fast on invalid existing files."""
     if not path or not path.exists():
         return {}
     try:
         with path.open("rb") as handle:
             payload = tomllib.load(handle)
-    except Exception:
-        return {}
+    except Exception as exc:
+        raise ValueError(f"invalid TOML config file: {path}") from exc
     return payload if isinstance(payload, dict) else {}
 
 
@@ -81,16 +79,6 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     return merged
 
 
-def _expand(value: Any, default: Path) -> Path:
-    """Expand user path with fallback to default path."""
-    if value in (None, ""):
-        return default
-    try:
-        return Path(str(value)).expanduser()
-    except (TypeError, OSError, ValueError):
-        return default
-
-
 def _to_non_empty_string(value: Any) -> str:
     """Convert value to stripped string, defaulting to empty string."""
     if value is None:
@@ -98,44 +86,161 @@ def _to_non_empty_string(value: Any) -> str:
     return str(value).strip()
 
 
-def _ensure_dict(data: dict[str, Any], key: str) -> dict[str, Any]:
-	"""Get a dict value from data, returning empty dict if missing or wrong type."""
-	val = data.get(key, {})
-	return val if isinstance(val, dict) else {}
-
-
-def _require_int(raw: dict[str, Any], key: str, minimum: int = 0) -> int:
-    """Read a required integer from config dict. Raises if missing from config."""
+def _read_optional_string(raw: dict[str, Any], key: str) -> str:
+    """Read an optional string config value without coercing other types."""
     value = raw.get(key)
     if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ValueError(f"config key {key} must be a string, got: {value!r}")
+    return value.strip()
+
+
+def _read_optional_path(raw: dict[str, Any], key: str, default: Path) -> Path:
+    """Read an optional TOML path string and expand it without scalar coercion."""
+    value = raw.get(key)
+    if value is None:
+        return default
+    if not isinstance(value, str):
+        raise ValueError(f"config key {key} must be a string path, got: {value!r}")
+    if not value.strip():
+        return default
+    return Path(value.strip()).expanduser()
+
+
+def _ensure_dict(data: dict[str, Any], key: str) -> dict[str, Any]:
+	"""Get a table value from config data, failing on wrong section types."""
+	val = data.get(key, {})
+	if val is None:
+		return {}
+	if not isinstance(val, dict):
+		raise ValueError(f"config section [{key}] must be a table")
+	return val
+
+
+def _read_bool(
+    raw: dict[str, Any],
+    key: str,
+    *,
+    default: bool | object = _MISSING,
+) -> bool:
+    """Read a strictly typed boolean config value."""
+    value = raw.get(key)
+    if value is None:
+        if default is not _MISSING:
+            return bool(default)
         raise ValueError(
             f"missing required config key: {key} (set it in default.toml or user config)"
         )
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
+    if not isinstance(value, bool):
+        raise ValueError(f"config key {key} must be a boolean, got: {value!r}")
+    return value
+
+
+def _read_int(
+    raw: dict[str, Any],
+    key: str,
+    *,
+    default: int | object = _MISSING,
+    minimum: int = 0,
+) -> int:
+    """Read a strictly typed integer config value."""
+    value = raw.get(key)
+    if value is None:
+        if default is not _MISSING:
+            value = default
+        else:
+            raise ValueError(
+                f"missing required config key: {key} (set it in default.toml or user config)"
+            )
+    if not isinstance(value, int) or isinstance(value, bool):
         raise ValueError(f"config key {key} must be an integer, got: {value!r}")
-    return max(minimum, parsed)
+    if value < minimum:
+        raise ValueError(f"config key {key} must be >= {minimum}, got: {value!r}")
+    return value
+
+
+def _read_float(
+    raw: dict[str, Any],
+    key: str,
+    *,
+    default: float | object = _MISSING,
+) -> float:
+    """Read a strictly typed floating-point config value."""
+    value = raw.get(key)
+    if value is None:
+        if default is not _MISSING:
+            value = default
+        else:
+            raise ValueError(
+                f"missing required config key: {key} (set it in default.toml or user config)"
+            )
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise ValueError(f"config key {key} must be a float, got: {value!r}")
+    return float(value)
+
+
+def _require_int(raw: dict[str, Any], key: str, minimum: int = 0) -> int:
+    """Read a required strictly typed integer from config dict."""
+    return _read_int(raw, key, minimum=minimum)
 
 
 def _to_fallback_models(value: Any) -> tuple[str, ...]:
     """Normalize fallback model list from TOML list/string values."""
+    if value is None:
+        return ()
     if isinstance(value, list):
-        return tuple(str(item).strip() for item in value if str(item).strip())
+        models: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                raise ValueError(
+                    f"config key fallback_models list items must be strings, got: {item!r}"
+                )
+            text = item.strip()
+            if text:
+                models.append(text)
+        return tuple(models)
     if isinstance(value, str):
         parts = [item.strip() for item in value.split(",")]
         return tuple(item for item in parts if item)
-    return ()
+    raise ValueError(f"config key fallback_models must be a string or list, got: {value!r}")
 
 
 def get_user_config_path() -> Path:
-    """Return canonical user config path."""
+    """Return the effective writable config path.
+
+    When ``LERIM_CONFIG`` is set, writes should target that explicit override
+    file rather than silently mutating the default user config.
+    """
+    explicit = os.getenv("LERIM_CONFIG")
+    if explicit:
+        return Path(explicit).expanduser()
     return USER_CONFIG_PATH
+
+
+def get_global_data_dir_path() -> Path:
+    """Return the effective global data root from layered TOML config."""
+    toml_data, _sources = _load_layers()
+    data = _ensure_dict(toml_data, "data")
+    return _read_optional_path(data, "dir", GLOBAL_DATA_DIR)
+
+
+def get_user_env_path() -> Path:
+    """Return the effective ``.env`` path under the active global data dir."""
+    return get_global_data_dir_path() / ".env"
+
+
+def get_trace_cache_dir(agent_name: str) -> Path:
+    """Return the compacted trace cache directory for one agent."""
+    safe_name = str(agent_name or "").strip().lower()
+    if not safe_name:
+        raise ValueError("agent_name is required")
+    return get_global_data_dir_path() / "cache" / "traces" / safe_name
 
 
 def ensure_user_config_exists() -> Path:
     """Create user config scaffold outside pytest if it does not exist."""
-    path = USER_CONFIG_PATH
+    path = get_user_config_path()
     if path.exists() or os.getenv("PYTEST_CURRENT_TEST"):
         return path
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -186,12 +291,14 @@ def get_config_sources() -> list[dict[str, str]]:
 class Config:
     """Effective runtime configuration from TOML layers and environment."""
 
-    data_dir: Path
     global_data_dir: Path
-    memory_dir: Path
-    index_dir: Path
     sessions_db_path: Path
+    context_db_path: Path
     platforms_path: Path
+    embedding_model_id: str
+    embedding_cache_dir: Path
+    semantic_shortlist_size: int
+    lexical_shortlist_size: int
 
     server_host: str
     server_port: int
@@ -223,43 +330,25 @@ class Config:
     def public_dict(self) -> dict[str, Any]:
         """Return safe serialized config for CLI/dashboard visibility."""
         return {
-            "data_dir": str(self.data_dir),
-            "global_data_dir": str(self.global_data_dir),
-            "memory_dir": str(self.memory_dir),
-            "index_dir": str(self.index_dir),
-            "sessions_db_path": str(self.sessions_db_path),
-            "platforms_path": str(self.platforms_path),
+            "embedding_model_id": self.embedding_model_id,
+            "semantic_shortlist_size": self.semantic_shortlist_size,
+            "lexical_shortlist_size": self.lexical_shortlist_size,
             "server_host": self.server_host,
             "server_port": self.server_port,
             "sync_interval_minutes": self.sync_interval_minutes,
             "maintain_interval_minutes": self.maintain_interval_minutes,
+            "sync_window_days": self.sync_window_days,
+            "sync_max_sessions": self.sync_max_sessions,
             "agent_role": {
                 "provider": self.agent_role.provider,
                 "model": self.agent_role.model,
-                "api_base": self.agent_role.api_base,
-                "fallback_models": list(self.agent_role.fallback_models),
-                "openrouter_provider_order": list(
-                    self.agent_role.openrouter_provider_order
-                ),
             },
             "mlflow_enabled": self.mlflow_enabled,
-            "provider_api_bases": dict(self.provider_api_bases),
             "auto_unload": self.auto_unload,
-            "cloud_endpoint": self.cloud_endpoint,
             "cloud_authenticated": self.cloud_token is not None,
-            "agents": dict(self.agents),
-            "projects": dict(self.projects),
+            "connected_agents": sorted(self.agents),
+            "project_names": sorted(self.projects),
         }
-
-
-def _to_string_tuple(value: Any) -> tuple[str, ...]:
-    """Normalize a TOML list/string into a tuple of non-empty strings."""
-    if isinstance(value, list):
-        return tuple(str(item).strip() for item in value if str(item).strip())
-    if isinstance(value, str):
-        parts = [item.strip() for item in value.split(",")]
-        return tuple(item for item in parts if item)
-    return ()
 
 
 def _build_role(
@@ -268,23 +357,21 @@ def _build_role(
 	"""Build a role config from TOML payload."""
 	from lerim.config.providers import normalize_model_name
 
-	provider = _to_non_empty_string(raw.get("provider")) or default_provider
-	model = _to_non_empty_string(raw.get("model")) or default_model
+	provider = _read_optional_string(raw, "provider") or default_provider
+	model = _read_optional_string(raw, "model") or default_model
 	model = normalize_model_name(provider, model)
 	return RoleConfig(
 		provider=provider,
 		model=model,
-		api_base=_to_non_empty_string(raw.get("api_base")),
+		api_base=_read_optional_string(raw, "api_base"),
 		fallback_models=_to_fallback_models(raw.get("fallback_models")),
-		openrouter_provider_order=_to_string_tuple(raw.get("openrouter_provider_order")),
-		thinking=bool(raw.get("thinking", True)),
-		temperature=float(raw.get("temperature", 1.0)),
-		top_p=float(raw.get("top_p", 0.95)),
-		top_k=int(raw.get("top_k", 40)),
-		max_tokens=int(raw.get("max_tokens", 32000)),
-		parallel_tool_calls=bool(raw.get("parallel_tool_calls", True)),
-		max_iters_maintain=int(raw.get("max_iters_maintain", 30)),
-		max_iters_ask=int(raw.get("max_iters_ask", 30)),
+		temperature=_read_float(raw, "temperature", default=1.0),
+		top_p=_read_float(raw, "top_p", default=0.95),
+		top_k=_read_int(raw, "top_k", default=40),
+		max_tokens=_read_int(raw, "max_tokens", default=32000),
+		parallel_tool_calls=_read_bool(raw, "parallel_tool_calls", default=True),
+		max_iters_maintain=_read_int(raw, "max_iters_maintain", default=30),
+		max_iters_ask=_read_int(raw, "max_iters_ask", default=30),
 	)
 
 
@@ -297,124 +384,208 @@ def _build_agent_role(roles: dict[str, Any]) -> RoleConfig:
 	)
 
 
-def _parse_string_table(raw: dict[str, Any]) -> dict[str, str]:
-    """Parse a TOML table of ``name = "path"`` or ``name = {path = "..."}`` entries."""
+def _parse_string_table(raw: dict[str, Any], *, section: str = "config") -> dict[str, str]:
+    """Parse a TOML table of ``name = "value"`` entries."""
     result: dict[str, str] = {}
     for key, value in raw.items():
-        if isinstance(value, dict):
-            text = str(value.get("path", "")).strip()
-        else:
-            text = str(value).strip() if value is not None else ""
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise ValueError(f"config key {section}.{key} must be a string, got: {value!r}")
+        text = value.strip()
         if text:
             result[key] = text
     return result
 
 
-def _migrate_platforms_json(platforms_path: Path) -> dict[str, str]:
-    """Read platforms.json and return agent name->path mapping for migration."""
-    import json
+def _default_context_db_path(global_data_dir: Path) -> Path:
+    """Return the canonical global context DB path for the current data root."""
+    return global_data_dir / "context.sqlite3"
 
-    try:
-        data = json.loads(platforms_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return {}
-    platforms = data.get("platforms", {})
-    if not isinstance(platforms, dict):
-        return {}
-    agents: dict[str, str] = {}
-    for name, info in platforms.items():
-        path = info.get("path") if isinstance(info, dict) else None
-        if path:
-            agents[str(name)] = str(path)
-    return agents
+
+_TOP_LEVEL_CONFIG_KEYS = {
+    "data",
+    "server",
+    "semantic_search",
+    "observability",
+    "roles",
+    "providers",
+    "cloud",
+    "agents",
+    "projects",
+}
+_DATA_KEYS = {"dir", "context_db_path"}
+_SEMANTIC_SEARCH_KEYS = {
+    "embedding_model_id",
+    "embedding_cache_dir",
+    "semantic_shortlist_size",
+    "lexical_shortlist_size",
+}
+_SERVER_KEYS = {
+    "host",
+    "port",
+    "sync_interval_minutes",
+    "maintain_interval_minutes",
+    "sync_window_days",
+    "sync_max_sessions",
+}
+_OBSERVABILITY_KEYS = {"mlflow_enabled"}
+_ROLE_KEYS = {
+    "provider",
+    "model",
+    "api_base",
+    "fallback_models",
+    "temperature",
+    "top_p",
+    "top_k",
+    "max_tokens",
+	"parallel_tool_calls",
+	"max_iters_maintain",
+	"max_iters_ask",
+	# Retired documented keys: accept them so old configs can still boot.
+	"openrouter_provider_order",
+	"thinking",
+}
+_ROLES_KEYS = {"agent"}
+_PROVIDER_KEYS = {
+    "minimax",
+    "minimax_anthropic",
+    "zai",
+    "openai",
+    "openrouter",
+    "opencode_go",
+    "ollama",
+    "mlx",
+    "auto_unload",
+}
+_CLOUD_KEYS = {"endpoint", "token"}
+def _raise_unknown_keys(section: str, raw: dict[str, Any], allowed: set[str]) -> None:
+    """Raise a clear error when config contains unsupported keys."""
+    unknown = sorted(key for key in raw if key not in allowed)
+    if unknown:
+        joined = ", ".join(unknown)
+        raise ValueError(f"unknown config key(s) in [{section}]: {joined}")
+
+
+def _validate_config_shape(toml_data: dict[str, Any]) -> None:
+    """Reject unknown sections and unsupported keys in known sections."""
+    _raise_unknown_keys("root", toml_data, _TOP_LEVEL_CONFIG_KEYS)
+    _raise_unknown_keys("data", _ensure_dict(toml_data, "data"), _DATA_KEYS)
+    _raise_unknown_keys("server", _ensure_dict(toml_data, "server"), _SERVER_KEYS)
+    _raise_unknown_keys(
+        "observability",
+        _ensure_dict(toml_data, "observability"),
+        _OBSERVABILITY_KEYS,
+    )
+    _raise_unknown_keys(
+        "semantic_search",
+        _ensure_dict(toml_data, "semantic_search"),
+        _SEMANTIC_SEARCH_KEYS,
+    )
+    roles = _ensure_dict(toml_data, "roles")
+    _raise_unknown_keys("roles", roles, _ROLES_KEYS)
+    for role_name, role_payload in roles.items():
+        if isinstance(role_payload, dict):
+            _raise_unknown_keys(f"roles.{role_name}", role_payload, _ROLE_KEYS)
+    _raise_unknown_keys("providers", _ensure_dict(toml_data, "providers"), _PROVIDER_KEYS)
+    _raise_unknown_keys("cloud", _ensure_dict(toml_data, "cloud"), _CLOUD_KEYS)
+
+
+def _ensure_global_infrastructure(global_data_dir: Path) -> None:
+    """Create required global runtime directories under ~/.lerim."""
+    root = global_data_dir.expanduser()
+    for path in (
+        root / "workspace",
+        root / "index",
+        root / "cache" / "traces" / "claude",
+        root / "cache" / "traces" / "codex",
+        root / "cache" / "traces" / "cursor",
+        root / "cache" / "traces" / "opencode",
+        root / "models" / "embeddings",
+        root / "models" / "huggingface" / "hub",
+        root / "logs",
+    ):
+        path.mkdir(parents=True, exist_ok=True)
+
+
+def remove_legacy_memory_dir(global_data_dir: Path) -> bool:
+    """Remove the retired file-backed memory directory, if present."""
+    legacy_dir = global_data_dir.expanduser() / "memory"
+    if not legacy_dir.exists():
+        return False
+    if not legacy_dir.is_dir():
+        return False
+    shutil.rmtree(legacy_dir)
+    return True
 
 
 @lru_cache(maxsize=1)
 def load_config() -> Config:
     """Load effective config from TOML layers plus env API keys."""
-    # Always load ~/.lerim/.env (CWD-independent).
-    # Optional CWD .env loading is opt-in to avoid hidden cwd coupling.
-    _lerim_env = Path.home() / ".lerim" / ".env"
-    if _lerim_env.is_file():
-        load_dotenv(_lerim_env)
-    if os.getenv("LERIM_LOAD_CWD_ENV", "").strip().lower() in ("1", "true", "yes", "on"):
-        load_dotenv()
     ensure_user_config_exists()
     toml_data, sources = _load_layers()
+    _validate_config_shape(toml_data)
 
     global _LAST_CONFIG_SOURCES
     _LAST_CONFIG_SOURCES = sources
 
     data = toml_data.get("data", {})
     server = toml_data.get("server", {})
+    observability = _ensure_dict(toml_data, "observability")
     roles = _ensure_dict(toml_data, "roles")
-    global_data_dir = _expand(data.get("dir"), GLOBAL_DATA_DIR)
-
-    scope = resolve_data_dirs(
-        global_data_dir=global_data_dir,
-        repo_path=Path.cwd(),
+    semantic_search = _ensure_dict(toml_data, "semantic_search")
+    global_data_dir = _read_optional_path(data, "dir", GLOBAL_DATA_DIR)
+    env_path = global_data_dir / ".env"
+    if env_path.is_file():
+        load_dotenv(env_path)
+    context_db_path = _read_optional_path(
+        data,
+        "context_db_path",
+        _default_context_db_path(global_data_dir),
     )
 
     # Infrastructure (workspace, index, locks) always in global dir.
-    # Per-project .lerim/ contains only memory/ (knowledge).
-    index_dir = global_data_dir / "index"
-
-    # Memory dir: project-level if inside a registered project, else global.
-    memory_dir = (
-        (scope.project_data_dir / "memory")
-        if scope.project_data_dir
-        else (global_data_dir / "memory")
-    )
-
-    # Lazy import: structural circular dependency (settings -> memory_repo -> memory_record -> settings)
-    from lerim.memory.repo import (
-        build_memory_paths,
-        ensure_global_infrastructure,
-        ensure_project_memory,
-    )
-
-    # Global infrastructure: workspace, index, cache, logs
-    ensure_global_infrastructure(global_data_dir)
-
-    # Per-project memory dirs (knowledge only, no workspace/index)
-    for data_root in scope.ordered_data_dirs:
-        ensure_project_memory(build_memory_paths(data_root))
+    _ensure_global_infrastructure(global_data_dir)
 
     agent_role = _build_agent_role(roles)
 
     port = _require_int(server, "port", minimum=1)
     if port > 65535:
-        port = 8765
+        raise ValueError("config key port must be <= 65535")
 
     cloud = _ensure_dict(toml_data, "cloud")
 
-    agents = _parse_string_table(_ensure_dict(toml_data, "agents"))
-    projects = _parse_string_table(_ensure_dict(toml_data, "projects"))
+    agents = _parse_string_table(_ensure_dict(toml_data, "agents"), section="agents")
+    projects = _parse_string_table(_ensure_dict(toml_data, "projects"), section="projects")
 
-    # Migrate platforms.json -> [agents] if agents section is empty
-    platforms_path = global_data_dir / "platforms.json"
-    if not agents and platforms_path.exists():
-        agents = _migrate_platforms_json(platforms_path)
-
-    cloud_endpoint = (
-        _to_non_empty_string(os.environ.get("LERIM_CLOUD_ENDPOINT"))
-        or _to_non_empty_string(cloud.get("endpoint"))
-        or "https://api.lerim.dev"
-    )
-    cloud_token = (
-        _to_non_empty_string(os.environ.get("LERIM_CLOUD_TOKEN"))
-        or _to_non_empty_string(cloud.get("token"))
-        or None
-    )
+    cloud_endpoint = _to_non_empty_string(os.environ.get("LERIM_CLOUD_ENDPOINT"))
+    if not cloud_endpoint:
+        cloud_endpoint = _read_optional_string(cloud, "endpoint") or "https://api.lerim.dev"
+    cloud_token = _to_non_empty_string(os.environ.get("LERIM_CLOUD_TOKEN"))
+    if not cloud_token:
+        cloud_token = _read_optional_string(cloud, "token")
 
     return Config(
-        data_dir=global_data_dir,
         global_data_dir=global_data_dir,
-        memory_dir=memory_dir,
-        index_dir=index_dir,
         sessions_db_path=global_data_dir / "index" / "sessions.sqlite3",
+        context_db_path=context_db_path,
         platforms_path=global_data_dir / "platforms.json",
-        server_host=_to_non_empty_string(server.get("host")) or "127.0.0.1",
+        embedding_model_id=_read_optional_string(
+            semantic_search, "embedding_model_id"
+        )
+        or "mixedbread-ai/mxbai-embed-xsmall-v1",
+        embedding_cache_dir=_read_optional_path(
+            semantic_search,
+            "embedding_cache_dir",
+            global_data_dir / "models" / "embeddings",
+        ),
+        semantic_shortlist_size=_require_int(
+            semantic_search, "semantic_shortlist_size", minimum=1
+        ),
+        lexical_shortlist_size=_require_int(
+            semantic_search, "lexical_shortlist_size", minimum=1
+        ),
+        server_host=_read_optional_string(server, "host") or "127.0.0.1",
         server_port=port,
         sync_interval_minutes=_require_int(server, "sync_interval_minutes", minimum=1),
         maintain_interval_minutes=_require_int(
@@ -423,8 +594,11 @@ def load_config() -> Config:
         sync_window_days=_require_int(server, "sync_window_days", minimum=1),
         sync_max_sessions=_require_int(server, "sync_max_sessions", minimum=1),
         agent_role=agent_role,
-        mlflow_enabled=os.getenv("LERIM_MLFLOW", "").strip().lower()
-        in ("1", "true", "yes", "on"),
+        mlflow_enabled=(
+            os.getenv("LERIM_MLFLOW", "").strip().lower() in ("1", "true", "yes", "on")
+            if os.getenv("LERIM_MLFLOW") is not None
+            else _read_bool(observability, "mlflow_enabled", default=False)
+        ),
         anthropic_api_key=_to_non_empty_string(os.environ.get("ANTHROPIC_API_KEY"))
         or None,
         openai_api_key=_to_non_empty_string(os.environ.get("OPENAI_API_KEY")) or None,
@@ -434,10 +608,19 @@ def load_config() -> Config:
         minimax_api_key=_to_non_empty_string(os.environ.get("MINIMAX_API_KEY")) or None,
         opencode_api_key=_to_non_empty_string(os.environ.get("OPENCODE_API_KEY"))
         or None,
-        provider_api_bases=_parse_string_table(_ensure_dict(toml_data, "providers")),
-        auto_unload=bool(_ensure_dict(toml_data, "providers").get("auto_unload", True)),
+        provider_api_bases=_parse_string_table(
+            {
+                key: value
+                for key, value in _ensure_dict(toml_data, "providers").items()
+                if key != "auto_unload"
+            },
+            section="providers",
+        ),
+        auto_unload=_read_bool(
+            _ensure_dict(toml_data, "providers"), "auto_unload", default=True
+        ),
         cloud_endpoint=cloud_endpoint,
-        cloud_token=cloud_token,
+        cloud_token=cloud_token or None,
         agents=agents,
         projects=projects,
     )
@@ -494,7 +677,7 @@ def save_config_patch(patch: dict[str, Any]) -> Config:
     Reads existing ~/.lerim/config.toml, deep-merges the patch, writes back,
     then reloads the cached config.
     """
-    user_path = USER_CONFIG_PATH
+    user_path = get_user_config_path()
     user_path.parent.mkdir(parents=True, exist_ok=True)
 
     existing: dict[str, Any] = {}
@@ -507,7 +690,7 @@ def save_config_patch(patch: dict[str, Any]) -> Config:
 
 def _write_config_full(data: dict[str, Any]) -> Config:
     """Write complete config dict to user TOML and return reloaded Config."""
-    user_path = USER_CONFIG_PATH
+    user_path = get_user_config_path()
     user_path.parent.mkdir(parents=True, exist_ok=True)
     lines = ["# Lerim user config\n"]
     _toml_write_dict(lines, data, prefix="")
@@ -518,10 +701,9 @@ def _write_config_full(data: dict[str, Any]) -> Config:
 if __name__ == "__main__":
     """Run a real-path config smoke test and role validation checks."""
     cfg = load_config()
-    assert cfg.data_dir
-    assert cfg.memory_dir
-    assert cfg.index_dir
+    assert cfg.global_data_dir
     assert cfg.sessions_db_path.name == "sessions.sqlite3"
+    assert cfg.context_db_path.name == "context.sqlite3"
     assert cfg.agent_role.provider
     assert cfg.agent_role.model
     assert isinstance(cfg.agent_role.fallback_models, tuple)
@@ -530,12 +712,12 @@ if __name__ == "__main__":
     assert isinstance(cfg.projects, dict)
     payload = cfg.public_dict()
     assert "agent_role" in payload
-    assert "agents" in payload
-    assert "projects" in payload
+    assert "connected_agents" in payload
+    assert "project_names" in payload
     print(
         f"""\
 Config loaded: \
-data_dir={cfg.data_dir}, \
+global_data_dir={cfg.global_data_dir}, \
 agent={cfg.agent_role.provider}/{cfg.agent_role.model}, \
 agents={list(cfg.agents.keys())}, \
 projects={list(cfg.projects.keys())}"""

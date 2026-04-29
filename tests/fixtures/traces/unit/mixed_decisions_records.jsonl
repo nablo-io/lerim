@@ -1,0 +1,8 @@
+{"role":"user","content":"Decision: always use structured logging with JSON format, not plain text."}
+{"role":"assistant","content":"Noted. I'll configure structlog with JSON output for all services."}
+{"role":"user","content":"I wasted 2 hours debugging a race condition in the queue consumer. The issue was that we weren't using atomic operations for the claim step."}
+{"role":"assistant","content":"Durable record: queue claim operations must be atomic (SELECT FOR UPDATE or CAS). This friction could have been avoided with proper locking from the start."}
+{"role":"user","content":"Decision: use Redis for rate limiting instead of in-memory counters."}
+{"role":"assistant","content":"Good call. Redis gives us distributed rate limiting that works across multiple instances."}
+{"role":"user","content":"Found that the retry logic was causing duplicate webhook deliveries. Fix: add idempotency keys to all webhook payloads."}
+{"role":"assistant","content":"That's a common pitfall. I'll add UUID-based idempotency keys to the webhook sender."}

@@ -14,12 +14,14 @@ from lerim.config.settings import Config, RoleConfig
 def make_config(base: Path) -> Config:
     """Build a deterministic Config object rooted at ``base`` for tests."""
     return Config(
-        data_dir=base,
         global_data_dir=base,
-        memory_dir=base / "memory",
-        index_dir=base / "index",
         sessions_db_path=base / "index" / "sessions.sqlite3",
+        context_db_path=base / "context.sqlite3",
         platforms_path=base / "platforms.json",
+        embedding_model_id="mixedbread-ai/mxbai-embed-xsmall-v1",
+        embedding_cache_dir=base / "models" / "embeddings",
+        semantic_shortlist_size=40,
+        lexical_shortlist_size=40,
         server_host="127.0.0.1",
         server_port=8765,
         sync_interval_minutes=5,
@@ -58,19 +60,12 @@ def write_test_config(tmp_path: Path, **sections: dict[str, Any]) -> Path:
 
     Usage::
 
-        write_test_config(tmp_path, agent={"provider": "anthropic"})
+        write_test_config(tmp_path, **{"roles.agent": {"provider": "anthropic"}})
     """
     all_sections: dict[str, dict[str, Any]] = {
         "data": {"dir": str(tmp_path)},
     }
 
-    agent_section = sections.pop("agent", None)
-    if isinstance(agent_section, dict):
-        lead = all_sections.setdefault("roles.agent", {})
-        if "provider" in agent_section:
-            lead["provider"] = agent_section["provider"]
-        if "model" in agent_section:
-            lead["model"] = agent_section["model"]
     for name, payload in sections.items():
         if isinstance(payload, dict):
             all_sections[name] = payload

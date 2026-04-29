@@ -9,6 +9,7 @@ from typing import Any
 from lerim.adapters.base import SessionRecord
 from lerim.adapters.common import (
     compact_jsonl,
+    compute_file_hash,
     count_non_empty_files,
     in_window,
     load_jsonl_dict_lines,
@@ -16,6 +17,7 @@ from lerim.adapters.common import (
     parse_timestamp,
     write_session_cache,
 )
+from lerim.config.settings import get_trace_cache_dir
 
 
 _DROP_TYPES = {"progress", "file-history-snapshot", "queue-operation", "pr-link"}
@@ -78,7 +80,7 @@ def compact_trace(raw_text: str) -> str:
 
 def _default_cache_dir() -> Path:
     """Return the default cache directory for compacted Claude JSONL files."""
-    return Path("~/.lerim/cache/claude").expanduser()
+    return get_trace_cache_dir("claude")
 
 
 def default_path() -> Path | None:
@@ -97,7 +99,7 @@ def iter_sessions(
     end: datetime | None = None,
     known_run_ids: set[str] | None = None,
 ) -> list[SessionRecord]:
-    """Enumerate Claude sessions, skipping those already indexed by ID."""
+    """Enumerate Claude sessions and optionally skip already indexed IDs."""
     base = traces_dir or default_path()
     if base is None or not base.exists():
         return []
@@ -181,6 +183,7 @@ def iter_sessions(
         # Compact and export to cache
         raw_lines = path.read_text(encoding="utf-8").rstrip("\n").split("\n")
         cache_path = write_session_cache(cache_dir, run_id, raw_lines, compact_trace)
+        content_hash = compute_file_hash(cache_path)
 
         records.append(
             SessionRecord(
@@ -195,8 +198,9 @@ def iter_sessions(
                 error_count=errors,
                 total_tokens=total_tokens,
                 summaries=summaries[:5],
+                content_hash=content_hash,
             )
         )
 
-    records.sort(key=lambda r: r.start_time or "")
+    records.sort(key=lambda r: (r.start_time or "", r.run_id))
     return records

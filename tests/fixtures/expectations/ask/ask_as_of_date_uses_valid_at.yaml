@@ -1,0 +1,23 @@
+question: "As of 2026-02-15, what was the default agent provider?"
+seed_records:
+  - session_id: "seed-history-old"
+    record_id: "rec_openrouter_default_provider_asof"
+    kind: "fact"
+    status: "archived"
+    valid_from: "2025-01-01T00:00:00+00:00"
+    valid_until: "2026-03-01T00:00:00+00:00"
+    title: "OpenRouter was the default agent provider"
+    body: "Previously, the default agent role used OpenRouter."
+  - session_id: "seed-history-new"
+    record_id: "rec_minimax_default_provider_asof"
+    kind: "fact"
+    status: "active"
+    valid_from: "2026-03-01T00:00:00+00:00"
+    title: "MiniMax is the default agent provider"
+    body: "Currently, the default agent role uses MiniMax."
+expected:
+  required_record_id: "rec_openrouter_default_provider_asof"
+  answer_must_include_all:
+    - openrouter
+  answer_must_not_include:
+    - minimax

@@ -6,15 +6,18 @@ schedules. It is **not** a separate CLI command: it runs **inside** `lerim serve
 
 ## Intervals
 
-Configure in `~/.lerim/config.toml` or `<repo>/.lerim/config.toml` under `[server]`:
+Configure in `~/.lerim/config.toml` (or via an explicit `LERIM_CONFIG`
+override) under `[server]`:
 
 | Setting | Typical default | Description |
 |---------|-----------------|-------------|
 | `sync_interval_minutes` | `30` | How often the daemon runs sync |
 | `maintain_interval_minutes` | `60` | How often the daemon runs maintain |
 
-Sessions are processed **sequentially in chronological order** (oldest first) so
-later sessions can update memories from earlier ones.
+Normal backlog sync claims the **newest available session per project first** so
+recent corrections are extracted quickly on first run. Historical replay paths
+can still request oldest-first catalog ordering when chronological
+reconstruction is required.
 
 ## What to run
 

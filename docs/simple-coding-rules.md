@@ -17,7 +17,7 @@ Choose names that describe one clear action.
 ## 3) Use strict schemas
 
 Use strict typed models (Pydantic/enums) for important inputs/outputs.
-Do not add alias or legacy compatibility layers unless explicitly requested.
+Do not add alias paths or preserved removed behavior unless explicitly requested.
 
 ## 4) Fail fast on missing requirements
 
@@ -26,7 +26,7 @@ Do not add silent fallback behavior.
 
 ## 5) Config from TOML layers, API keys from env
 
-Runtime config comes from TOML layers (default.toml → user → project → local → LERIM_CONFIG).
+Runtime config comes from TOML layers (default.toml → user → LERIM_CONFIG).
 Only API keys use environment variables.
 Keep config branching short and readable.
 Do not add hidden defaults that mask misconfiguration.
@@ -41,7 +41,7 @@ Validate quality of outputs, not only counts/status.
 ## 7) Remove old paths when replacing logic
 
 When a new path replaces an old one, remove obsolete code.
-Do not keep dead compatibility code "just in case."
+Do not keep dead replacement code "just in case."
 
 ## 8) Keep docs and rules in sync
 

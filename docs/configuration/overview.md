@@ -1,119 +1,34 @@
 # Configuration Overview
 
-Lerim uses a layered TOML configuration system. Every setting has a sensible default
-shipped with the package -- you only need to override what you want to change.
+Lerim uses one global user config.
 
-## Config layers
+## Layers
 
-Settings are resolved in priority order (highest wins):
+Priority order:
 
-| Priority | Source | Purpose |
-|----------|--------|---------|
-| 4 (highest) | `LERIM_CONFIG` env var | Explicit override (CI, tests) |
-| 3 | `<repo>/.lerim/config.toml` | Per-project overrides |
-| 2 | `~/.lerim/config.toml` | User global settings |
-| 1 (lowest) | `src/lerim/config/default.toml` | Package defaults |
+1. `LERIM_CONFIG`
+2. `~/.lerim/config.toml`
+3. package defaults in `src/lerim/config/default.toml`
 
-Each layer is deep-merged into the previous one. A key set in a higher layer
-replaces the same key from a lower layer; keys not present in the higher layer
-are inherited from below.
+## Main sections
 
-!!! info "Created automatically"
-    `lerim init` writes `~/.lerim/config.toml` with your detected agents and
-    initial settings. `lerim project add .` appends a project entry to the same
-    file. You can also edit the file directly.
+- `[data]`
+- `[server]`
+- `[semantic_search]`
+- `[roles.agent]`
+- `[providers]`
+- `[cloud]`
+- `[agents]`
+- `[projects]`
 
-## API keys
+## Important paths
 
-API keys are **never** stored in TOML files. They come from environment variables only:
+The defaults point at `~/.lerim/`.
 
-| Variable | Provider | Required when |
-|----------|----------|---------------|
-| `MINIMAX_API_KEY` | MiniMax | When any role uses `provider = "minimax"` |
-| `ZAI_API_KEY` | Z.AI | When any role uses `provider = "zai"` |
-| `OPENROUTER_API_KEY` | OpenRouter | When any role uses `provider = "openrouter"` |
-| `OPENAI_API_KEY` | OpenAI | When any role uses `provider = "openai"` |
-| `OPENCODE_API_KEY` | OpenCode Go / Zen | When any role uses `provider = "opencode_go"` |
+Key paths derived from that root:
 
-!!! info "Only set what you use"
-    You only need API keys for the providers referenced in your `[roles.*]` config. Switch providers freely — just set the matching key.
-
-!!! warning "No fallback"
-    If a required API key is missing, Lerim raises an error immediately.
-    There is no silent fallback behavior.
-
-## Config sections at a glance
-
-=== "Agents"
-
-    Maps agent platform names to session directory paths. Written by `lerim connect`
-    or `lerim init`.
-
-    ```toml
-    [agents]
-    claude = "~/.claude/projects"
-    codex = "~/.codex/sessions"
-    ```
-
-=== "Projects"
-
-    Maps project short names to absolute host paths. Written by `lerim project add`.
-
-    ```toml
-    [projects]
-    lerim-cli = "~/codes/personal/lerim/lerim-cli"
-    my-app = "~/codes/my-app"
-    ```
-
-=== "Model Roles"
-
-    Lerim uses one role today: `[roles.agent]`.
-    This single role powers sync extraction, maintain, and ask through PydanticAI.
-    See [Model Roles](model-roles.md) for details.
-
-    ```toml
-    [roles.agent]
-    provider = "minimax"
-    model = "MiniMax-M2.7"
-    ```
-
-=== "Server"
-
-    Host, port, and daemon intervals.
-
-    ```toml
-    [server]
-    host = "127.0.0.1"
-    port = 8765
-    sync_interval_minutes = 30
-    ```
-
-## Sub-pages
-
-<div class="grid cards" markdown>
-
--   :material-file-document-outline: **Full config.toml Reference**
-
-    ---
-
-    Every section, key, and default value explained.
-
-    [:octicons-arrow-right-24: config.toml Reference](config-toml.md)
-
--   :material-brain: **Model Roles**
-
-    ---
-
-    Configure which model handles agent tasks (sync, maintain, ask).
-
-    [:octicons-arrow-right-24: Model Roles](model-roles.md)
-
--   :material-chart-timeline-variant: **Tracing**
-
-    ---
-
-    MLflow tracing for PydanticAI agent observability.
-
-    [:octicons-arrow-right-24: Tracing](tracing.md)
-
-</div>
+- `context_db_path = ~/.lerim/context.sqlite3`
+- `sessions_db_path = ~/.lerim/index/sessions.sqlite3`
+- `platforms_path = ~/.lerim/platforms.json`
+- `trace_cache_dir = ~/.lerim/cache/traces/<agent>`
+- `embedding_cache_dir = ~/.lerim/models/embeddings`

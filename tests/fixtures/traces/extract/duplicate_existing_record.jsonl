@@ -1,0 +1,4 @@
+{"role":"user","content":"We already have the right storage record: product state and queue runtime state should stay separate. Tighten it, do not fork it. The real rule is about different lifecycle and recovery semantics, not just 'two sqlite files'."}
+{"role":"assistant","content":"Understood. This is the same durable decision with better wording, not a new decision."}
+{"role":"user","content":"Please avoid duplicate records. Update the existing rule so future sessions understand why the boundary exists."}
+{"role":"assistant","content":"Right. The durable point stays the same: separate product-domain state from queue-processing state, because they fail and recover differently."}

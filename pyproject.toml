@@ -1,27 +1,31 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "lerim"
-version = "0.1.72"
+version = "0.1.80"
 description = "Continual learning layer for coding agents and software projects."
 readme = "README.md"
-requires-python = ">=3.10"
-license = { text = "BSL-1.1" }
+requires-python = ">=3.11"
+license = "BUSL-1.1"
 dependencies = [
     "pydantic==2.12.5",
     "pydantic-ai==1.70.0",
     "pydantic-evals==1.70.0",
     "eval_type_backport==0.3.1; python_version < '3.13'",
-    "tomli>=2.0; python_version < '3.11'",
     "python-dotenv==1.2.2",
     "PyYAML==6.0.3",
     "loguru==0.7.3",
     "python-frontmatter==1.1.0",
     "openrouter==0.7.11",
-    "mlflow>=3.10.1",
+    "mlflow==3.11.1",
     "rich==14.3.3",
+    "numpy>=2.0",
+    "onnxruntime>=1.22.0",
+    "huggingface-hub>=0.35.0",
+    "tokenizers>=0.21.0",
+    "sqlite-vec>=0.1.6",
 ]
 
 [project.urls]
@@ -58,7 +62,7 @@ where = ["src"]
 include = ["lerim*"]
 
 [tool.setuptools.package-data]
-lerim = ["config/default.toml", "skills/*.md"]
+lerim = ["config/default.toml", "skills/*.md", "server/lerim-seccomp.json"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
@@ -67,7 +71,7 @@ markers = [
     "integration: Tests that hit real external services",
     "e2e: End-to-end tests that exercise full flows",
     "smoke: Quick LLM sanity checks (requires ollama)",
-    "agent: Agent SDK or CLI integration tests",
+    "agent: Agentic integration tests",
     "llm: Non-agentic LLM integration tests",
     "openrouter: OpenRouter provider tests",
     "openai: OpenAI provider tests",

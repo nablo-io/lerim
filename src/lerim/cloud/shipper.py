@@ -1,4 +1,4 @@
-"""Cloud shipper — ships local data (logs, sessions, memories) to lerim-cloud.
+"""Cloud shipper — ships local data (logs, sessions, records) to lerim-cloud.
 
 Reads new entries from local storage, batches them, and POSTs to the cloud API.
 Tracks shipping offsets in ``~/.lerim/cloud_shipper_state.json`` to avoid
@@ -13,25 +13,31 @@ import asyncio
 import json
 import sqlite3
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from lerim.config.logging import LOG_DIR, logger
-from lerim.config.settings import Config
-from lerim.sessions.catalog import _ensure_sessions_db_initialized
+from lerim.config.project_scope import match_session_project
+from lerim.config.settings import Config, get_global_data_dir_path
+from lerim.context import ContextStore, ProjectIdentity, resolve_project_identity
+from lerim.context.spec import ALLOWED_KINDS, RECORD_KIND_SPECS
 
 # ── constants ────────────────────────────────────────────────────────────────
 
-_STATE_PATH = Path.home() / ".lerim" / "cloud_shipper_state.json"
+_STATE_PATH = get_global_data_dir_path() / "cloud_shipper_state.json"
 
 _BATCH_LOGS = 500
 _BATCH_SESSIONS = 100
-_BATCH_MEMORIES = 100
+_BATCH_RECORDS = 100
 
 _HTTP_TIMEOUT_SECONDS = 30
 _GZIP_THRESHOLD_BYTES = 1024
+
+_PullRecordOutcome = Literal["applied", "permanent_drop", "retry"]
 
 
 # ── state persistence ────────────────────────────────────────────────────────
@@ -44,32 +50,34 @@ class _ShipperState:
     log_offset_bytes: int = 0
     log_file: str = "lerim.jsonl"
     sessions_shipped_at: str = ""
-    memories_shipped_at: str = ""
-    memories_pulled_at: str = ""
+    records_shipped_at: str = ""
+    records_pulled_at: str = ""
     service_runs_shipped_at: str = ""
     jobs_shipped_at: str = ""
 
-    def save(self) -> None:
+    def save(self, path: Path | None = None) -> None:
         """Write state to disk."""
-        _STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _STATE_PATH.write_text(
+        state_path = path or _STATE_PATH
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(
             json.dumps(asdict(self), ensure_ascii=True, indent=2) + "\n",
             encoding="utf-8",
         )
 
     @classmethod
-    def load(cls) -> "_ShipperState":
+    def load(cls, path: Path | None = None) -> "_ShipperState":
         """Load state from disk, returning defaults on any error."""
+        state_path = path or _STATE_PATH
         try:
-            raw = json.loads(_STATE_PATH.read_text(encoding="utf-8"))
+            raw = json.loads(state_path.read_text(encoding="utf-8"))
             if not isinstance(raw, dict):
                 return cls()
             return cls(
                 log_offset_bytes=int(raw.get("log_offset_bytes") or 0),
                 log_file=str(raw.get("log_file") or "lerim.jsonl"),
                 sessions_shipped_at=str(raw.get("sessions_shipped_at") or ""),
-                memories_shipped_at=str(raw.get("memories_shipped_at") or ""),
-                memories_pulled_at=str(raw.get("memories_pulled_at") or ""),
+                records_shipped_at=str(raw.get("records_shipped_at") or ""),
+                records_pulled_at=str(raw.get("records_pulled_at") or ""),
                 service_runs_shipped_at=str(raw.get("service_runs_shipped_at") or ""),
                 jobs_shipped_at=str(raw.get("jobs_shipped_at") or ""),
             )
@@ -130,7 +138,7 @@ def _get_json_sync(
     endpoint: str, path: str, token: str, params: dict[str, str]
 ) -> dict[str, Any] | None:
     """Synchronous GET request returning parsed JSON."""
-    qs = "&".join(f"{k}={v}" for k, v in params.items()) if params else ""
+    qs = urllib.parse.urlencode(params) if params else ""
     url = f"{endpoint.rstrip('/')}{path}{'?' + qs if qs else ''}"
     req = urllib.request.Request(
         url,
@@ -153,118 +161,261 @@ def _get_json_sync(
 # ── pull helpers ─────────────────────────────────────────────────────────────
 
 
-def _find_memory_file(project_path: Path, memory_id: str) -> Path | None:
-    """Find an existing local memory file by its ID."""
-    memory_root = project_path / ".lerim" / "memory"
-    if not memory_root.is_dir():
+def _normalize_cloud_kind(raw: str | None) -> str:
+    """Map cloud record kinds onto canonical context kinds."""
+    kind = str(raw or "").strip().lower()
+    if kind in ALLOWED_KINDS:
+        return kind
+    raise ValueError(f"invalid_cloud_record_kind:{kind or '<empty>'}")
+
+
+def _typed_fields_from_cloud_record(record: dict[str, Any], *, kind: str) -> dict[str, str]:
+    """Derive typed record fields for pulled cloud records."""
+    kind_spec = RECORD_KIND_SPECS.get(kind)
+    if kind_spec is None:
+        return {}
+    return {
+        field_name: str(record.get(field_name) or "").strip()
+        for field_name in kind_spec.typed_field_names
+    }
+
+
+def _parse_sync_timestamp(raw: str | None) -> datetime | None:
+    """Parse a sync timestamp into UTC, returning ``None`` for invalid values."""
+    text = str(raw or "").strip()
+    if not text:
         return None
-    for md_path in memory_root.rglob("*.md"):
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _timestamp_lte(left: str, right: str) -> bool:
+    """Return whether timestamp *left* is less than or equal to *right*."""
+    left_dt = _parse_sync_timestamp(left)
+    right_dt = _parse_sync_timestamp(right)
+    if left_dt is not None and right_dt is not None:
+        return left_dt <= right_dt
+    return left <= right
+
+
+def _timestamp_gt(left: str, right: str) -> bool:
+    """Return whether timestamp *left* is greater than *right*."""
+    left_dt = _parse_sync_timestamp(left)
+    right_dt = _parse_sync_timestamp(right)
+    if left_dt is not None and right_dt is not None:
+        return left_dt > right_dt
+    return left > right
+
+
+def _pull_record_sort_key(record: dict[str, Any]) -> tuple[datetime, str, str]:
+    """Return a deterministic chronological sort key for cloud pull records."""
+    timestamp = str(record.get("cloud_edited_at") or "")
+    parsed = _parse_sync_timestamp(timestamp) or datetime.min.replace(tzinfo=timezone.utc)
+    return (parsed, timestamp, str(record.get("record_id") or ""))
+
+
+def _configured_project_identities(projects: dict[str, str]) -> dict[str, ProjectIdentity]:
+    """Resolve configured cloud project names to local project identities."""
+    identities: dict[str, ProjectIdentity] = {}
+    for project_name, raw_path in projects.items():
         try:
-            text = md_path.read_text(encoding="utf-8")
-            if text.startswith("---"):
-                end = text.find("---", 3)
-                if end > 0:
-                    import yaml
-
-                    fm = yaml.safe_load(text[3:end]) or {}
-                    if fm.get("id") == memory_id:
-                        return md_path
-        except Exception:
+            project_path = Path(raw_path).expanduser().resolve()
+        except OSError as exc:
+            logger.warning(
+                "skipping configured cloud project {} because path cannot be resolved: {}",
+                project_name,
+                exc,
+            )
             continue
-    return None
+        identities[str(project_name)] = resolve_project_identity(project_path)
+    return identities
 
 
-async def _pull_memories(
+def _upsert_pulled_record(
+    *,
+    context_db_path: Path,
+    project_identity: ProjectIdentity,
+    record: dict[str, Any],
+) -> _PullRecordOutcome:
+    """Upsert one pulled cloud record into the canonical context DB."""
+    record_id = str(record.get("record_id") or "").strip()
+    if not record_id:
+        logger.warning("skipping pulled record without record_id")
+        return "permanent_drop"
+    store = ContextStore(context_db_path)
+    store.initialize()
+    store.register_project(project_identity)
+    try:
+        kind = _normalize_cloud_kind(str(record.get("record_kind") or ""))
+    except ValueError as exc:
+        logger.warning("skipping pulled record {}: {}", record_id, exc)
+        return "permanent_drop"
+    if kind == "episode":
+        logger.warning(
+            "skipping pulled episode record {} because cloud sync only supports durable records",
+            record_id,
+        )
+        return "permanent_drop"
+    body = str(record.get("body") or "").strip()
+    typed_fields = _typed_fields_from_cloud_record(record, kind=kind)
+    cloud_edited = (
+        str(record.get("cloud_edited_at") or "").strip()
+        or datetime.now(timezone.utc).isoformat()
+    )
+    created_at_raw = str(record.get("created_at") or "").strip()
+    created_at = created_at_raw or cloud_edited
+    valid_from_raw = str(record.get("valid_from") or "").strip()
+    valid_until_present = "valid_until" in record
+    valid_until_raw = str(record.get("valid_until") or "").strip()
+    valid_until = valid_until_raw or None
+    with store.connect() as conn:
+        row = conn.execute(
+            "SELECT record_id, updated_at FROM records WHERE record_id = ? AND project_id = ?",
+            (record_id, project_identity.project_id),
+        ).fetchone()
+    if row is None:
+        try:
+            store.create_record(
+                project_id=project_identity.project_id,
+                session_id=None,
+                record_id=record_id,
+                kind=kind,
+                title=str(record.get("title") or "").strip(),
+                body=body,
+                status=str(record.get("status") or "active").strip() or "active",
+                created_at=created_at,
+                updated_at=cloud_edited,
+                valid_from=valid_from_raw or created_at,
+                valid_until=valid_until,
+                change_reason="cloud_pull",
+                **typed_fields,
+            )
+        except ValueError as exc:
+            logger.warning("skipping pulled record {}: {}", record_id, exc)
+            return "retry"
+        return "applied"
+    local_updated_at = str(row["updated_at"] or "").strip()
+    if local_updated_at and _timestamp_lte(cloud_edited, local_updated_at):
+        logger.info(
+            "skipping pulled record {} because local updated_at {} is newer than cloud_edited_at {}",
+            record_id,
+            local_updated_at,
+            cloud_edited,
+        )
+        return "permanent_drop"
+    changes: dict[str, Any] = {
+        "kind": kind,
+        "title": str(record.get("title") or "").strip(),
+        "body": body,
+        "status": str(record.get("status") or "active").strip() or "active",
+        "updated_at": cloud_edited,
+        **typed_fields,
+    }
+    if valid_from_raw:
+        changes["valid_from"] = valid_from_raw
+    if valid_until_present:
+        changes["valid_until"] = valid_until
+    try:
+        store.update_record(
+            record_id=record_id,
+            session_id=None,
+            project_ids=[project_identity.project_id],
+            changes=changes,
+            change_reason="cloud_pull",
+        )
+    except ValueError as exc:
+        if str(exc) == "no_changes":
+            logger.info("pulled record {} has no local changes", record_id)
+            return "permanent_drop"
+        logger.warning("skipping pulled record {}: {}", record_id, exc)
+        return "retry"
+    return "applied"
+
+
+async def _pull_records(
     endpoint: str, token: str, config: Config, state: _ShipperState
 ) -> int:
-    """Pull dashboard-edited memories from cloud and write to local files."""
+    """Pull dashboard-edited records into the canonical context DB."""
     params: dict[str, str] = {"limit": "200"}
-    if state.memories_pulled_at:
-        params["since"] = state.memories_pulled_at
+    if state.records_pulled_at:
+        params["since"] = state.records_pulled_at
 
     try:
         data = await asyncio.to_thread(
-            _get_json_sync, endpoint, "/api/v1/sync/memories", token, params
+            _get_json_sync, endpoint, "/api/v1/sync/records", token, params
         )
     except Exception as exc:
-        logger.warning("cloud pull memories failed: {}", exc)
+        logger.warning("cloud pull records failed: {}", exc)
         return 0
 
-    if not data or not data.get("memories"):
+    if not data or not data.get("records"):
         return 0
 
     pulled = 0
-    latest_edited = state.memories_pulled_at
+    latest_edited = state.records_pulled_at
+    project_identities = _configured_project_identities(config.projects or {})
 
-    for mem in data["memories"]:
-        cloud_edited = mem.get("cloud_edited_at", "")
+    records = sorted(
+        (record for record in data["records"] if isinstance(record, dict)),
+        key=_pull_record_sort_key,
+    )
+
+    def _mark_processed(cloud_edited_at: str) -> None:
+        """Advance the pull cursor after a record is intentionally handled."""
+        nonlocal latest_edited
+        if not latest_edited or _timestamp_gt(cloud_edited_at, latest_edited):
+            latest_edited = cloud_edited_at
+
+    for record in records:
+        cloud_edited = str(record.get("cloud_edited_at") or "").strip()
         if not cloud_edited:
             continue
 
-        # Find the project directory for this memory
-        project_name = mem.get("project")
-        if not project_name or project_name not in (config.projects or {}):
-            # Try first project as fallback
-            if config.projects:
-                project_name = next(iter(config.projects))
-            else:
-                continue
-
-        project_path = Path(config.projects[project_name])
-        memory_dir = project_path / ".lerim" / "memory"
-        memory_dir.mkdir(parents=True, exist_ok=True)
-
-        # Build filename from memory_id
-        memory_id = mem.get("memory_id", "")
-        if not memory_id:
+        project_name = str(record.get("project") or "").strip()
+        if not project_name:
+            logger.warning(
+                "skipping pulled record {} because cloud project is missing",
+                record.get("record_id", ""),
+            )
+            _mark_processed(cloud_edited)
+            continue
+        project_identity = project_identities.get(project_name)
+        if project_identity is None:
+            logger.warning(
+                "skipping pulled record {} because project {} is not configured locally",
+                record.get("record_id", ""),
+                project_name,
+            )
+            _mark_processed(cloud_edited)
             continue
 
-        # Find existing file or create new one
-        existing_file = _find_memory_file(project_path, memory_id)
-        if existing_file:
-            target_path = existing_file
-        else:
-            # Create new file: YYYYMMDD-slug.md
-            from datetime import datetime, timezone
-
-            date_prefix = datetime.now(timezone.utc).strftime("%Y%m%d")
-            slug = memory_id[:60].replace(" ", "-").lower()
-            target_path = memory_dir / f"{date_prefix}-{slug}.md"
-
-        # Build frontmatter + body
-        frontmatter: dict[str, Any] = {
-            "name": mem.get("title", ""),
-            "description": mem.get("description", ""),
-            "type": mem.get("memory_type", "project"),
-            "id": memory_id,
-            "source": mem.get("source", "cloud-edit"),
-            "created": mem.get("created_at", ""),
-            "updated": cloud_edited,
-        }
-        # Remove None values
-        frontmatter = {k: v for k, v in frontmatter.items() if v is not None}
-
-        body = mem.get("body", "")
-
-        # Write YAML frontmatter + markdown body
-        import yaml
-
-        fm_str = yaml.dump(
-            frontmatter, default_flow_style=False, allow_unicode=True
-        ).strip()
-        content = f"---\n{fm_str}\n---\n\n{body}\n"
-
         try:
-            target_path.write_text(content, encoding="utf-8")
-            pulled += 1
-        except OSError as exc:
-            logger.warning("failed to write pulled memory {}: {}", memory_id, exc)
+            outcome = _upsert_pulled_record(
+                context_db_path=config.context_db_path,
+                project_identity=project_identity,
+                record=record,
+            )
+            if outcome == "applied":
+                pulled += 1
+            if outcome in {"applied", "permanent_drop"}:
+                _mark_processed(cloud_edited)
+            if outcome == "retry":
+                break
+        except (OSError, sqlite3.Error) as exc:
+            logger.warning(
+                "failed to persist pulled record {}: {}",
+                record.get("record_id", ""),
+                exc,
+            )
+            break
 
-        if cloud_edited > latest_edited:
-            latest_edited = cloud_edited
-
-    if latest_edited and latest_edited != state.memories_pulled_at:
-        state.memories_pulled_at = latest_edited
+    if latest_edited:
+        state.records_pulled_at = latest_edited
 
     return pulled
 
@@ -273,14 +424,21 @@ async def _pull_memories(
 
 
 async def _ship_logs(endpoint: str, token: str, state: _ShipperState) -> int:
-    """Ship new log entries from ``lerim.jsonl`` since last offset.
+    """Ship new entries from the newest dated ``lerim.jsonl`` since last offset.
 
-    Handles log rotation: if the file is smaller than the stored offset the
-    offset is reset to zero.
+    The bookmark is per relative log path. When a new day starts, shipping
+    switches to that day's file and resets the offset.
     """
-    log_path = LOG_DIR / state.log_file
-    if not log_path.exists():
+    log_paths = sorted(
+        LOG_DIR.glob("[0-9][0-9][0-9][0-9]/[0-9][0-9]/[0-9][0-9]/lerim.jsonl")
+    )
+    if not log_paths:
         return 0
+    log_path = log_paths[-1]
+    relative_log_file = str(log_path.relative_to(LOG_DIR))
+    if state.log_file != relative_log_file:
+        state.log_file = relative_log_file
+        state.log_offset_bytes = 0
 
     file_size = log_path.stat().st_size
     offset = state.log_offset_bytes
@@ -299,7 +457,9 @@ async def _ship_logs(endpoint: str, token: str, state: _ShipperState) -> int:
         with open(log_path, "r", encoding="utf-8") as fh:
             fh.seek(offset)
             batch: list[dict[str, Any]] = []
+            batch_offset = offset
             while True:
+                line_offset = fh.tell()
                 line = fh.readline()
                 if not line:
                     break
@@ -310,6 +470,8 @@ async def _ship_logs(endpoint: str, token: str, state: _ShipperState) -> int:
                     entry = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                if not batch:
+                    batch_offset = line_offset
                 batch.append(entry)
 
                 if len(batch) >= _BATCH_LOGS:
@@ -321,10 +483,10 @@ async def _ship_logs(endpoint: str, token: str, state: _ShipperState) -> int:
                     )
                     if ok:
                         shipped += len(batch)
+                        new_offset = fh.tell()
                     else:
                         # Stop shipping on first failure; resume next cycle.
-                        new_offset = fh.tell()
-                        state.log_offset_bytes = new_offset
+                        state.log_offset_bytes = batch_offset
                         return shipped
                     batch = []
 
@@ -338,6 +500,10 @@ async def _ship_logs(endpoint: str, token: str, state: _ShipperState) -> int:
                 )
                 if ok:
                     shipped += len(batch)
+                    new_offset = fh.tell()
+                else:
+                    state.log_offset_bytes = batch_offset
+                    return shipped
 
             new_offset = fh.tell()
     except OSError as exc:
@@ -356,7 +522,6 @@ def _query_new_sessions(
     """Query sessions with ``indexed_at`` after *since_iso* (synchronous)."""
     if not db_path.exists():
         return []
-    _ensure_sessions_db_initialized()
     try:
         conn = sqlite3.connect(db_path)
         conn.row_factory = lambda cur, row: {
@@ -409,12 +574,35 @@ def _read_transcript(session_path: str | None) -> str | None:
     return None
 
 
+def _resolve_session_project(
+    repo_path: str | None,
+    projects: dict[str, str],
+) -> str | None:
+    """Resolve a session repo path to a configured project name."""
+    if not repo_path or not projects:
+        return None
+    try:
+        match = match_session_project(repo_path, projects)
+    except OSError as exc:
+        logger.debug("cloud shipper: failed resolving session project {}: {}", repo_path, exc)
+        return None
+    if match is None:
+        return None
+    project_name, _project_path = match
+    return project_name
+
+
 async def _ship_sessions(
-    endpoint: str, token: str, state: _ShipperState, db_path: Path
+    endpoint: str,
+    token: str,
+    state: _ShipperState,
+    db_path: Path,
+    projects: dict[str, str] | None = None,
 ) -> int:
     """Ship new/updated sessions from SQLite, including cached transcripts."""
     shipped = 0
     latest_indexed_at = state.sessions_shipped_at
+    configured_projects = projects or {}
 
     while True:
         rows = await asyncio.to_thread(
@@ -433,13 +621,15 @@ async def _ship_sessions(
         sessions_payload = []
         for row in rows:
             entry = {k: v for k, v in row.items() if k in _API_FIELDS and v is not None}
+            project_name = _resolve_session_project(
+                row.get("repo_path"), configured_projects
+            )
+            if project_name is not None:
+                entry["project"] = project_name
             # Attach transcript from cached JSONL file
             transcript = _read_transcript(row.get("session_path"))
             if transcript:
                 entry["transcript_jsonl"] = transcript
-            # Use repo_path as project fallback
-            if "project" not in entry and row.get("repo_path"):
-                entry["project"] = Path(row["repo_path"]).name
             sessions_payload.append(entry)
 
         ok = await _post_batch(
@@ -466,134 +656,116 @@ async def _ship_sessions(
     return shipped
 
 
-# ── memory shipping ──────────────────────────────────────────────────────────
+# ── record shipping ──────────────────────────────────────────────────────────
 
 
-def _scan_memory_files(
-    projects: dict[str, str], since_iso: str
+def _query_context_records(
+    context_db_path: Path,
+    projects: dict[str, str],
+    since_iso: str,
+    limit: int,
 ) -> list[dict[str, Any]]:
-    """Scan project memory directories for files updated after *since_iso*.
-
-    Memory files live at ``<project_path>/.lerim/memory/{type}/*.md``.
-    Each file is a frontmatter+markdown document.  We extract the ``updated``
-    field from the frontmatter to compare against the watermark.
-
-    Returns a list of dicts ready for JSON serialization.
-    """
-    results: list[dict[str, Any]] = []
-    for project_name, project_path_str in projects.items():
-        memory_root = Path(project_path_str) / ".lerim" / "memory"
-        if not memory_root.is_dir():
-            continue
-        for md_path in memory_root.rglob("*.md"):
-            if not md_path.is_file():
-                continue
-            try:
-                text = md_path.read_text(encoding="utf-8")
-            except OSError:
-                continue
-
-            # Parse frontmatter with YAML (handles lists like tags properly).
-            updated_value = ""
-            frontmatter_raw: dict[str, Any] = {}
-            if text.startswith("---"):
-                end = text.find("---", 3)
-                if end > 0:
-                    fm_block = text[3:end].strip()
-                    body = text[end + 3 :].strip()
-                    try:
-                        import yaml
-                        frontmatter_raw = yaml.safe_load(fm_block) or {}
-                    except Exception:
-                        frontmatter_raw = {}
-                    updated_value = str(frontmatter_raw.get("updated", ""))
-                    # Strip ARCHIVED prefix from body (added by maintain process)
-                    if body.startswith("ARCHIVED"):
-                        body_lines = body.split("\n", 2)
-                        body = body_lines[2].strip() if len(body_lines) > 2 else body_lines[-1].strip()
-                else:
-                    body = text
-            else:
-                body = text
-
-            # Filter by watermark.
-            if since_iso and updated_value and updated_value <= since_iso:
-                continue
-
-            # Determine memory type and archived status from frontmatter.
-            memory_type = str(frontmatter_raw.get("type", "project"))
-            rel = md_path.relative_to(memory_root)
-            parts = rel.parts
-            is_archived_folder = len(parts) >= 2 and parts[0] == "archived"
-
-            results.append(
-                {
-                    "project": project_name,
-                    "memory_type": memory_type,
-                    "file": str(rel),
-                    "frontmatter": frontmatter_raw,
-                    "body": body,
-                    "updated": updated_value,
-                    "is_archived": is_archived_folder or bool(frontmatter_raw.get("archived")),
-                }
-            )
-    return results
+    """Query durable context records for the selected projects."""
+    if not context_db_path.exists() or not projects:
+        return []
+    selected_ids = {
+        resolve_project_identity(Path(project_path)).project_id: project_name
+        for project_name, project_path in projects.items()
+    }
+    placeholders = ", ".join("?" for _ in selected_ids)
+    sql = (
+        "SELECT record_id, project_id, kind, title, body, status, created_at, updated_at, valid_from, valid_until, "
+        "decision, why, alternatives, consequences, user_intent, what_happened, outcomes "
+        f"FROM records WHERE project_id IN ({placeholders}) AND kind != 'episode'"
+    )
+    params: list[Any] = list(selected_ids.keys())
+    if since_iso:
+        sql += " AND updated_at > ?"
+        params.append(since_iso)
+    sql += " ORDER BY updated_at ASC LIMIT ?"
+    params.append(limit)
+    try:
+        conn = sqlite3.connect(context_db_path)
+        conn.row_factory = lambda cur, row: {
+            col[0]: row[idx] for idx, col in enumerate(cur.description)
+        }
+        rows = conn.execute(sql, tuple(params)).fetchall()
+        conn.close()
+    except sqlite3.Error as exc:
+        logger.warning("cloud shipper: context record query failed: {}", exc)
+        return []
+    for row in rows:
+        row["project"] = selected_ids.get(str(row.get("project_id") or ""), "")
+    return rows
 
 
-async def _ship_memories(
+async def _ship_records(
     endpoint: str,
     token: str,
     config: Config,
     state: _ShipperState,
 ) -> int:
-    """Ship new/updated memories from project memory directories."""
+    """Ship durable context records from the canonical context DB."""
     projects = config.projects or {}
     if not projects:
         return 0
 
-    all_memories = await asyncio.to_thread(
-        _scan_memory_files, projects, state.memories_shipped_at
+    all_records = await asyncio.to_thread(
+        _query_context_records,
+        config.context_db_path,
+        projects,
+        state.records_shipped_at,
+        _BATCH_RECORDS * 10,
     )
-    if not all_memories:
+    if not all_records:
         return 0
 
     shipped = 0
-    latest_updated = state.memories_shipped_at
+    latest_updated = state.records_shipped_at
 
-    for i in range(0, len(all_memories), _BATCH_MEMORIES):
-        raw_batch = all_memories[i : i + _BATCH_MEMORIES]
-        # Map scanned memory files to API's expected MemoryEntry fields
+    for i in range(0, len(all_records), _BATCH_RECORDS):
+        raw_batch = all_records[i : i + _BATCH_RECORDS]
         batch = []
-        for mem in raw_batch:
-            fm = mem.get("frontmatter") or {}
+        for record in raw_batch:
             entry: dict[str, Any] = {
-                "memory_id": fm.get("id") or mem.get("file", ""),
-                "memory_type": mem.get("memory_type"),
-                "title": fm.get("name", ""),
-                "description": fm.get("description", ""),
-                "body": mem.get("body", ""),
-                "project": mem.get("project"),
-                "source": fm.get("source"),
-                "status": "archived" if mem.get("is_archived") else fm.get("status", "active"),
+                "record_id": record.get("record_id", ""),
+                "record_kind": record.get("kind"),
+                "title": record.get("title", ""),
+                "description": "",
+                "body": record.get("body", ""),
+                "project": record.get("project"),
+                "status": record.get("status", "active"),
+                "decision": record.get("decision", ""),
+                "why": record.get("why", ""),
+                "alternatives": record.get("alternatives", ""),
+                "consequences": record.get("consequences", ""),
+                "user_intent": record.get("user_intent", ""),
+                "what_happened": record.get("what_happened", ""),
+                "outcomes": record.get("outcomes", ""),
+                "created_at": record.get("created_at", ""),
+                "valid_from": record.get("valid_from", ""),
+                "valid_until": record.get("valid_until"),
+                "updated": record.get("updated_at", ""),
+                "cloud_edited_at": record.get("updated_at", ""),
             }
             batch.append(entry)
         ok = await _post_batch(
             endpoint,
-            "/api/v1/ingest/memories",
+            "/api/v1/ingest/records",
             token,
-            {"memories": batch},
+            {"records": batch},
         )
         if ok:
             shipped += len(batch)
-            for mem in batch:
-                ts = str(mem.get("updated") or "")
+            for record in batch:
+                ts = str(record.get("updated") or "")
                 if ts > latest_updated:
                     latest_updated = ts
         else:
             break
 
-    if latest_updated and latest_updated != state.memories_shipped_at:
-        state.memories_shipped_at = latest_updated
+    if latest_updated and latest_updated != state.records_shipped_at:
+        state.records_shipped_at = latest_updated
     return shipped
 
 
@@ -602,7 +774,6 @@ async def _ship_memories(
 
 def _query_service_runs(db_path: Path, since_iso: str, limit: int) -> list[dict[str, Any]]:
     """Query local service_runs table for new entries."""
-    _ensure_sessions_db_initialized()
     try:
         conn = sqlite3.connect(db_path)
         conn.row_factory = lambda cur, row: {col[0]: row[idx] for idx, col in enumerate(cur.description)}
@@ -686,7 +857,6 @@ def _query_job_statuses(
 	"""Query session_jobs with ``updated_at`` after *since_iso*."""
 	if not db_path.exists():
 		return []
-	_ensure_sessions_db_initialized()
 	try:
 		conn = sqlite3.connect(db_path)
 		conn.row_factory = lambda cur, row: {
@@ -783,15 +953,16 @@ async def ship_once(config: Config) -> dict[str, int]:
 
     endpoint = config.cloud_endpoint
     token = config.cloud_token or ""
-    state = _ShipperState.load()
+    state_path = config.global_data_dir / "cloud_shipper_state.json"
+    state = _ShipperState.load(path=state_path)
 
     # Phase 1: Pull (cloud -> local)
-    memories_pulled = await _pull_memories(endpoint, token, config, state)
+    records_pulled = await _pull_records(endpoint, token, config, state)
 
     # Phase 2: Push (local -> cloud)
     logs_shipped = await _ship_logs(endpoint, token, state)
     sessions_shipped = await _ship_sessions(
-        endpoint, token, state, config.sessions_db_path
+        endpoint, token, state, config.sessions_db_path, config.projects
     )
     service_runs_shipped = await _ship_service_runs(
         endpoint, token, state, config.sessions_db_path
@@ -799,15 +970,15 @@ async def ship_once(config: Config) -> dict[str, int]:
     job_statuses_shipped = await _ship_job_statuses(
         endpoint, token, state, config.sessions_db_path
     )
-    memories_shipped = await _ship_memories(endpoint, token, config, state)
+    records_shipped = await _ship_records(endpoint, token, config, state)
 
-    state.save()
+    state.save(path=state_path)
 
     return {
         "logs": logs_shipped,
         "sessions": sessions_shipped,
         "service_runs": service_runs_shipped,
         "job_statuses": job_statuses_shipped,
-        "memories": memories_shipped,
-        "memories_pulled": memories_pulled,
+        "records": records_shipped,
+        "records_pulled": records_pulled,
     }

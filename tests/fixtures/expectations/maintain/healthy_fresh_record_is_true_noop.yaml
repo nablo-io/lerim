@@ -1,0 +1,10 @@
+case: healthy_fresh_record_is_true_noop
+summary: A fresh healthy durable record should not be rewritten just for style.
+
+expected:
+  must_use_tools:
+    - list_context
+  must_not_use_tools:
+    - archive_context
+    - supersede_context
+    - revise_context

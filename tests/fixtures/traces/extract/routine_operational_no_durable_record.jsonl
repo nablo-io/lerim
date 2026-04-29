@@ -1,0 +1,5 @@
+{"role":"user","content":"Run the formatter, fix the lint issues, and rerun the CLI tests. This is routine cleanup only."}
+{"role":"assistant","content":"I'll apply the automatic fixes first, then rerun the targeted checks."}
+{"role":"assistant","content":"ruff check . --fix fixed 12 files and left one warning that turned out to be a normal import ordering issue."}
+{"role":"assistant","content":"ruff format . completed successfully."}
+{"role":"assistant","content":"The CLI tests now pass. No project rule, design decision, dependency fact, or stable user preference changed in this session."}

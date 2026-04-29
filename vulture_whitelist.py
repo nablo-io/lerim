@@ -40,3 +40,38 @@ format_transcript  # noqa
 # Called via getattr() dynamic dispatch in CLI (_dead_letter_action)
 retry_project_jobs  # noqa
 skip_project_jobs  # noqa
+
+# Public dataclass/Pydantic fields used by serialization, validation, or callers
+git_branch  # noqa
+model_config  # noqa
+last_context_tokens  # noqa
+metrics_version  # noqa
+
+# Pydantic validators and Agent validators registered by decorators
+validate_level  # noqa
+_require_session_episode  # noqa
+
+# Tool wrappers preserve runtime signatures for PydanticAI schema generation
+__signature__  # noqa
+
+# Public tool registry and public configuration/provider APIs
+CURRENT_AGENT_TOOL_NAMES  # noqa
+build_pydantic_model_from_provider  # noqa
+get_config_sources  # noqa
+
+# Lazy module protocol and enum members used through import/attribute access
+__dir__  # noqa
+ACTIVE  # noqa
+ARCHIVED  # noqa
+CREATE  # noqa
+UPDATE  # noqa
+ARCHIVE  # noqa
+SUPERSEDE  # noqa
+
+# Third-party runtime attributes and public health/diagnostic helpers
+graph_optimization_level  # noqa
+index_health  # noqa
+_prepare_search_indexes  # noqa
+to_span_attrs  # noqa
+is_server_healthy  # noqa
+_mlflow_run_span  # noqa

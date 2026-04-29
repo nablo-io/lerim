@@ -13,20 +13,28 @@ class SyncResultContract(BaseModel):
 	"""Stable sync return payload schema used by CLI and daemon."""
 
 	trace_path: str
-	memory_root: str
+	context_db_path: str
+	project_id: str
 	workspace_root: str
 	run_folder: str
 	artifacts: dict[str, str]
+	records_created: int = 0
+	records_updated: int = 0
+	records_archived: int = 0
 	cost_usd: float = 0.0
 
 
 class MaintainResultContract(BaseModel):
 	"""Stable maintain return payload schema used by CLI and daemon."""
 
-	memory_root: str
+	context_db_path: str
+	project_id: str
 	workspace_root: str
 	run_folder: str
 	artifacts: dict[str, str]
+	records_created: int = 0
+	records_updated: int = 0
+	records_archived: int = 0
 	cost_usd: float = 0.0
 
 
@@ -34,7 +42,8 @@ if __name__ == "__main__":
 	"""Run contract model smoke checks."""
 	sync = SyncResultContract(
 		trace_path="/tmp/trace.jsonl",
-		memory_root="/tmp/memory",
+		context_db_path="/tmp/context.sqlite3",
+		project_id="proj_demo",
 		workspace_root="/tmp/workspace",
 		run_folder="/tmp/workspace/sync-run",
 		artifacts={"agent_log": "/tmp/workspace/sync-run/agent.log"},
@@ -42,7 +51,8 @@ if __name__ == "__main__":
 	assert sync.cost_usd == 0.0
 
 	maintain = MaintainResultContract(
-		memory_root="/tmp/memory",
+		context_db_path="/tmp/context.sqlite3",
+		project_id="proj_demo",
 		workspace_root="/tmp/workspace",
 		run_folder="/tmp/workspace/maintain-run",
 		artifacts={"agent_log": "/tmp/workspace/maintain-run/agent.log"},

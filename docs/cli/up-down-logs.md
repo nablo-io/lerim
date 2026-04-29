@@ -25,14 +25,14 @@ Start Lerim as a Docker service:
 
 ```bash
 lerim up                    # start Lerim (pull GHCR image)
-lerim up --build            # build from local Dockerfile instead
+lerim up --build            # build and recreate from the local Dockerfile
 ```
 
 This reads `~/.lerim/config.toml`, generates a `docker-compose.yml` in `~/.lerim/`, and runs `docker compose up -d`.
 
-By default the compose file references the pre-built GHCR image (`ghcr.io/lerim-dev/lerim-cli`) tagged with the current package version. Use `--build` to build from the local Dockerfile instead (useful for development).
+By default the compose file references the pre-built GHCR image (`ghcr.io/lerim-dev/lerim-cli`) tagged with the current package version. Use `--build` to build from the local Dockerfile, tag it as `lerim-lerim:local`, and force-recreate the container.
 
-Running `lerim up` again recreates the container. After start, the CLI waits for `GET /api/health` to return `200 OK` before reporting success.
+After start, the CLI waits for `GET /api/health` to return `200 OK` before reporting success.
 
 ### `lerim down`
 
@@ -44,7 +44,7 @@ lerim down
 
 ### `lerim logs`
 
-View local log entries from `~/.lerim/logs/lerim.jsonl` (last 50 by default).
+View local log entries from dated JSONL files under `~/.lerim/logs/YYYY/MM/DD/` (last 50 by default).
 
 ```bash
 lerim logs                      # show recent logs

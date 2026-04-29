@@ -1,0 +1,5 @@
+{"role": "user", "content": "Extract only what is durable from this setup session."}
+{"role": "assistant", "content": "I will avoid inventing a rationale that the trace does not support."}
+{"role": "user", "content": "Current stable setup: image-enabled workflows depend on libvips being present in the environment."}
+{"role": "user", "content": "Do not invent a policy reason or decision rationale beyond that current dependency fact."}
+{"role": "assistant", "content": "Understood. This is a stable current-state fact, not a justified decision."}

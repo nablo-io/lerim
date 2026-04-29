@@ -1,0 +1,6 @@
+{"role":"user","content":"One standing preference: when the work is tightly coupled, do not split it into fake PR-shaped chunks. I want one coherent change instead of artificial fragmentation."}
+{"role":"assistant","content":"Understood. I will treat that as a stable workflow preference, not just a one-session comment."}
+{"role":"assistant","content":"I reviewed the refactor plan. The database migration, runtime change, and docs update all depend on each other closely."}
+{"role":"assistant","content":"There were some local details too: I renamed one helper, removed a temporary log, and shortened a test assertion. Those are not durable context."}
+{"role":"user","content":"Yes, exactly. For this kind of tightly coupled work, optimize for coherence over splitting."}
+{"role":"assistant","content":"Confirmed. The durable record is the workflow preference about coherent changes for tightly coupled work."}

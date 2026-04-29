@@ -1,0 +1,4 @@
+case: ship_and_pull_round_trip_core_fields
+expected:
+  kind: "fact"
+  status: "archived"

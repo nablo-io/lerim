@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ripgrep &&
 
 # Install lerim from local source
 COPY . /build
-RUN pip install --no-cache-dir /build && rm -rf /build
+RUN pip install --no-cache-dir --retries 10 --default-timeout 120 /build && rm -rf /build
 
 
 EXPOSE 8765

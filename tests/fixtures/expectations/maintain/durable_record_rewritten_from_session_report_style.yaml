@@ -1,0 +1,19 @@
+case: durable_record_rewritten_from_session_report_style
+summary: Rewrite a durable record that still reads like a session report.
+
+expected:
+  must_use_tools:
+    - list_context
+    - get_context
+    - revise_context
+  must_not_use_tools:
+    - archive_context
+    - supersede_context
+  record_text_must_include_all:
+    - provider
+    - adapter
+    - stable contract
+  record_text_must_not_include:
+    - review of
+    - discussed
+    - task audit

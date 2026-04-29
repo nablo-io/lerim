@@ -1,0 +1,13 @@
+case: valuable_recent_record_preserved
+summary: Keep a recent useful durable record active.
+
+expected:
+  must_use_tools:
+    - list_context
+  must_not_use_tools:
+    - archive_context
+    - supersede_context
+  record_text_must_include_all:
+    - provider
+    - adapter
+    - stable contract

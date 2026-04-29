@@ -3,8 +3,8 @@
 Activates MLflow autologging for PydanticAI when ``LERIM_MLFLOW=true`` is set.
 All PydanticAI agent/model/tool spans are captured automatically.
 
-Traces are stored in a local SQLite database (~/.lerim/mlflow.db).
-External OTel OTLP export is disabled to avoid noise when no collector runs.
+Traces are stored under ``~/.lerim/observability/`` so observability files do
+not clutter the root of the Lerim home directory.
 """
 
 from __future__ import annotations
@@ -44,7 +44,9 @@ def _backup_and_reset_mlflow_db(db_path: Path) -> Path | None:
 	if not db_path.exists():
 		return None
 	timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-	backup_path = db_path.with_name(f"{db_path.stem}.backup-{timestamp}{db_path.suffix}")
+	backup_dir = db_path.parent / "backups"
+	backup_dir.mkdir(parents=True, exist_ok=True)
+	backup_path = backup_dir / f"{db_path.stem}.backup-{timestamp}{db_path.suffix}"
 	backup_path.parent.mkdir(parents=True, exist_ok=True)
 	shutil.copy2(db_path, backup_path)
 	for suffix in ("", "-wal", "-shm"):
@@ -130,7 +132,8 @@ def configure_tracing(config: Config, experiment_name: str = "lerim") -> None:
 	os.environ.pop("OTEL_EXPORTER_OTLP_ENDPOINT", None)
 	os.environ.pop("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", None)
 
-	db_path = config.global_data_dir / "mlflow.db"
+	db_path = Path(config.global_data_dir).expanduser() / "observability" / "mlflow.db"
+	db_path.parent.mkdir(parents=True, exist_ok=True)
 	tracking_uri = f"sqlite:///{db_path}"
 
 	def _activate_mlflow() -> None:

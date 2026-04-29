@@ -1,8 +1,7 @@
-"""Project/global data directory resolution for Lerim memory scope modes."""
+"""Project matching helpers for Lerim session and repo identity logic."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -16,50 +15,6 @@ def git_root_for(path: Path | None = None) -> Path | None:
         if current.parent == current:
             return None
         current = current.parent
-
-
-@dataclass(frozen=True)
-class ScopeResolution:
-    """Resolved project/global data directories and ordered search preference."""
-
-    project_root: Path | None
-    project_data_dir: Path | None
-    global_data_dir: Path
-    ordered_data_dirs: list[Path]
-
-
-def resolve_data_dirs(
-    *,
-    global_data_dir: Path,
-    repo_path: Path | None = None,
-) -> ScopeResolution:
-    """Resolve project + global data directories (project-first, global fallback)."""
-    project_root = git_root_for(repo_path)
-    project_data_dir = (project_root / ".lerim").resolve() if project_root else None
-    ordered: list[Path] = []
-
-    if project_data_dir is None:
-        ordered = [global_data_dir]
-    else:
-        ordered = [project_data_dir]
-        if project_data_dir != global_data_dir:
-            ordered.append(global_data_dir)
-
-    seen: set[Path] = set()
-    deduped: list[Path] = []
-    for path in ordered:
-        resolved = path.resolve()
-        if resolved in seen:
-            continue
-        seen.add(resolved)
-        deduped.append(resolved)
-
-    return ScopeResolution(
-        project_root=project_root,
-        project_data_dir=project_data_dir,
-        global_data_dir=global_data_dir.resolve(),
-        ordered_data_dirs=deduped,
-    )
 
 
 def match_session_project(
@@ -89,9 +44,6 @@ def match_session_project(
 if __name__ == "__main__":
     """Run a real-path smoke test for scope resolution logic."""
     cwd = Path.cwd()
-    resolved = resolve_data_dirs(
-        global_data_dir=Path.home() / ".lerim",
-        repo_path=cwd,
-    )
-    assert resolved.global_data_dir == (Path.home() / ".lerim").resolve()
-    assert resolved.ordered_data_dirs
+    root = git_root_for(cwd)
+    if root is not None:
+        assert root.exists()

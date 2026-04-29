@@ -1,0 +1,35 @@
+question: "What decisions were made yesterday?"
+seed_records:
+  - session_id: "seed-old-1"
+    kind: "decision"
+    created_at: "{{days_ago:3}}T09:00:00+00:00"
+    updated_at: "{{days_ago:3}}T09:00:00+00:00"
+    valid_from: "{{days_ago:3}}T09:00:00+00:00"
+    title: "Use sqlite-vec for vector search"
+    body: "Semantic retrieval should use sqlite-vec."
+    decision: "Use sqlite-vec for vector search."
+    why: "It keeps vector retrieval local and indexed."
+  - session_id: "seed-old-2"
+    kind: "decision"
+    created_at: "{{days_ago:3}}T15:30:00+00:00"
+    updated_at: "{{days_ago:3}}T15:30:00+00:00"
+    valid_from: "{{days_ago:3}}T15:30:00+00:00"
+    title: "Keep FTS5 as the lexical layer"
+    body: "Lexical search should continue using FTS5."
+    decision: "Keep FTS5 as the lexical layer."
+    why: "It handles exact token matching well."
+expected:
+  must_use_any_tools:
+    - "list_context"
+    - "count_context"
+  must_not_use_tools: []
+  answer_must_include_any:
+    - "no decisions were made yesterday"
+    - "no decisions were recorded yesterday"
+    - "no decisions were made"
+    - "no decisions were recorded"
+    - "no decision records were created yesterday"
+    - "did not find any decisions made yesterday"
+  answer_must_not_include:
+    - "sqlite-vec"
+    - "fts5"

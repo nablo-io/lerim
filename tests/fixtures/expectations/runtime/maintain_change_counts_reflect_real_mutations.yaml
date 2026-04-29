@@ -1,0 +1,6 @@
+case: maintain_change_counts_reflect_real_mutations
+expected:
+  workspace_subdir: "maintain"
+  records_created: 1
+  records_updated: 1
+  records_archived: 1

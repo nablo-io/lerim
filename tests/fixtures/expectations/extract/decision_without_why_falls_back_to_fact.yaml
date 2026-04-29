@@ -1,0 +1,21 @@
+case: decision_without_why_falls_back_to_fact
+summary: A decision-shaped trace without durable rationale should fall back to a fact record.
+
+expected:
+  episode_count: 1
+  durable_count: 1
+  decision_count: 0
+  fact_count: 1
+  must_use_tools:
+    - read_trace
+    - save_context
+  must_not_use_tools:
+    - revise_context
+  fact_text_must_include_all:
+    - libvips
+    - environment
+  fact_text_must_include_any:
+    - depends
+    - workflows
+  fact_text_must_not_include:
+    - because we chose

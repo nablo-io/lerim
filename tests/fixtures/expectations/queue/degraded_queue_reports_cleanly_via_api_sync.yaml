@@ -1,0 +1,4 @@
+case: degraded_queue_reports_cleanly_via_api_sync
+expected:
+  degraded: true
+  dead_letter_count: 1

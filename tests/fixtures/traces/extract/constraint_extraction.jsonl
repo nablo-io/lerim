@@ -1,0 +1,5 @@
+{"role": "user", "content": "Investigate the duplicate checkpoint bug and keep only the lasting rule."}
+{"role": "assistant", "content": "I will separate the durable invariant from the debug story."}
+{"role": "assistant", "content": "The stack trace points at two code paths, but the lasting lesson is not the trace itself."}
+{"role": "user", "content": "Durable constraint: one session identity must map to at most one checkpoint. Helper rename ideas and pytest noise are not durable context."}
+{"role": "assistant", "content": "I will capture that invariant and drop the implementation chatter."}

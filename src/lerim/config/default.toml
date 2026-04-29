@@ -13,6 +13,14 @@ maintain_interval_minutes = 60       # maintain cold path interval
 sync_window_days = 7
 sync_max_sessions = 50
 
+[semantic_search]
+embedding_model_id = "mixedbread-ai/mxbai-embed-xsmall-v1"
+semantic_shortlist_size = 40
+lexical_shortlist_size = 40
+
+[observability]
+mlflow_enabled = false
+
 [roles.agent]
 provider = "minimax"               # opencode_go | minimax | zai | openrouter | openai | ollama
 model = "MiniMax-M2.7"                 # package default model for minimax provider
@@ -21,13 +29,11 @@ api_base = ""
 fallback_models = []  # disabled for now — ensure exact model is used, no silent fallback
 # PydanticAI single-pass sync auto-scales its request budget from trace
 # size via lerim.agents.tools.compute_request_budget(trace_path). Small
-# traces get the 50-turn floor; 2000-line traces get ~65; pathological
-# inputs clamp at 100. The formula lives in tools.py and is the single
+# traces get a 40-turn floor; 2000-line traces get a modest increase;
+# pathological inputs clamp at 100. The formula lives in tools.py and is the single
 # source of truth — no per-pass limits in config.
 max_iters_maintain = 50                # max request turns for maintain flow
 max_iters_ask = 20                     # max request turns for ask flow
-openrouter_provider_order = []
-thinking = true
 # MiniMax-M2 official sampling preset (from HuggingFace model card):
 # temperature=1.0, top_p=0.95, top_k=40. These are for "agent/tool-calling
 # tasks" per the vendor recommendation. See also MiniMax docs re valid

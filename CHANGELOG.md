@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.1.80] - 2026-04-29
+
+### Added
+- Local-first context runtime built around the canonical SQLite context store, project-scoped records, version history, FTS, and local embedding-backed retrieval.
+- Semantic agent toolsets for sync, maintain, and ask flows, including context listing, search, fetching, writing, revising, archiving, superseding, counting, trace-note, and pruning tools.
+- End-to-end MLflow observability for sync, maintain, and ask runs using Lerim-owned root/tool/event spans that continue through controlled PydanticAI retries.
+- Expanded runtime artifacts, queue/status metadata, Docker runtime helpers, and CLI/API coverage for context operations.
+- Larger unit, smoke, integration, and end-to-end test suites for context extraction, maintenance, retrieval, queueing, cloud sync, scope handling, and CLI behavior.
+
+### Changed
+- Reworked memory terminology and docs around durable context records instead of legacy per-project markdown memory files.
+- Updated provider, tracing, configuration, logging, and run-artifact behavior for the DB-backed context architecture.
+- Refreshed README and documentation for setup, commands, storage layout, context model, tracing, and operational workflows.
+
+### Fixed
+- Release-readiness cleanup for provider fallback parsing, strict TOML string/path validation, SPDX license metadata, and docs accuracy around sync ordering, tracing, semantic search config, and query sessions.
+- MLflow traces now preserve a successful Lerim root run even when a tool attempt raises a controlled retry before later recovery.
+
 ## [0.1.72] - 2026-04-13
 
 ### Fixed
@@ -32,7 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Read/query defaults now use all registered projects unless explicitly narrowed:
   - `lerim status --scope all|project --project ...`
   - `lerim ask --scope all|project --project ...`
-  - `lerim memory list --scope all|project --project ...`
+  - `lerim query records list --scope all|project --project ...`
 - Canonical run telemetry is now written in `service_runs.details_json` with normalized keys (`metrics_version=1`, sync/maintain totals, per-project metrics, events) while preserving legacy compatibility fields.
 
 ### Fixed
@@ -80,7 +100,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Unified `providers.py` -- all providers use the same LM wrapper path (no proxy layer needed).
 - Cross-session intelligence in maintain: signal amplification, contradiction detection, gap detection.
 - Cross-agent knowledge synthesis: detects patterns across Claude, Cursor, Codex, OpenCode sessions.
-- Hot-memory curation: auto-generated `.lerim/hot-memory.md` (~2000 tokens) with Active Decisions, Key Learnings, Recent Context, Watch Out.
+- Context curation with Active Decisions, Key Learnings, Recent Context, and Watch Out sections.
 - Memory outcome field (worked/failed/unknown) for feedback tracking.
 - Docker container hardening: read_only root, cap_drop ALL, seccomp profile, mount only .lerim/ dirs.
 - Dashboard Intelligence tab: memory health score, contradictions, signals, gaps, cross-agent insights.
@@ -157,7 +177,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Structured `write_memory` tool replaces raw markdown writes for memory files.
+- Structured context-writing tool replaces raw file writes.
 - `_process_claimed_jobs` runs sequentially (was parallel) for chronological memory consistency.
 - Activity log format now includes cost column.
 
@@ -179,7 +199,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Continual learning layer for coding agents and projects.
 - Platform adapters for Claude Code, Codex CLI, Cursor, and OpenCode.
 - Memory extraction pipeline using ChainOfThought with transcript windowing to extract decisions and learnings from coding session traces.
-- Trace summarization pipeline using ChainOfThought with transcript windowing to produce structured summaries with YAML frontmatter.
+- Trace summarization pipeline using ChainOfThought with transcript windowing to produce structured summaries.
 - PydanticAI lead agent with a read-only explorer subagent for memory operations.
 - Three CLI flows: `sync` (extract, summarize, write memories), `maintain` (merge, archive, decay), and `ask` (query memories).
 - Daemon mode for continuous sync and maintain loop.
@@ -189,8 +209,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - TOML-layered configuration: shipped defaults, global, project, and env var override.
 - OpenTelemetry tracing via Logfire with PydanticAI and runtime instrumentation.
 - Multi-provider LLM support: OpenRouter (with Nebius routing), Ollama, ZAI, OpenAI, Anthropic.
-- File-first memory model using markdown files with YAML frontmatter.
-- Project-first memory scope with global fallback.
-- Memory primitives: decisions, learnings, and summaries.
+- SQLite-backed context model for durable records and derived indexes.
+- Project-scoped context records in the global context DB.
+- Context record kinds: decisions, facts, procedures, preferences, and episodes.
 - Comprehensive test suite with 290 tests across unit, smoke, integration, and e2e layers.
 - Skills distribution via `npx skills add lerim-dev/lerim-cli`.

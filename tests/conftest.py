@@ -1,13 +1,7 @@
-"""Shared test fixtures for Lerim test suite.
+"""Shared test fixtures for Lerim's maintained test suite.
 
-Provides temp directories, seeded memories, and auto-applies a test config
-for smoke/integration/e2e tests via LERIM_CONFIG env var.
-
-Tier-specific fixtures live in each subdirectory's conftest.py:
-- unit/conftest.py   — autouse dummy API key
-- smoke/conftest.py  — skip unless LERIM_SMOKE=1
-- integration/conftest.py — skip unless LERIM_INTEGRATION=1
-- e2e/conftest.py    — skip unless LERIM_E2E=1
+This file only supports the DB-only runtime.
+It provides temporary global Lerim roots and trace fixture paths.
 """
 
 import os
@@ -15,122 +9,29 @@ from pathlib import Path
 
 import pytest
 
+from lerim.server.runtime import LerimRuntime
+from tests.live_helpers import build_live_config
 from tests.helpers import make_config
 
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 TRACES_DIR = FIXTURES_DIR / "traces"
-MEMORIES_DIR = FIXTURES_DIR / "memories"
+EXTRACT_TRACES_DIR = TRACES_DIR / "extract"
+EXPECTATIONS_DIR = FIXTURES_DIR / "expectations"
+ASK_EXPECTATIONS_DIR = EXPECTATIONS_DIR / "ask"
+EXTRACT_EXPECTATIONS_DIR = EXPECTATIONS_DIR / "extract"
+MAINTAIN_EXPECTATIONS_DIR = EXPECTATIONS_DIR / "maintain"
+RUNTIME_EXPECTATIONS_DIR = EXPECTATIONS_DIR / "runtime"
+SCOPE_EXPECTATIONS_DIR = EXPECTATIONS_DIR / "scope"
+CLOUD_EXPECTATIONS_DIR = EXPECTATIONS_DIR / "cloud"
+QUEUE_EXPECTATIONS_DIR = EXPECTATIONS_DIR / "queue"
+CLI_SURFACE_EXPECTATIONS_DIR = EXPECTATIONS_DIR / "cli_surface"
 TEST_CONFIG_PATH = Path(__file__).parent / "test_config.toml"
-
-
-def _needs_llm_config(items) -> bool:
-    """Return True if any collected test has a smoke/integration/e2e marker."""
-    for item in items:
-        markers = {m.name for m in item.iter_markers()}
-        if markers & {"smoke", "integration", "e2e"}:
-            return True
-    return False
-
-
-def _build_test_config_toml(tmp_dir: Path) -> Path:
-    """Build a test config TOML that uses test_config.toml as base with env var overrides.
-
-    Supports LERIM_TEST_PROVIDER and LERIM_TEST_MODEL env vars to override
-    the default ollama/qwen3:4b for all roles.
-    """
-    provider = os.environ.get("LERIM_TEST_PROVIDER", "").strip()
-    model = os.environ.get("LERIM_TEST_MODEL", "").strip()
-    if not provider and not model:
-        return TEST_CONFIG_PATH
-
-    # Read base config and override provider/model
-    import tomllib
-
-    with TEST_CONFIG_PATH.open("rb") as f:
-        base = tomllib.load(f)
-    roles = base.get("roles", {})
-    for role_name in ("agent", "extract"):
-        role = roles.get(role_name, {})
-        if provider:
-            role["provider"] = provider
-        if model:
-            role["model"] = model
-        roles[role_name] = role
-    base["roles"] = roles
-    base.setdefault("data", {})["dir"] = str(tmp_dir)
-
-    # Write merged config
-    lines: list[str] = []
-    for section, fields in base.items():
-        if isinstance(fields, dict):
-            # Handle nested sections like roles.agent
-            has_nested = any(isinstance(v, dict) for v in fields.values())
-            if has_nested:
-                for sub_name, sub_fields in fields.items():
-                    if isinstance(sub_fields, dict):
-                        lines.append(f"[{section}.{sub_name}]")
-                        for k, v in sub_fields.items():
-                            lines.append(f"{k} = {_toml_value(v)}")
-                        lines.append("")
-                    else:
-                        lines.append(f"[{section}]")
-                        lines.append(f"{sub_name} = {_toml_value(sub_fields)}")
-                        lines.append("")
-            else:
-                lines.append(f"[{section}]")
-                for k, v in fields.items():
-                    lines.append(f"{k} = {_toml_value(v)}")
-                lines.append("")
-
-    out_path = tmp_dir / "test_config.toml"
-    out_path.write_text("\n".join(lines), encoding="utf-8")
-    return out_path
-
-
-def _toml_value(v) -> str:
-    """Format a Python value as TOML literal."""
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, (int, float)):
-        return str(v)
-    if isinstance(v, (list, tuple)):
-        items = ", ".join(_toml_value(item) for item in v)
-        return f"[{items}]"
-    return f'"{v}"'
-
-
-def pytest_configure(config):
-    """Register custom markers."""
-    config.addinivalue_line(
-        "markers", "smoke: Quick LLM sanity checks (requires ollama)"
-    )
-
-
-def pytest_collection_modifyitems(config, items):
-    """Auto-apply test config (ollama/qwen3:4b) when LLM tests are collected."""
-    if not _needs_llm_config(items):
-        return
-
-    # Only set LERIM_CONFIG if not already explicitly set by the user
-    if os.environ.get("LERIM_CONFIG"):
-        return
-
-    tmp_dir = Path(config.rootdir) / ".pytest_tmp"
-    tmp_dir.mkdir(exist_ok=True)
-    cfg_path = _build_test_config_toml(tmp_dir)
-    os.environ["LERIM_CONFIG"] = str(cfg_path)
-
-    from lerim.config.settings import reload_config
-
-    reload_config()
 
 
 @pytest.fixture
 def tmp_lerim_root(tmp_path):
-    """Temporary Lerim data root with canonical folder structure."""
-    memory_dir = tmp_path / "memory"
-    memory_dir.mkdir(parents=True)
+    """Temporary global Lerim root with canonical folder structure."""
     (tmp_path / "workspace").mkdir()
     (tmp_path / "index").mkdir()
     return tmp_path
@@ -143,12 +44,29 @@ def tmp_config(tmp_path, tmp_lerim_root):
 
 
 @pytest.fixture
-def seeded_memory(tmp_lerim_root):
-    """tmp_lerim_root with fixture memory files copied into flat memory dir."""
-    memory_dir = tmp_lerim_root / "memory"
-    for src in MEMORIES_DIR.glob("*.md"):
-        (memory_dir / src.name).write_text(src.read_text())
-    return tmp_lerim_root
+def live_lerim_root(tmp_path):
+    """Temporary global Lerim root for live smoke, integration, and e2e tests."""
+    return tmp_path / ".lerim"
+
+
+@pytest.fixture
+def live_config(live_lerim_root):
+    """Temporary live config that preserves current provider settings but isolates state."""
+    return build_live_config(live_lerim_root)
+
+
+@pytest.fixture
+def live_repo_root(tmp_path):
+    """Temporary project root used for live runtime tests."""
+    repo_root = tmp_path / "live-project"
+    repo_root.mkdir(parents=True, exist_ok=True)
+    return repo_root
+
+
+@pytest.fixture
+def live_runtime(live_config, live_repo_root):
+    """Live runtime pointing at the temporary project root and isolated global state."""
+    return LerimRuntime(default_cwd=str(live_repo_root), config=live_config)
 
 
 def skip_unless_env(var_name):

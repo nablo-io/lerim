@@ -1,13 +1,8 @@
-"""Lerim package bootstrap: logging initialization and version export."""
+"""Lerim package metadata."""
 
 from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, version
-
-from lerim.config.logging import configure_logging
-
-configure_logging()
-
 
 try:
     __version__ = version("lerim")

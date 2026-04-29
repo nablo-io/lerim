@@ -25,9 +25,12 @@ JOB_STATUS_DONE = "done"
 JOB_STATUS_FAILED = "failed"
 JOB_STATUS_DEAD_LETTER = "dead_letter"
 SESSION_JOB_ACTIVE = {JOB_STATUS_PENDING, JOB_STATUS_RUNNING}
+SESSION_JOB_CLAIM_NEWEST = "newest"
+SESSION_JOB_CLAIM_OLDEST = "oldest"
+SESSION_JOB_CLAIM_ORDERS = {SESSION_JOB_CLAIM_NEWEST, SESSION_JOB_CLAIM_OLDEST}
 _DB_INIT_LOCK = threading.Lock()
 _DB_INITIALIZED_PATH: Path | None = None
-DEFAULT_RUNNING_JOB_LEASE_SECONDS = 30 * 60
+DEFAULT_RUNNING_JOB_LEASE_SECONDS = 2 * 60
 
 
 @dataclass(frozen=True)
@@ -116,30 +119,30 @@ def init_sessions_db() -> None:
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS session_docs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                run_id TEXT NOT NULL UNIQUE,
-                agent_type TEXT NOT NULL,
-                repo_path TEXT,
-                repo_name TEXT,
-                start_time TEXT,
-                content TEXT,
-                indexed_at TEXT NOT NULL,
-                status TEXT DEFAULT 'completed',
-                duration_ms INTEGER DEFAULT 0,
-                message_count INTEGER DEFAULT 0,
-                tool_call_count INTEGER DEFAULT 0,
-                error_count INTEGER DEFAULT 0,
-                total_tokens INTEGER DEFAULT 0,
-                summaries TEXT,
-                summary_text TEXT,
-                turns_json TEXT,
-                session_path TEXT,
-                content_hash TEXT,
-                tags TEXT,
-                outcome TEXT
-            )
-            """
+                    CREATE TABLE IF NOT EXISTS session_docs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        run_id TEXT NOT NULL UNIQUE,
+                        agent_type TEXT NOT NULL,
+                        repo_path TEXT,
+                        repo_name TEXT,
+                        start_time TEXT,
+                        content TEXT,
+                        indexed_at TEXT NOT NULL,
+                        status TEXT DEFAULT 'completed',
+                        duration_ms INTEGER DEFAULT 0,
+                        message_count INTEGER DEFAULT 0,
+                        tool_call_count INTEGER DEFAULT 0,
+                        error_count INTEGER DEFAULT 0,
+                        total_tokens INTEGER DEFAULT 0,
+                        summaries TEXT,
+                        summary_text TEXT,
+                        turns_json TEXT,
+                        session_path TEXT,
+                        content_hash TEXT,
+                        tags TEXT,
+                        outcome TEXT
+                    )
+                    """
         )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_session_docs_run ON session_docs (run_id)"
@@ -153,67 +156,67 @@ def init_sessions_db() -> None:
 
         conn.execute(
             """
-            CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
-                run_id,
-                agent_type,
-                repo_name,
-                content,
-                content='session_docs',
-                content_rowid='id'
-            )
-            """
+                    CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
+                        run_id,
+                        agent_type,
+                        repo_name,
+                        content,
+                        content='session_docs',
+                        content_rowid='id'
+                    )
+                    """
         )
         conn.execute(
             """
-            CREATE TRIGGER IF NOT EXISTS session_docs_ai AFTER INSERT ON session_docs BEGIN
-                INSERT INTO sessions_fts(rowid, run_id, agent_type, repo_name, content)
-                VALUES (new.id, new.run_id, new.agent_type, new.repo_name, new.content);
-            END
-            """
+                    CREATE TRIGGER IF NOT EXISTS session_docs_ai AFTER INSERT ON session_docs BEGIN
+                        INSERT INTO sessions_fts(rowid, run_id, agent_type, repo_name, content)
+                        VALUES (new.id, new.run_id, new.agent_type, new.repo_name, new.content);
+                    END
+                    """
         )
         conn.execute(
             """
-            CREATE TRIGGER IF NOT EXISTS session_docs_ad AFTER DELETE ON session_docs BEGIN
-                INSERT INTO sessions_fts(sessions_fts, rowid, run_id, agent_type, repo_name, content)
-                VALUES ('delete', old.id, old.run_id, old.agent_type, old.repo_name, old.content);
-            END
-            """
+                    CREATE TRIGGER IF NOT EXISTS session_docs_ad AFTER DELETE ON session_docs BEGIN
+                        INSERT INTO sessions_fts(sessions_fts, rowid, run_id, agent_type, repo_name, content)
+                        VALUES ('delete', old.id, old.run_id, old.agent_type, old.repo_name, old.content);
+                    END
+                    """
         )
         conn.execute(
             """
-            CREATE TRIGGER IF NOT EXISTS session_docs_au AFTER UPDATE ON session_docs BEGIN
-                INSERT INTO sessions_fts(sessions_fts, rowid, run_id, agent_type, repo_name, content)
-                VALUES ('delete', old.id, old.run_id, old.agent_type, old.repo_name, old.content);
-                INSERT INTO sessions_fts(rowid, run_id, agent_type, repo_name, content)
-                VALUES (new.id, new.run_id, new.agent_type, new.repo_name, new.content);
-            END
-            """
+                    CREATE TRIGGER IF NOT EXISTS session_docs_au AFTER UPDATE ON session_docs BEGIN
+                        INSERT INTO sessions_fts(sessions_fts, rowid, run_id, agent_type, repo_name, content)
+                        VALUES ('delete', old.id, old.run_id, old.agent_type, old.repo_name, old.content);
+                        INSERT INTO sessions_fts(rowid, run_id, agent_type, repo_name, content)
+                        VALUES (new.id, new.run_id, new.agent_type, new.repo_name, new.content);
+                    END
+                    """
         )
 
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS session_jobs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                run_id TEXT NOT NULL,
-                job_type TEXT NOT NULL DEFAULT 'extract',
-                agent_type TEXT,
-                session_path TEXT,
-                start_time TEXT,
-                status TEXT NOT NULL,
-                attempts INTEGER DEFAULT 0,
-                max_attempts INTEGER DEFAULT 3,
-                trigger TEXT,
-                available_at TEXT NOT NULL,
-                claimed_at TEXT,
-                completed_at TEXT,
-                heartbeat_at TEXT,
-                error TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                repo_path TEXT,
-                UNIQUE(run_id, job_type)
-            )
-            """
+                    CREATE TABLE IF NOT EXISTS session_jobs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        run_id TEXT NOT NULL,
+                        job_type TEXT NOT NULL DEFAULT 'extract',
+                        agent_type TEXT,
+                        session_path TEXT,
+                        start_time TEXT,
+                        status TEXT NOT NULL,
+                        attempts INTEGER DEFAULT 0,
+                        max_attempts INTEGER DEFAULT 3,
+                        trigger TEXT,
+                        available_at TEXT NOT NULL,
+                        claimed_at TEXT,
+                        completed_at TEXT,
+                        heartbeat_at TEXT,
+                        error TEXT,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        repo_path TEXT,
+                        UNIQUE(run_id, job_type)
+                    )
+                    """
         )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_session_jobs_status_available ON session_jobs (status, available_at)"
@@ -227,16 +230,16 @@ def init_sessions_db() -> None:
 
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS service_runs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                job_type TEXT NOT NULL,
-                status TEXT NOT NULL,
-                started_at TEXT NOT NULL,
-                completed_at TEXT,
-                trigger TEXT,
-                details_json TEXT
-            )
-            """
+                    CREATE TABLE IF NOT EXISTS service_runs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        job_type TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        started_at TEXT NOT NULL,
+                        completed_at TEXT,
+                        trigger TEXT,
+                        details_json TEXT
+                    )
+                    """
         )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_service_runs_job ON service_runs (job_type)"
@@ -281,8 +284,8 @@ def index_session_for_fts(
             summary_text = "\n".join(str(item) for item in parsed if item)
 
     try:
+        indexed_at = _iso_now()
         with _connect() as conn:
-            conn.execute("DELETE FROM session_docs WHERE run_id = ?", (run_id,))
             conn.execute(
                 """
                 INSERT INTO session_docs (
@@ -292,6 +295,41 @@ def index_session_for_fts(
                     session_path, content_hash
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                    agent_type = excluded.agent_type,
+                    repo_path = excluded.repo_path,
+                    repo_name = excluded.repo_name,
+                    start_time = excluded.start_time,
+                    content = excluded.content,
+                    indexed_at = excluded.indexed_at,
+                    status = excluded.status,
+                    duration_ms = excluded.duration_ms,
+                    message_count = excluded.message_count,
+                    tool_call_count = excluded.tool_call_count,
+                    error_count = excluded.error_count,
+                    total_tokens = excluded.total_tokens,
+                    summaries = excluded.summaries,
+                    summary_text = CASE
+                        WHEN session_docs.content_hash IS NOT NULL
+                         AND session_docs.content_hash = excluded.content_hash
+                        THEN session_docs.summary_text
+                        ELSE excluded.summary_text
+                    END,
+                    turns_json = excluded.turns_json,
+                    session_path = excluded.session_path,
+                    content_hash = excluded.content_hash,
+                    tags = CASE
+                        WHEN session_docs.content_hash IS NOT NULL
+                         AND session_docs.content_hash = excluded.content_hash
+                        THEN session_docs.tags
+                        ELSE NULL
+                    END,
+                    outcome = CASE
+                        WHEN session_docs.content_hash IS NOT NULL
+                         AND session_docs.content_hash = excluded.content_hash
+                        THEN session_docs.outcome
+                        ELSE NULL
+                    END
                 """,
                 (
                     run_id,
@@ -300,7 +338,7 @@ def index_session_for_fts(
                     repo_name,
                     start_time,
                     content,
-                    _iso_now(),
+                    indexed_at,
                     status,
                     duration_ms,
                     message_count,
@@ -383,6 +421,17 @@ def get_indexed_run_ids() -> set[str]:
     return {str(row.get("run_id")) for row in rows if row.get("run_id")}
 
 
+def _get_indexed_content_hashes() -> dict[str, str | None]:
+    """Return indexed session content hashes keyed by run id."""
+    _ensure_sessions_db_initialized()
+    with _connect() as conn:
+        rows = conn.execute("SELECT run_id, content_hash FROM session_docs").fetchall()
+    return {
+        str(row.get("run_id")): row.get("content_hash")
+        for row in rows
+        if row.get("run_id")
+    }
+
 
 def list_sessions_window(
     *,
@@ -422,12 +471,122 @@ def list_sessions_window(
             SELECT *
             FROM session_docs
             {where_sql}
-            ORDER BY start_time DESC, indexed_at DESC
+            ORDER BY start_time DESC, indexed_at DESC, id DESC
             LIMIT ? OFFSET ?
             """,
             [*params, limit, offset],
         ).fetchall()
     return rows, int((total_row or {}).get("total") or 0)
+
+
+def reset_indexed_sessions_for_project(repo_path: str) -> dict[str, int]:
+    """Delete indexed session and queue state for one registered project path."""
+    _ensure_sessions_db_initialized()
+    normalized = str(Path(repo_path).expanduser().resolve())
+    with _connect() as conn:
+        counts = _count_project_session_state(conn, normalized)
+        _delete_project_session_jobs(conn, normalized)
+        conn.execute("DELETE FROM session_docs WHERE repo_path = ?", (normalized,))
+        conn.commit()
+    return counts
+
+
+def count_indexed_sessions_for_project(repo_path: str) -> dict[str, int]:
+    """Count indexed session and queue state for one registered project path."""
+    _ensure_sessions_db_initialized()
+    normalized = str(Path(repo_path).expanduser().resolve())
+    with _connect() as conn:
+        return _count_project_session_state(conn, normalized)
+
+
+def reset_all_session_state() -> dict[str, int]:
+    """Delete all indexed session, queue, and service-run state."""
+    _ensure_sessions_db_initialized()
+    with _connect() as conn:
+        counts = _count_all_session_state(conn)
+        conn.execute("DELETE FROM session_jobs")
+        conn.execute("DELETE FROM session_docs")
+        conn.execute("DELETE FROM service_runs")
+        conn.commit()
+    return counts
+
+
+def count_all_session_state() -> dict[str, int]:
+    """Count all indexed session, queue, and service-run state."""
+    _ensure_sessions_db_initialized()
+    with _connect() as conn:
+        return _count_all_session_state(conn)
+
+
+def _count_project_session_state(
+    conn: sqlite3.Connection, repo_path: str
+) -> dict[str, int]:
+    """Count session catalog rows that belong to repo_path."""
+    rows = conn.execute(
+        "SELECT run_id FROM session_docs WHERE repo_path = ?",
+        (repo_path,),
+    ).fetchall()
+    run_ids = [str(row.get("run_id") or "") for row in rows if row.get("run_id")]
+    if run_ids:
+        placeholders = ",".join("?" for _ in run_ids)
+        job_count = int(
+            conn.execute(
+                f"SELECT COUNT(1) AS total FROM session_jobs WHERE repo_path = ? OR run_id IN ({placeholders})",
+                (repo_path, *run_ids),
+            ).fetchone()["total"]
+            or 0
+        )
+    else:
+        job_count = int(
+            conn.execute(
+                "SELECT COUNT(1) AS total FROM session_jobs WHERE repo_path = ?",
+                (repo_path,),
+            ).fetchone()["total"]
+            or 0
+        )
+    return {
+        "indexed_sessions": len(run_ids),
+        "session_jobs": job_count,
+        "service_runs": 0,
+    }
+
+
+def _delete_project_session_jobs(conn: sqlite3.Connection, repo_path: str) -> None:
+    """Delete session jobs for repo_path, including jobs linked by indexed run id."""
+    rows = conn.execute(
+        "SELECT run_id FROM session_docs WHERE repo_path = ?",
+        (repo_path,),
+    ).fetchall()
+    run_ids = [str(row.get("run_id") or "") for row in rows if row.get("run_id")]
+    if not run_ids:
+        conn.execute("DELETE FROM session_jobs WHERE repo_path = ?", (repo_path,))
+        return
+    placeholders = ",".join("?" for _ in run_ids)
+    conn.execute(
+        f"DELETE FROM session_jobs WHERE repo_path = ? OR run_id IN ({placeholders})",
+        (repo_path, *run_ids),
+    )
+
+
+def _count_all_session_state(conn: sqlite3.Connection) -> dict[str, int]:
+    """Count all session catalog rows."""
+    indexed_count = int(
+        conn.execute("SELECT COUNT(1) AS total FROM session_docs").fetchone()["total"]
+        or 0
+    )
+    job_count = int(
+        conn.execute("SELECT COUNT(1) AS total FROM session_jobs").fetchone()["total"]
+        or 0
+    )
+    service_run_count = int(
+        conn.execute("SELECT COUNT(1) AS total FROM service_runs").fetchone()["total"]
+        or 0
+    )
+    return {
+        "indexed_sessions": indexed_count,
+        "session_jobs": job_count,
+        "service_runs": service_run_count,
+    }
 
 
 def index_new_sessions(
@@ -442,9 +601,10 @@ def index_new_sessions(
 ) -> int | list[IndexedSession]:
     """Discover and index new sessions from connected adapters.
 
-    Uses ID-based skip to avoid re-processing sessions that are already
-    indexed.  New sessions are returned with ``changed=False``; sessions
-    whose ID was already present are marked ``changed=True``.
+    Known sessions with the same content hash are skipped. New sessions are
+    returned with ``changed=False``; known sessions with a missing or different
+    stored hash are returned with ``changed=True`` so extraction can backfill or
+    refresh their DB context.
 
     When ``skip_unscoped=True`` and ``projects`` is provided, sessions whose
     ``repo_path`` does not map to a registered project are ignored and counted
@@ -460,6 +620,7 @@ def index_new_sessions(
         config.platforms_path
     )
     known_ids = get_indexed_run_ids()
+    known_hashes = _get_indexed_content_hashes()
 
     new_sessions: list[IndexedSession] = []
 
@@ -474,7 +635,7 @@ def index_new_sessions(
                 traces_dir=traces_dir,
                 start=start,
                 end=end,
-                known_run_ids=known_ids,
+                known_run_ids=None,
             )
         except Exception as exc:
             logger.warning(
@@ -484,14 +645,22 @@ def index_new_sessions(
 
         for session in sessions:
             if skip_unscoped:
-                if not projects or match_session_project(session.repo_path, projects) is None:
+                if (
+                    not projects
+                    or match_session_project(session.repo_path, projects) is None
+                ):
                     if stats is not None:
                         stats["skipped_unscoped"] = (
                             int(stats.get("skipped_unscoped") or 0) + 1
                         )
                     continue
 
-            is_changed = session.run_id in known_ids
+            content_hash = getattr(session, "content_hash", None)
+            previous_hash = known_hashes.get(session.run_id)
+            is_known = session.run_id in known_ids
+            if is_known and content_hash is not None and previous_hash == content_hash:
+                continue
+            is_changed = is_known
 
             summaries_json = json.dumps(session.summaries, ensure_ascii=True)
             summary_text = "\n".join(item for item in session.summaries if item)
@@ -515,12 +684,13 @@ def index_new_sessions(
                 summaries=summaries_json,
                 summary_text=summary_text,
                 session_path=session.session_path,
-                content_hash=None,
+                content_hash=content_hash,
             )
             if not indexed:
                 continue
 
             known_ids.add(session.run_id)
+            known_hashes[session.run_id] = content_hash
             new_sessions.append(
                 IndexedSession(
                     run_id=session.run_id,
@@ -629,59 +799,113 @@ def claim_session_jobs(
     limit: int = 20,
     run_ids: list[str] | None = None,
     job_type: str = JOB_TYPE_EXTRACT,
+    claim_order: str = SESSION_JOB_CLAIM_NEWEST,
 ) -> list[dict[str, Any]]:
-    """Claim available jobs and mark claimed rows as running."""
+    """Claim available jobs and mark claimed rows as running.
+
+    Normal backlog extraction claims the newest session per project first so a
+    fresh install surfaces recent corrections quickly.  Explicit historical
+    replay can pass ``claim_order="oldest"`` to preserve chronological
+    extraction semantics.
+    """
     _ensure_sessions_db_initialized()
     limit = max(1, int(limit))
+    if claim_order not in SESSION_JOB_CLAIM_ORDERS:
+        raise ValueError(
+            f"claim_order must be one of {sorted(SESSION_JOB_CLAIM_ORDERS)!r}"
+        )
     now = _utc_now()
     now_iso = now.isoformat()
+    if claim_order == SESSION_JOB_CLAIM_OLDEST:
+        per_project_order = (
+            "CASE WHEN start_time IS NULL OR start_time = '' THEN 1 ELSE 0 END ASC, "
+            "start_time ASC, available_at ASC, id ASC"
+        )
+        global_order = (
+            "CASE WHEN start_time IS NULL OR start_time = '' THEN 1 ELSE 0 END ASC, "
+            "start_time ASC, available_at ASC, id ASC"
+        )
+    else:
+        per_project_order = (
+            "CASE WHEN start_time IS NULL OR start_time = '' THEN 1 ELSE 0 END ASC, "
+            "start_time DESC, available_at ASC, id DESC"
+        )
+        global_order = (
+            "CASE WHEN start_time IS NULL OR start_time = '' THEN 1 ELSE 0 END ASC, "
+            "start_time DESC, available_at ASC, id DESC"
+        )
 
     with _connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
 
-        # Per-project ordered claiming: partition by repo_path, pick only
-        # the oldest non-terminal job per project.  If that oldest job is
-        # dead_letter the project is naturally excluded (blocked).  If it
-        # is failed with a future available_at it is also excluded (paused
-        # until retry window opens).
+        # Per-project ordered claiming: partition by repo_path, pick only one
+        # active job per project using the requested backlog policy.  Normal
+        # sync uses newest-first for first-run quality; chronological replay
+        # callers can request oldest-first explicitly.
         #
-        # IMPORTANT: The run_id filter is applied in the outer query, NOT
-        # inside the CTE.  The CTE must see ALL non-terminal jobs so that
-        # dead_letter blockers are always visible in the partition.
-        # Otherwise a caller could bypass blocking by targeting specific
-        # run_ids that exclude the blocker.
+        # IMPORTANT: The run_id filter is applied before ranking so targeted
+        # historical jobs can be claimed even when newer project rows exist.
+        # Dead-letter blockers are checked per project for backlog claims.
+        # Explicit run_id claims are operator-selected and should stay claimable
+        # so one unrelated dead letter cannot block targeted debugging/retry.
         run_id_filter = ""
         params: list[Any] = [
-            JOB_STATUS_PENDING, JOB_STATUS_FAILED, JOB_STATUS_DEAD_LETTER,
+            JOB_STATUS_DEAD_LETTER,
             job_type,
+            JOB_STATUS_PENDING,
+            JOB_STATUS_FAILED,
+            job_type,
+            now_iso,
         ]
 
-        outer_params: list[Any] = [JOB_STATUS_PENDING, JOB_STATUS_FAILED, now_iso]
         if run_ids:
             placeholders = ",".join("?" for _ in run_ids)
             run_id_filter = f"AND run_id IN ({placeholders})"
-            outer_params.extend(run_ids)
-        outer_params.append(limit)
+            params.extend(run_ids)
+        params.extend([JOB_STATUS_PENDING, JOB_STATUS_FAILED, limit])
 
-        params.extend(outer_params)
+        dead_letter_blocker = ""
+        if not run_ids:
+            dead_letter_blocker = """
+              AND NOT EXISTS (
+                SELECT 1
+                FROM dead_letter_projects
+                WHERE dead_letter_projects.repo_path = ranked_per_project.repo_path
+              )
+            """
+
+        job_columns = (
+            "id, run_id, job_type, agent_type, session_path, start_time, status, "
+            "attempts, max_attempts, trigger, available_at, claimed_at, "
+            "completed_at, heartbeat_at, error, created_at, updated_at, repo_path"
+        )
 
         rows = conn.execute(
             f"""
-            WITH oldest_per_project AS (
-                SELECT *, ROW_NUMBER() OVER (
-                    PARTITION BY repo_path
-                    ORDER BY start_time ASC, available_at ASC, id ASC
-                ) AS rn
+            WITH dead_letter_projects AS (
+                SELECT DISTINCT repo_path
                 FROM session_jobs
-                WHERE status IN (?, ?, ?)
+                WHERE status = ?
                   AND job_type = ?
                   AND repo_path IS NOT NULL AND repo_path != ''
+            ),
+            ranked_per_project AS (
+                SELECT {job_columns}, ROW_NUMBER() OVER (
+                    PARTITION BY repo_path
+                    ORDER BY {per_project_order}
+                ) AS rn
+                FROM session_jobs
+                WHERE status IN (?, ?)
+                  AND job_type = ?
+                  AND available_at <= ?
+                  AND repo_path IS NOT NULL AND repo_path != ''
+                  {run_id_filter}
             )
-            SELECT * FROM oldest_per_project
+            SELECT {job_columns} FROM ranked_per_project
             WHERE rn = 1
               AND status IN (?, ?)
-              AND available_at <= ?
-              {run_id_filter}
+              {dead_letter_blocker}
+            ORDER BY {global_order}
             LIMIT ?
             """,
             params,
@@ -694,19 +918,39 @@ def claim_session_jobs(
             conn.execute(
                 """
                 UPDATE session_jobs
-                SET status = ?, attempts = ?, claimed_at = ?, updated_at = ?
+                SET status = ?, attempts = ?, claimed_at = ?, heartbeat_at = ?, updated_at = ?
                 WHERE id = ?
                 """,
-                (JOB_STATUS_RUNNING, attempts, now_iso, now_iso, job_id),
+                (JOB_STATUS_RUNNING, attempts, now_iso, now_iso, now_iso, job_id),
             )
             row["attempts"] = attempts
             row["status"] = JOB_STATUS_RUNNING
             row["claimed_at"] = now_iso
+            row["heartbeat_at"] = now_iso
             row["updated_at"] = now_iso
             claimed.append(row)
 
         conn.commit()
     return claimed
+
+
+def heartbeat_session_job(run_id: str, *, job_type: str = JOB_TYPE_EXTRACT) -> bool:
+    """Refresh the lease timestamp for one running queue job."""
+    if not run_id:
+        return False
+    _ensure_sessions_db_initialized()
+    now = _iso_now()
+    with _connect() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE session_jobs
+            SET heartbeat_at = ?, updated_at = ?
+            WHERE run_id = ? AND job_type = ? AND status = ?
+            """,
+            (now, now, run_id, job_type, JOB_STATUS_RUNNING),
+        )
+        conn.commit()
+    return int(cursor.rowcount or 0) > 0
 
 
 def complete_session_job(run_id: str, *, job_type: str = JOB_TYPE_EXTRACT) -> bool:
@@ -800,7 +1044,7 @@ def list_stale_running_jobs(
     job_type: str = JOB_TYPE_EXTRACT,
     limit: int = 500,
 ) -> list[dict[str, Any]]:
-    """List running jobs whose lease expired based on ``claimed_at`` age."""
+    """List running jobs whose lease expired based on their latest heartbeat."""
     _ensure_sessions_db_initialized()
     effective_lease = max(1, int(lease_seconds))
     cutoff = (_utc_now() - timedelta(seconds=effective_lease)).isoformat()
@@ -810,7 +1054,8 @@ def list_stale_running_jobs(
             SELECT id, run_id, attempts, claimed_at, repo_path
             FROM session_jobs
             WHERE status = ? AND job_type = ?
-              AND claimed_at IS NOT NULL AND claimed_at <= ?
+              AND COALESCE(heartbeat_at, claimed_at) IS NOT NULL
+              AND COALESCE(heartbeat_at, claimed_at) <= ?
             ORDER BY claimed_at ASC, id ASC
             LIMIT ?
             """,
@@ -841,9 +1086,7 @@ def reap_stale_running_jobs(
             continue
         attempts = max(int(row.get("attempts") or 1), 1)
         retry_backoff_seconds = (
-            max(1, int(retry_backoff_fn(attempts)))
-            if retry_backoff_fn
-            else 60
+            max(1, int(retry_backoff_fn(attempts))) if retry_backoff_fn else 60
         )
         ok = fail_session_job(
             run_id,
@@ -875,16 +1118,18 @@ def queue_health_snapshot(
             """
             SELECT COUNT(1) AS total
             FROM session_jobs
-            WHERE status = ? AND claimed_at IS NOT NULL AND claimed_at <= ?
+            WHERE status = ?
+              AND COALESCE(heartbeat_at, claimed_at) IS NOT NULL
+              AND COALESCE(heartbeat_at, claimed_at) <= ?
             """,
             (JOB_STATUS_RUNNING, cutoff),
         ).fetchone()
         oldest_running_row = conn.execute(
             """
-            SELECT claimed_at
+            SELECT COALESCE(heartbeat_at, claimed_at) AS lease_at
             FROM session_jobs
-            WHERE status = ? AND claimed_at IS NOT NULL
-            ORDER BY claimed_at ASC, id ASC
+            WHERE status = ? AND COALESCE(heartbeat_at, claimed_at) IS NOT NULL
+            ORDER BY COALESCE(heartbeat_at, claimed_at) ASC, id ASC
             LIMIT 1
             """,
             (JOB_STATUS_RUNNING,),
@@ -901,7 +1146,7 @@ def queue_health_snapshot(
         ).fetchone()
 
     stale_running_count = int((stale_row or {}).get("total") or 0)
-    oldest_running_at = _parse_iso((oldest_running_row or {}).get("claimed_at"))
+    oldest_running_at = _parse_iso((oldest_running_row or {}).get("lease_at"))
     oldest_dead_at = _parse_iso((oldest_dead_row or {}).get("updated_at"))
 
     oldest_running_age_seconds = (
@@ -910,9 +1155,7 @@ def queue_health_snapshot(
         else None
     )
     oldest_dead_letter_age_seconds = (
-        max(0, int((now - oldest_dead_at).total_seconds()))
-        if oldest_dead_at
-        else None
+        max(0, int((now - oldest_dead_at).total_seconds())) if oldest_dead_at else None
     )
 
     degraded = stale_running_count > 0 or dead_letter_count > 0
@@ -994,162 +1237,196 @@ def count_session_jobs_by_status() -> dict[str, int]:
 
 
 def _transition_dead_letter(
-	*,
-	new_status: str,
-	reset_attempts: bool,
-	where_clause: str,
-	params: list[Any],
+    *,
+    new_status: str,
+    reset_attempts: bool,
+    where_clause: str,
+    params: list[Any],
 ) -> int:
-	"""Transition dead_letter jobs to *new_status*. Returns rows affected.
+    """Transition dead_letter jobs to *new_status*. Returns rows affected.
 
-	When *reset_attempts* is True the job is fully reset (attempts, error,
-	claimed_at, completed_at, heartbeat_at cleared) for a fresh retry.
-	Otherwise only status, completed_at, and updated_at are touched (skip).
-	"""
-	_ensure_sessions_db_initialized()
-	now = _iso_now()
-	if reset_attempts:
-		sql = f"""
+    When *reset_attempts* is True the job is fully reset (attempts, error,
+    claimed_at, completed_at, heartbeat_at cleared) for a fresh retry.
+    Otherwise only status, completed_at, and updated_at are touched (skip).
+    """
+    _ensure_sessions_db_initialized()
+    now = _iso_now()
+    if reset_attempts:
+        sql = f"""
 			UPDATE session_jobs
 			SET status = ?, attempts = 0, available_at = ?, error = NULL,
 				claimed_at = NULL, completed_at = NULL, heartbeat_at = NULL,
 				updated_at = ?
 			{where_clause}
 		"""
-		all_params = [new_status, now, now, *params]
-	else:
-		sql = f"""
+        all_params = [new_status, now, now, *params]
+    else:
+        sql = f"""
 			UPDATE session_jobs
 			SET status = ?, completed_at = ?, updated_at = ?
 			{where_clause}
 		"""
-		all_params = [new_status, now, now, *params]
-	with _connect() as conn:
-		cursor = conn.execute(sql, all_params)
-		conn.commit()
-	return int(cursor.rowcount or 0)
+        all_params = [new_status, now, now, *params]
+    with _connect() as conn:
+        cursor = conn.execute(sql, all_params)
+        conn.commit()
+    return int(cursor.rowcount or 0)
 
 
 def retry_session_job(
-	run_id: str, *, job_type: str = JOB_TYPE_EXTRACT,
+    run_id: str,
+    *,
+    job_type: str = JOB_TYPE_EXTRACT,
 ) -> bool:
-	"""Reset a dead_letter job to pending for retry.
+    """Reset a dead_letter job to pending for retry.
 
-	The ``AND status = 'dead_letter'`` guard is atomic -- safe against
-	concurrent daemon claiming.
-	"""
-	if not run_id:
-		return False
-	return _transition_dead_letter(
-		new_status=JOB_STATUS_PENDING,
-		reset_attempts=True,
-		where_clause="WHERE run_id = ? AND job_type = ? AND status = ?",
-		params=[run_id, job_type, JOB_STATUS_DEAD_LETTER],
-	) > 0
+    The ``AND status = 'dead_letter'`` guard is atomic -- safe against
+    concurrent daemon claiming.
+    """
+    if not run_id:
+        return False
+    return (
+        _transition_dead_letter(
+            new_status=JOB_STATUS_PENDING,
+            reset_attempts=True,
+            where_clause="WHERE run_id = ? AND job_type = ? AND status = ?",
+            params=[run_id, job_type, JOB_STATUS_DEAD_LETTER],
+        )
+        > 0
+    )
 
 
 def skip_session_job(
-	run_id: str, *, job_type: str = JOB_TYPE_EXTRACT,
+    run_id: str,
+    *,
+    job_type: str = JOB_TYPE_EXTRACT,
 ) -> bool:
-	"""Mark a dead_letter job as done (skipped), unblocking the project."""
-	if not run_id:
-		return False
-	return _transition_dead_letter(
-		new_status=JOB_STATUS_DONE,
-		reset_attempts=False,
-		where_clause="WHERE run_id = ? AND job_type = ? AND status = ?",
-		params=[run_id, job_type, JOB_STATUS_DEAD_LETTER],
-	) > 0
+    """Mark a dead_letter job as done (skipped), unblocking the project."""
+    if not run_id:
+        return False
+    return (
+        _transition_dead_letter(
+            new_status=JOB_STATUS_DONE,
+            reset_attempts=False,
+            where_clause="WHERE run_id = ? AND job_type = ? AND status = ?",
+            params=[run_id, job_type, JOB_STATUS_DEAD_LETTER],
+        )
+        > 0
+    )
 
 
 def retry_project_jobs(
-	repo_path: str, *, job_type: str = JOB_TYPE_EXTRACT,
+    repo_path: str,
+    *,
+    job_type: str = JOB_TYPE_EXTRACT,
 ) -> int:
-	"""Retry all dead_letter jobs for a project. Returns count affected."""
-	if not repo_path:
-		return 0
-	return _transition_dead_letter(
-		new_status=JOB_STATUS_PENDING,
-		reset_attempts=True,
-		where_clause="WHERE repo_path = ? AND job_type = ? AND status = ?",
-		params=[repo_path, job_type, JOB_STATUS_DEAD_LETTER],
-	)
+    """Retry all dead_letter jobs for a project. Returns count affected."""
+    if not repo_path:
+        return 0
+    return _transition_dead_letter(
+        new_status=JOB_STATUS_PENDING,
+        reset_attempts=True,
+        where_clause="WHERE repo_path = ? AND job_type = ? AND status = ?",
+        params=[repo_path, job_type, JOB_STATUS_DEAD_LETTER],
+    )
 
 
 def skip_project_jobs(
-	repo_path: str, *, job_type: str = JOB_TYPE_EXTRACT,
+    repo_path: str,
+    *,
+    job_type: str = JOB_TYPE_EXTRACT,
 ) -> int:
-	"""Skip all dead_letter jobs for a project. Returns count affected."""
-	if not repo_path:
-		return 0
-	return _transition_dead_letter(
-		new_status=JOB_STATUS_DONE,
-		reset_attempts=False,
-		where_clause="WHERE repo_path = ? AND job_type = ? AND status = ?",
-		params=[repo_path, job_type, JOB_STATUS_DEAD_LETTER],
-	)
+    """Skip all dead_letter jobs for a project. Returns count affected."""
+    if not repo_path:
+        return 0
+    return _transition_dead_letter(
+        new_status=JOB_STATUS_DONE,
+        reset_attempts=False,
+        where_clause="WHERE repo_path = ? AND job_type = ? AND status = ?",
+        params=[repo_path, job_type, JOB_STATUS_DEAD_LETTER],
+    )
+
+
+def retry_all_dead_letter_jobs(*, job_type: str = JOB_TYPE_EXTRACT) -> int:
+    """Retry all dead_letter jobs without applying display-list pagination."""
+    return _transition_dead_letter(
+        new_status=JOB_STATUS_PENDING,
+        reset_attempts=True,
+        where_clause="WHERE job_type = ? AND status = ?",
+        params=[job_type, JOB_STATUS_DEAD_LETTER],
+    )
+
+
+def skip_all_dead_letter_jobs(*, job_type: str = JOB_TYPE_EXTRACT) -> int:
+    """Skip all dead_letter jobs without applying display-list pagination."""
+    return _transition_dead_letter(
+        new_status=JOB_STATUS_DONE,
+        reset_attempts=False,
+        where_clause="WHERE job_type = ? AND status = ?",
+        params=[job_type, JOB_STATUS_DEAD_LETTER],
+    )
 
 
 def resolve_run_id_prefix(prefix: str) -> str | None:
-	"""Resolve a short prefix to a full run_id.
+    """Resolve a short prefix to a full run_id.
 
-	Returns the full run_id if exactly one match, None otherwise.
-	Requires at least 6 characters to avoid overly broad matches.
-	"""
-	if not prefix or len(prefix) < 6:
-		return None
-	_ensure_sessions_db_initialized()
-	# Escape LIKE wildcards so user-supplied % or _ are matched literally.
-	escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-	with _connect() as conn:
-		rows = conn.execute(
-			"SELECT run_id FROM session_jobs WHERE run_id LIKE ? ESCAPE '\\' LIMIT 2",
-			(escaped + "%",),
-		).fetchall()
-	if len(rows) == 1:
-		return str(rows[0]["run_id"])
-	return None
+    Returns the full run_id if exactly one match, None otherwise.
+    Requires at least 6 characters to avoid overly broad matches.
+    """
+    if not prefix or len(prefix) < 6:
+        return None
+    _ensure_sessions_db_initialized()
+    # Escape LIKE wildcards so user-supplied % or _ are matched literally.
+    escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT run_id FROM session_jobs WHERE run_id LIKE ? ESCAPE '\\' LIMIT 2",
+            (escaped + "%",),
+        ).fetchall()
+    if len(rows) == 1:
+        return str(rows[0]["run_id"])
+    return None
 
 
 def list_queue_jobs(
-	*,
-	status_filter: str | None = None,
-	project_filter: str | None = None,
-	project_exact: bool = False,
-	failed_only: bool = False,
-	limit: int = 50,
+    *,
+    status_filter: str | None = None,
+    project_filter: str | None = None,
+    project_exact: bool = False,
+    failed_only: bool = False,
+    limit: int = 50,
 ) -> list[dict[str, Any]]:
-	"""List queue jobs with optional filters for CLI display.
+    """List queue jobs with optional filters for CLI display.
 
-	When *failed_only* is True, shows only failed + dead_letter jobs.
-	"""
-	_ensure_sessions_db_initialized()
-	where: list[str] = []
-	params: list[Any] = []
+    When *failed_only* is True, shows only failed + dead_letter jobs.
+    """
+    _ensure_sessions_db_initialized()
+    where: list[str] = []
+    params: list[Any] = []
 
-	if failed_only:
-		where.append("status IN (?, ?)")
-		params.extend([JOB_STATUS_FAILED, JOB_STATUS_DEAD_LETTER])
-	elif status_filter:
-		where.append("status = ?")
-		params.append(status_filter)
-	else:
-		# Default: show non-done jobs
-		where.append("status != ?")
-		params.append(JOB_STATUS_DONE)
+    if failed_only:
+        where.append("status IN (?, ?)")
+        params.extend([JOB_STATUS_FAILED, JOB_STATUS_DEAD_LETTER])
+    elif status_filter:
+        where.append("status = ?")
+        params.append(status_filter)
+    else:
+        # Default: show non-done jobs
+        where.append("status != ?")
+        params.append(JOB_STATUS_DONE)
 
-	if project_filter:
-		if project_exact:
-			where.append("repo_path = ?")
-			params.append(project_filter)
-		else:
-			where.append("repo_path LIKE ?")
-			params.append(f"%{project_filter}%")
+    if project_filter:
+        if project_exact:
+            where.append("repo_path = ?")
+            params.append(project_filter)
+        else:
+            where.append("repo_path LIKE ?")
+            params.append(f"%{project_filter}%")
 
-	where_sql = f"WHERE {' AND '.join(where)}" if where else ""
-	with _connect() as conn:
-		rows = conn.execute(
-			f"""
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+    with _connect() as conn:
+        rows = conn.execute(
+            f"""
 			SELECT run_id, status, agent_type, repo_path, start_time,
 				   error, attempts, max_attempts, updated_at
 			FROM session_jobs
@@ -1157,70 +1434,70 @@ def list_queue_jobs(
 			ORDER BY start_time ASC, id ASC
 			LIMIT ?
 			""",
-			[*params, max(1, limit)],
-		).fetchall()
-	return rows
+            [*params, max(1, limit)],
+        ).fetchall()
+    return rows
 
 
 def count_unscoped_sessions_by_agent(
-	*,
-	projects: dict[str, str],
+    *,
+    projects: dict[str, str],
 ) -> dict[str, int]:
-	"""Count indexed sessions that do not map to any registered project."""
-	_ensure_sessions_db_initialized()
-	with _connect() as conn:
-		rows = conn.execute(
-			"""
+    """Count indexed sessions that do not map to any registered project."""
+    _ensure_sessions_db_initialized()
+    with _connect() as conn:
+        rows = conn.execute(
+            """
 			SELECT agent_type, repo_path
 			FROM session_docs
 			"""
-		).fetchall()
+        ).fetchall()
 
-	counts: dict[str, int] = {}
-	for row in rows:
-		repo_path = str(row.get("repo_path") or "").strip()
-		if match_session_project(repo_path, projects) is not None:
-			continue
-		agent = str(row.get("agent_type") or "unknown")
-		counts[agent] = counts.get(agent, 0) + 1
-	return counts
+    counts: dict[str, int] = {}
+    for row in rows:
+        repo_path = str(row.get("repo_path") or "").strip()
+        if match_session_project(repo_path, projects) is not None:
+            continue
+        agent = str(row.get("agent_type") or "unknown")
+        counts[agent] = counts.get(agent, 0) + 1
+    return counts
 
 
 def list_unscoped_sessions(
-	*,
-	projects: dict[str, str],
-	limit: int = 50,
+    *,
+    projects: dict[str, str],
+    limit: int = 50,
 ) -> list[dict[str, Any]]:
-	"""List indexed sessions that do not map to any registered project."""
-	_ensure_sessions_db_initialized()
-	with _connect() as conn:
-		rows = conn.execute(
-			"""
+    """List indexed sessions that do not map to any registered project."""
+    _ensure_sessions_db_initialized()
+    with _connect() as conn:
+        rows = conn.execute(
+            """
 			SELECT run_id, agent_type, repo_path, start_time, session_path
 			FROM session_docs
 			ORDER BY start_time DESC, indexed_at DESC
 			LIMIT ?
 			""",
-			(max(1, int(limit)) * 10,),
-		).fetchall()
+            (max(1, int(limit)) * 10,),
+        ).fetchall()
 
-	items: list[dict[str, Any]] = []
-	for row in rows:
-		repo_path = str(row.get("repo_path") or "").strip()
-		if match_session_project(repo_path, projects) is not None:
-			continue
-		items.append(
-			{
-				"run_id": row.get("run_id"),
-				"agent_type": row.get("agent_type"),
-				"repo_path": repo_path or None,
-				"start_time": row.get("start_time"),
-				"session_path": row.get("session_path"),
-			}
-		)
-		if len(items) >= max(1, int(limit)):
-			break
-	return items
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        repo_path = str(row.get("repo_path") or "").strip()
+        if match_session_project(repo_path, projects) is not None:
+            continue
+        items.append(
+            {
+                "run_id": row.get("run_id"),
+                "agent_type": row.get("agent_type"),
+                "repo_path": repo_path or None,
+                "start_time": row.get("start_time"),
+                "session_path": row.get("session_path"),
+            }
+        )
+        if len(items) >= max(1, int(limit)):
+            break
+    return items
 
 
 def record_service_run(

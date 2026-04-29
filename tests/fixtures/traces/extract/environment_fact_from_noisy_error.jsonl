@@ -1,0 +1,7 @@
+{"role":"user","content":"Why do the PDF export tests keep failing on CI? Keep only the lasting fact if there is one. Do not store the debugging transcript."}
+{"role":"assistant","content":"I will inspect the failing command output and the environment assumptions, then keep only the reusable fact."}
+{"role":"assistant","content":"Command output: playwright install --with-deps completed, but the PDF export path still failed with `OSError: wkhtmltopdf not found`."}
+{"role":"assistant","content":"I checked the CI image and the local Docker setup. The local dev container has wkhtmltopdf installed, but the CI job image does not."}
+{"role":"assistant","content":"There was more noise in the trace too: one temporary debug print, one renamed helper, a retried command, and a shorter assertion. Those are not durable context."}
+{"role":"user","content":"The lasting fact is the environment dependency: PDF export workflows depend on wkhtmltopdf being installed in the runtime image."}
+{"role":"assistant","content":"Agreed. The record should be the dependency fact, not the raw error string or the retried command."}

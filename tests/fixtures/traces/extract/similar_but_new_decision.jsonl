@@ -1,0 +1,6 @@
+{"role": "user", "content": "Check whether this session adds a new durable record or just refines an old one."}
+{"role": "assistant", "content": "I will keep only the durable rule and ignore the patch details."}
+{"role": "user", "content": "Earlier we already had a record about retry budget living in job metadata. This session is different."}
+{"role": "assistant", "content": "The new issue is restart recovery after lease handoff."}
+{"role": "user", "content": "Durable decision: authoritative lease ownership must live in the persisted queue row so restart and failover can recover it. Local rename and debug-print cleanup were just implementation noise."}
+{"role": "assistant", "content": "Understood. The durable point is queue-row lease ownership, not retry budget wording."}

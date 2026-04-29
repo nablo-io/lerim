@@ -1,0 +1,6 @@
+{"role":"user","content":"Figure out what matters from this validation run. Keep the memory useful for future agents, but do not store the command transcript."}
+{"role":"assistant","content":"I started with a fresh database, rebuilt the service image, and checked the daemon status after startup."}
+{"role":"assistant","content":"The first status check looked like a runtime failure because project sessions were indexed but every configured project root was absent inside the service container."}
+{"role":"assistant","content":"The queue details, rebuild timing, and individual command attempts are local validation noise. The reusable requirement is that the service container must see registered project roots at their configured absolute paths."}
+{"role":"assistant","content":"I verified the runtime behavior after updating the compose generation: registered project roots are mounted read-only at the same absolute paths used by host-side session metadata."}
+{"role":"assistant","content":"Future agents should remember the setup requirement, not the one-run queue state, status timestamps, or the exact failed diagnostics."}

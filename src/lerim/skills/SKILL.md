@@ -1,46 +1,62 @@
 ---
 name: lerim
-description: Persistent memory for coding agents. Query past decisions and learnings before starting work. Lerim watches your sessions, extracts what matters, and makes it available across every future session.
+description: Query Lerim's persistent project context before coding. Use it to check prior decisions, constraints, preferences, and historical context through exact queries or synthesized answers.
 ---
 
 # Lerim
 
-Lerim gives you persistent memory across sessions. It watches your conversations, extracts decisions and learnings, and stores them as plain markdown files you can query anytime.
+Use this skill when you need project context before or during coding work.
 
-## Start here
+Lerim stores durable context from past agent sessions and exposes it through a small CLI/API surface. The important distinction is:
 
-At the beginning of each session, read `.lerim/memory/index.md`. It is a categorized
-table of contents listing every memory file with a one-line description and a link.
-From there, read individual `.md` files for full context on any topic that is relevant
-to your current task.
-
-This works without a server — it is just reading files from disk.
+- `lerim query` for exact deterministic retrieval
+- `lerim ask` for retrieval plus synthesis
+- `lerim status` for runtime health, project counts, and queue state
 
 ## When to use
 
-- **Before starting a task**: read `index.md`, then drill into relevant memory files.
-- **When making a decision**: check if a similar decision was already made.
-- **When debugging**: look up past learnings about the area you're working in.
+- Before starting a task in a repo with existing Lerim history
+- When a decision, constraint, or preference may already have precedent
+- When debugging and you want prior facts or earlier decisions
+- When you need current vs historical truth from stored records
 
-## Commands
+## Fast path
+
+Start with the smallest tool that answers the question:
+
+1. Use `lerim query` for counts, latest rows, date windows, and exact inspection.
+2. Use `lerim ask` when you need a synthesized explanation or semantic retrieval.
+3. Use `lerim status` or `lerim queue` when the question is operational rather than semantic.
+
+Examples:
 
 ```bash
-lerim ask "Why did we choose SQLite?"   # LLM-synthesized answer from memories (requires server)
-lerim memory list                       # list all memories (no server needed)
+lerim query records count --kind decision
+lerim query records list --kind constraint --limit 10
+lerim ask "What do we already know about the auth flow?"
+lerim ask "What changed recently about storage and why?"
+lerim status --json
 ```
 
-Use `lerim ask` when you need a synthesized answer across multiple memories.
-Use `lerim memory list` to browse all memories by recency.
+## Working rules
 
-For most tasks, reading `index.md` + individual memory files directly is faster
-and does not require the server to be running.
+- Prefer `query` over `ask` when the question is exact.
+- Prefer `ask` over manual browsing when the question needs synthesis across records.
+- Treat Lerim as the context layer, not as a place to manually edit durable state during normal coding work.
+- Query Lerim through its CLI/API instead of inspecting storage directly.
+- If the runtime is down, say so plainly and use the repo/codebase directly rather than pretending Lerim answered.
 
-## How it works
+## Operational notes
 
-Lerim runs in the background (via `lerim up` or `lerim serve`). It syncs your agent sessions, extracts decisions and learnings into `.lerim/memory/`, and refines them over time. Memories are plain markdown with YAML frontmatter.
+- `lerim up` runs the local service in Docker.
+- `lerim serve` runs the local API directly without Docker.
+- `lerim dashboard` is only a transition message; the hosted UI lives on Lerim Cloud.
+- Local durable context is stored in the global SQLite store.
 
-Your job is to read and query existing memories when they are relevant. You do not write memories — Lerim handles extraction automatically. Setup (`pip install lerim`, `lerim init`, `lerim project add .`, `lerim up`) is done by the user before you start.
+## Read more when needed
 
-## References
+Open [cli-reference.md](cli-reference.md) only when you need:
 
-- Full CLI reference: [cli-reference.md](cli-reference.md)
+- full command syntax
+- runtime vs host-only command behavior
+- less common commands like `queue`, `retry`, `skip`, `skill`, or `auth`

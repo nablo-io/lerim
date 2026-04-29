@@ -1,0 +1,5 @@
+case: pull_records_updates_existing_record_and_appends_version
+expected:
+  kind: "decision"
+  latest_change_kind: "update"
+  version_count: 2

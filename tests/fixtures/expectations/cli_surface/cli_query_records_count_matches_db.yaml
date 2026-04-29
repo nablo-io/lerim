@@ -1,0 +1,5 @@
+case: cli_query_records_count_matches_db
+expected:
+  count: 2
+  entity: "records"
+  scope: "project"

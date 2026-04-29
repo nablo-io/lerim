@@ -1,0 +1,26 @@
+case: clear_decision_with_noise
+summary: Keep one clear DB-split decision and ignore implementation noise.
+
+expected:
+  episode_count: 1
+  durable_count: 1
+  decision_count: 1
+  must_use_tools:
+    - read_trace
+    - save_context
+  must_not_use_tools:
+    - prune_trace_reads
+    - revise_context
+  decision_text_must_include_any:
+    - separate
+    - two sqlite
+    - two databases
+  decision_text_must_include_all:
+    - context
+    - session
+  decision_text_must_not_include:
+    - rename
+    - spinner
+    - debug print
+    - temporary debug
+    - local variable

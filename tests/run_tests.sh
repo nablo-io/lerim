@@ -22,13 +22,8 @@ Options:
   --llm-provider PROVIDER
   --llm-model MODEL
   --llm-base-url URL
-  --llm-fallback-provider PROVIDER
-  --llm-fallback-model MODEL
-  --llm-fallback-base-url URL
   --agent-provider PROVIDER
   --agent-model MODEL
-  --agent-fallback-provider PROVIDER
-  --agent-fallback-model MODEL
 
 
 Environment overrides are also supported (e.g. LERIM_LLM_PROVIDER).
@@ -67,14 +62,9 @@ shift || true
 LLM_PROVIDER=${LLM_PROVIDER:-openrouter}
 LLM_MODEL=${LLM_MODEL:-openai/gpt-5-nano}
 LLM_BASE_URL=${LLM_BASE_URL:-}
-LLM_FALLBACK_PROVIDER=${LLM_FALLBACK_PROVIDER:-openrouter}
-LLM_FALLBACK_MODEL=${LLM_FALLBACK_MODEL:-x-ai/grok-4.1-fast}
-LLM_FALLBACK_BASE_URL=${LLM_FALLBACK_BASE_URL:-}
 
 AGENT_PROVIDER=${AGENT_PROVIDER:-minimax}
 AGENT_MODEL=${AGENT_MODEL:-MiniMax-M2.5}
-AGENT_FALLBACK_PROVIDER=${AGENT_FALLBACK_PROVIDER:-zai}
-AGENT_FALLBACK_MODEL=${AGENT_FALLBACK_MODEL:-glm-4.7}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -84,20 +74,10 @@ while [[ $# -gt 0 ]]; do
     --llm-model=*) LLM_MODEL="${1#*=}"; shift ;;
     --llm-base-url) LLM_BASE_URL="$2"; shift 2 ;;
     --llm-base-url=*) LLM_BASE_URL="${1#*=}"; shift ;;
-    --llm-fallback-provider) LLM_FALLBACK_PROVIDER="$2"; shift 2 ;;
-    --llm-fallback-provider=*) LLM_FALLBACK_PROVIDER="${1#*=}"; shift ;;
-    --llm-fallback-model) LLM_FALLBACK_MODEL="$2"; shift 2 ;;
-    --llm-fallback-model=*) LLM_FALLBACK_MODEL="${1#*=}"; shift ;;
-    --llm-fallback-base-url) LLM_FALLBACK_BASE_URL="$2"; shift 2 ;;
-    --llm-fallback-base-url=*) LLM_FALLBACK_BASE_URL="${1#*=}"; shift ;;
     --agent-provider) AGENT_PROVIDER="$2"; shift 2 ;;
     --agent-provider=*) AGENT_PROVIDER="${1#*=}"; shift ;;
     --agent-model) AGENT_MODEL="$2"; shift 2 ;;
     --agent-model=*) AGENT_MODEL="${1#*=}"; shift ;;
-    --agent-fallback-provider) AGENT_FALLBACK_PROVIDER="$2"; shift 2 ;;
-    --agent-fallback-provider=*) AGENT_FALLBACK_PROVIDER="${1#*=}"; shift ;;
-    --agent-fallback-model) AGENT_FALLBACK_MODEL="$2"; shift 2 ;;
-    --agent-fallback-model=*) AGENT_FALLBACK_MODEL="${1#*=}"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1"; usage; exit 1 ;;
   esac
@@ -116,9 +96,7 @@ print_kv "Group" "$GROUP"
 print_kv "Python" "$(command -v python || echo 'not found')"
 print_kv "Venv" "${VIRTUAL_ENV:-not active}"
 print_kv "LLM" "provider=$LLM_PROVIDER model=$LLM_MODEL"
-print_kv "LLM fallback" "provider=$LLM_FALLBACK_PROVIDER model=$LLM_FALLBACK_MODEL"
 print_kv "Agent" "provider=$AGENT_PROVIDER model=$AGENT_MODEL"
-print_kv "Agent fallback" "provider=$AGENT_FALLBACK_PROVIDER model=${AGENT_FALLBACK_MODEL:-default}"
 
 key_status() {
   local key="$1"
@@ -141,9 +119,18 @@ print_kv "OPENCODE_API_KEY" "$(key_status OPENCODE_API_KEY)"
 # Only API keys are read from env (ANTHROPIC_API_KEY, OPENROUTER_API_KEY, ZAI_API_KEY).
 # Tests use LERIM_CONFIG env var to point at tests/test_config.toml (auto-applied by conftest.py).
 
-# --- Ensure pytest is available ---
-if ! command -v pytest >/dev/null 2>&1; then
-  echo "ERROR: pytest not found. Activate venv or install: uv pip install -e '.[dev]'"
+# --- Build pytest command ---
+PYTEST_CMD=()
+if [[ -n "${VIRTUAL_ENV:-}" ]] && command -v python >/dev/null 2>&1; then
+  PYTEST_CMD=(python -m pytest)
+elif command -v uv >/dev/null 2>&1; then
+  PYTEST_CMD=(uv run pytest)
+elif command -v python >/dev/null 2>&1; then
+  PYTEST_CMD=(python -m pytest)
+elif command -v python3 >/dev/null 2>&1; then
+  PYTEST_CMD=(python3 -m pytest)
+else
+  echo "ERROR: no pytest runner found. Activate a venv or install uv."
   exit 1
 fi
 
@@ -152,19 +139,7 @@ cd "$ROOT_DIR"
 
 run_unit() {
   print_section "Unit tests"
-  python -m pytest tests/unit/ -x -q
-}
-
-run_pytest_allow_empty() {
-  set +e
-  python -m pytest "$@"
-  status=$?
-  set -e
-  if [[ $status -eq 5 ]]; then
-    echo "No tests collected for selector ($*); treating as pass."
-    return 0
-  fi
-  return $status
+  "${PYTEST_CMD[@]}" tests/unit/ -x -q
 }
 
 run_integration() {
@@ -172,19 +147,19 @@ run_integration() {
   export LERIM_INTEGRATION=1
   export LERIM_LLM_INTEGRATION=1
   export LERIM_EMBEDDINGS_INTEGRATION=1
-  run_pytest_allow_empty tests/integration/ -n 4
+  "${PYTEST_CMD[@]}" tests/integration/ -q -n 1
 }
 
 run_e2e() {
   print_section "End-to-end tests"
   export LERIM_E2E=1
-  run_pytest_allow_empty tests/e2e/ -n 4
+  "${PYTEST_CMD[@]}" tests/e2e/ -q -n 1
 }
 
 run_smoke() {
   print_section "Smoke tests"
   export LERIM_SMOKE=1
-  run_pytest_allow_empty tests/smoke/ -n 4
+  "${PYTEST_CMD[@]}" tests/smoke/ -q -n 1
 }
 
 run_lint() {

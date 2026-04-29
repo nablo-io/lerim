@@ -1,0 +1,3 @@
+case: pull_records_preserves_named_project_scope
+expected:
+  target_project: "beta"

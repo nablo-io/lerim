@@ -1,0 +1,20 @@
+case: verbose_episode_compressed
+summary: Rewrite a verbose active episode into a compact recap instead of archiving it.
+
+expected:
+  must_use_tools:
+    - get_context
+    - revise_context
+  must_not_use_tools:
+    - archive_context
+  max_body_sentences: 4
+  episode_text_must_include_any:
+    - boundary
+    - persistence
+    - product
+    - queue
+    - storage
+    - state
+  episode_text_must_not_include:
+    - confusion to clarity
+    - temporary implementation concerns

@@ -1,9 +1,10 @@
 # Sync & Maintain
 
-Lerim has two runtime paths that keep your memory store accurate and clean:
+Lerim has two runtime paths that keep the shared context store accurate and
+clean:
 
-- **Sync** (hot path) -- processes new agent sessions and extracts memories
-- **Maintain** (cold path) -- refines existing memories offline
+- **Sync** (hot path) -- processes new agent sessions and extracts context records
+- **Maintain** (cold path) -- refines existing records offline
 
 Both run automatically in the daemon loop and can also be triggered manually.
 Both use the same PydanticAI runtime and the `[roles.agent]` role model.
@@ -12,13 +13,21 @@ Both use the same PydanticAI runtime and the `[roles.agent]` role model.
 
 ## Sync path
 
-The sync path turns raw agent session transcripts into structured memories:
+The sync path turns raw agent session transcripts into structured context
+records:
 
 1. **Discover** -- adapters scan session directories for new sessions within the time window
 2. **Index** -- new sessions are cataloged in `sessions.sqlite3`
 3. **Match to project** -- sessions matching a registered project are enqueued; unmatched sessions are indexed but not extracted
 4. **Compact** -- traces are compacted (tool outputs stripped) and cached
-5. **Extract flow** -- the PydanticAI extraction agent (`[roles.agent]`) reads the trace and uses memory tools (`read`, `grep`, `note`, `prune`, `write`, `edit`, `verify_index`) to write or edit memories, update `index.md`, and save a session summary
+5. **Extract flow** -- the PydanticAI extraction agent (`[roles.agent]`) reads the trace and uses `read_trace`, `note_trace_findings`, `prune_trace_reads`, `search_context`, `get_context`, `save_context`, and `revise_context` to write one episode record plus a small number of durable records into `~/.lerim/context.sqlite3`
+
+### Record quality contract
+
+- Durable records should store one reusable rule, decision, fact, preference, constraint, or reference.
+- Durable records should not read like meeting notes or session recap prose.
+- Episode records are short session recaps only. They should stay compact and should not become the main place where durable context lives.
+- Good durable writing is closer to "what is true, why it matters, how to apply it" than to "the user asked, then the agent did X".
 
 ### Time window
 
@@ -36,19 +45,22 @@ lerim sync --max-sessions 10         # limit batch size
 ```
 
 !!! info "Processing order"
-    Sessions are processed in **chronological order** (oldest-first) so that later sessions can correctly update memories from earlier ones.
+    Normal backlog sync claims the **newest available session per project first** so a fresh install surfaces recent corrections quickly. Historical replay paths can still request oldest-first ordering from the catalog API when chronological reconstruction is required.
 
 ---
 
 ## Maintain path
 
-The maintain path runs offline refinement over stored memories, iterating over all registered projects:
+The maintain path runs offline refinement over stored context records,
+iterating over all registered projects:
 
-1. **Scan** -- `scan()` and optional reads of summaries / `index.md`
-2. **Merge duplicates** -- edit or archive redundant markdown files
-3. **Archive low-value** -- `archive()` moves files to `memory/archived/`
-4. **Consolidate** -- combine related topics via `edit()` / `write()`
-5. **Re-index** -- `verify_index()` checks consistency; the agent uses `edit("index.md", ...)` to refresh the memory index when needed
+1. **Browse** -- `list_context()` scans active records in one project scope with exact ordering and filters
+2. **Search** -- `search_context()` finds semantic duplicate candidates or topic-related records when needed
+3. **Inspect** -- `get_context()` loads only the records that may change
+4. **Refine or supersede** -- `revise_context()` and `supersede_context()` improve or replace redundant truth
+5. **Archive low-value** -- `archive_context()` moves junk or routine rows to archived status in the DB
+6. **Keep the store lean** -- the maintainer prefers stronger durable records over a noisy pile of routine episodes
+7. **Compress weak records** -- when records are too verbose or read like session reports, the maintainer should rewrite them into compact reusable context instead of preserving the recap style
 
 ### Request turn limits
 
@@ -100,13 +112,13 @@ lerim maintain --dry-run             # preview without writing
 
     [:octicons-arrow-right-24: How it works](how-it-works.md)
 
--   :material-brain:{ .lg .middle } **Memory Model**
+-   :material-brain:{ .lg .middle } **Context Model**
 
     ---
 
     Types, layout, and lifecycle.
 
-    [:octicons-arrow-right-24: Memory model](memory-model.md)
+    [:octicons-arrow-right-24: Context model](context-model.md)
 
 -   :material-tune:{ .lg .middle } **Configuration**
 

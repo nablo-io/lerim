@@ -1,0 +1,27 @@
+question: "What do we know about pgvector?"
+seed_records:
+  - session_id: "seed-near-miss-1"
+    record_id: "rec_sqlite_vec"
+    kind: "fact"
+    title: "sqlite-vec powers local vector search"
+    body: "Local vector search uses sqlite-vec plus embeddings and FTS5 for recall."
+  - session_id: "seed-near-miss-2"
+    record_id: "rec_rrf"
+    kind: "decision"
+    title: "Use sqlite-vec plus FTS retrieval"
+    body: "Combine sqlite-vec and FTS retrieval instead of remote vector infrastructure."
+    decision: "Use sqlite-vec plus FTS retrieval."
+    why: "It keeps local search simple and portable."
+expected:
+  must_use_tools:
+    - search_context
+  must_not_use_tools: []
+  answer_must_include_any:
+    - no direct stored support
+    - no durable record
+    - do not have a stored record
+    - no mention of pgvector
+    - no records referencing pgvector
+  answer_must_not_include:
+    - pgvector is used
+    - pgvector powers

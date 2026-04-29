@@ -6,6 +6,7 @@ import json
 import os
 import sqlite3
 import socket
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -13,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from lerim.config.project_scope import match_session_project
+from lerim.config.logging import log_file_path
 from lerim.config.settings import get_config, reload_config
 from lerim.server.runtime import LerimRuntime
 from lerim.sessions.catalog import (
@@ -23,113 +25,129 @@ from lerim.sessions.catalog import (
     enqueue_session_job,
     fail_session_job,
     fetch_session_doc,
+    heartbeat_session_job,
     index_new_sessions,
     reap_stale_running_jobs,
     record_service_run,
 )
 
 
-ACTIVITY_LOG_PATH = Path.home() / ".lerim" / "activity.log"
+ACTIVITY_LOG_PATH: Path | None = None
 
 
 def log_activity(
-	op: str, project: str, stats: str, duration_s: float, cost_usd: float = 0.0
+    op: str, project: str, stats: str, duration_s: float, cost_usd: float = 0.0
 ) -> None:
-	"""Append one line to ~/.lerim/activity.log.
+    """Append one line to the dated activity log.
 
-	Format: ``2026-03-01 14:23:05 | sync | myproject | 3 new, 1 updated | $0.0042 | 4.2s``
-	"""
-	ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-	cost_str = f"${cost_usd:.4f}"
-	line = f"{ts} | {op:<8} | {project} | {stats} | {cost_str} | {duration_s:.1f}s\n"
-	ACTIVITY_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-	with open(ACTIVITY_LOG_PATH, "a") as f:
-		f.write(line)
+    Format: ``2026-03-01 14:23:05 | sync | myproject | 3 new, 1 updated | $0.0042 | 4.2s``
+    """
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    cost_str = f"${cost_usd:.4f}"
+    line = f"{ts} | {op:<8} | {project} | {stats} | {cost_str} | {duration_s:.1f}s\n"
+    log_path = ACTIVITY_LOG_PATH or log_file_path("activity.log")
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "a") as f:
+        f.write(line)
 
 
 @dataclass
 class OperationResult:
-	"""Unified result payload for sync and maintain operations."""
+    """Unified result payload for sync and maintain operations."""
 
-	operation: str  # "sync" or "maintain"
-	status: str  # "completed", "partial", "failed", "lock_busy"
-	trigger: str  # "daemon", "manual", "api"
+    operation: str  # "sync" or "maintain"
+    status: str  # "completed", "partial", "failed", "lock_busy"
+    trigger: str  # "daemon", "manual", "api"
 
-	# Sync-specific
-	indexed_sessions: int = 0
-	queued_sessions: int = 0
-	extracted_sessions: int = 0
-	skipped_sessions: int = 0
-	skipped_unscoped: int = 0
-	failed_sessions: int = 0
-	run_ids: list[str] = field(default_factory=list)
-	window_start: str | None = None
-	window_end: str | None = None
+    # Sync-specific
+    indexed_sessions: int = 0
+    queued_sessions: int = 0
+    extracted_sessions: int = 0
+    skipped_sessions: int = 0
+    skipped_unscoped: int = 0
+    failed_sessions: int = 0
+    run_ids: list[str] = field(default_factory=list)
+    window_start: str | None = None
+    window_end: str | None = None
 
-	# Maintain-specific
-	projects: dict[str, Any] = field(default_factory=dict)
-	maintain_metrics: dict[str, Any] = field(default_factory=dict)
+    # Maintain-specific
+    projects: dict[str, Any] = field(default_factory=dict)
+    maintain_metrics: dict[str, Any] = field(default_factory=dict)
 
-	# Shared structured telemetry (v1)
-	metrics_version: int = 1
-	sync_metrics: dict[str, Any] = field(default_factory=dict)
-	projects_metrics: dict[str, Any] = field(default_factory=dict)
-	events: list[dict[str, Any]] = field(default_factory=list)
+    # Shared structured telemetry (v1)
+    metrics_version: int = 1
+    sync_metrics: dict[str, Any] = field(default_factory=dict)
+    projects_metrics: dict[str, Any] = field(default_factory=dict)
+    events: list[dict[str, Any]] = field(default_factory=list)
 
-	# Shared
-	cost_usd: float = 0.0
-	error: str | None = None
-	dry_run: bool = False
+    # Shared
+    cost_usd: float = 0.0
+    error: str | None = None
+    dry_run: bool = False
 
-	def to_details_json(self) -> dict[str, Any]:
-		"""Serialize for service_runs.details_json storage.
+    def to_details_json(self) -> dict[str, Any]:
+        """Serialize for service_runs.details_json storage.
 
-		Strips operation/status/trigger (already separate columns in service_runs)
-		and None values to keep the JSON compact.
-		"""
-		d = asdict(self)
-		out: dict[str, Any] = {}
-		for k, v in d.items():
-			if k in ("operation", "status", "trigger"):
-				continue
-			if k in ("metrics_version", "sync_metrics", "maintain_metrics", "projects_metrics", "events"):
-				out[k] = v
-				continue
-			if (
-				v is not None
-				and v != 0
-				and v != []
-				and v != {}
-				and v is not False
-			):
-				out[k] = v
+        Strips operation/status/trigger (already separate columns in service_runs)
+        and None values to keep the JSON compact.
+        """
+        d = asdict(self)
+        out: dict[str, Any] = {}
+        structured_only_keys = {
+            "indexed_sessions",
+            "queued_sessions",
+            "extracted_sessions",
+            "skipped_sessions",
+            "skipped_unscoped",
+            "failed_sessions",
+            "run_ids",
+            "window_start",
+            "window_end",
+            "projects",
+        }
+        for k, v in d.items():
+            if k in ("operation", "status", "trigger") or k in structured_only_keys:
+                continue
+            if k in (
+                "metrics_version",
+                "sync_metrics",
+                "maintain_metrics",
+                "projects_metrics",
+                "events",
+            ):
+                out[k] = v
+                continue
+            if v is not None and v != 0 and v != [] and v != {} and v is not False:
+                out[k] = v
 
-		# Backward compatibility for cloud dashboards.
-		if self.operation == "sync":
-			sync_metrics = out.get("sync_metrics") if isinstance(out.get("sync_metrics"), dict) else {}
-			out.setdefault("learnings_new", int(sync_metrics.get("memories_new") or 0))
-			out.setdefault("learnings_updated", int(sync_metrics.get("memories_updated") or 0))
-		return out
+        return out
 
-	def to_span_attrs(self) -> dict[str, Any]:
-		"""Return flat key-value attributes for Logfire span."""
-		attrs: dict[str, Any] = {
-			"operation": self.operation,
-			"status": self.status,
-			"trigger": self.trigger,
-		}
-		if self.operation == "sync":
-			attrs["indexed_sessions"] = self.indexed_sessions
-			attrs["extracted_sessions"] = self.extracted_sessions
-			attrs["skipped_unscoped"] = self.skipped_unscoped
-			attrs["failed_sessions"] = self.failed_sessions
-		elif self.operation == "maintain":
-			attrs["projects_count"] = len(self.projects)
-		if self.cost_usd:
-			attrs["cost_usd"] = self.cost_usd
-		if self.error:
-			attrs["error"] = self.error
-		return attrs
+    def to_response_json(self) -> dict[str, Any]:
+        """Serialize the direct CLI/API operation response payload."""
+        out = self.to_details_json()
+        if self.projects:
+            out["projects"] = self.projects
+        return out
+
+    def to_span_attrs(self) -> dict[str, Any]:
+        """Return flat key-value attributes for Logfire span."""
+        attrs: dict[str, Any] = {
+            "operation": self.operation,
+            "status": self.status,
+            "trigger": self.trigger,
+        }
+        if self.operation == "sync":
+            attrs["indexed_sessions"] = self.indexed_sessions
+            attrs["extracted_sessions"] = self.extracted_sessions
+            attrs["skipped_unscoped"] = self.skipped_unscoped
+            attrs["failed_sessions"] = self.failed_sessions
+        elif self.operation == "maintain":
+            attrs["projects_count"] = len(self.projects)
+        if self.cost_usd:
+            attrs["cost_usd"] = self.cost_usd
+        if self.error:
+            attrs["error"] = self.error
+        return attrs
 
 
 EXIT_OK = 0
@@ -163,6 +181,24 @@ def _retry_backoff_seconds(attempts: int) -> int:
     """Return bounded exponential retry backoff in seconds."""
     safe_attempts = max(attempts, 1)
     return min(3600, 30 * (2 ** (safe_attempts - 1)))
+
+
+def _start_job_heartbeat(run_id: str, interval_seconds: int = 30) -> threading.Event:
+    """Refresh a running queue job lease until the returned event is set."""
+    stop = threading.Event()
+    heartbeat_session_job(run_id)
+
+    def _beat() -> None:
+        while not stop.wait(max(1, int(interval_seconds))):
+            if not heartbeat_session_job(run_id):
+                return
+
+    threading.Thread(
+        target=_beat,
+        name=f"lerim-job-heartbeat-{run_id[:12]}",
+        daemon=True,
+    ).start()
+    return stop
 
 
 def _now_iso() -> str:
@@ -217,6 +253,31 @@ def _pid_alive(pid: int | None) -> bool:
     return True
 
 
+def _process_start_ticks(pid: int) -> str | None:
+    """Return the Linux process start tick for PID reuse detection."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        return stat.rsplit(") ", 1)[1].split()[19]
+    except IndexError:
+        return None
+
+
+def _pid_matches_lock_state(state: dict[str, object]) -> bool:
+    """Return whether the lock PID still refers to the recorded process."""
+    pid = state.get("pid")
+    if not isinstance(pid, int) or not _pid_alive(pid):
+        return False
+    recorded_start = state.get("process_start_ticks")
+    if isinstance(recorded_start, str) and recorded_start:
+        current_start = _process_start_ticks(pid)
+        if current_start and current_start != recorded_start:
+            return False
+    return True
+
+
 def _is_stale(state: dict[str, object], stale_seconds: int) -> bool:
     """Return whether lock heartbeat state is stale."""
     heartbeat = _parse_iso(str(state.get("heartbeat_at") or ""))
@@ -240,10 +301,7 @@ def active_lock_state(path: Path, stale_seconds: int = 60) -> dict[str, object] 
     state = read_json_file(path)
     if not state:
         return None
-    pid = state.get("pid")
-    if _pid_alive(pid if isinstance(pid, int) else None) and not _is_stale(
-        state, stale_seconds
-    ):
+    if _pid_matches_lock_state(state) and not _is_stale(state, stale_seconds):
         return state
     return None
 
@@ -272,11 +330,15 @@ class ServiceLock:
         self.path = path
         self.stale_seconds = stale_seconds
         self._held = False
+        self._state: dict[str, object] | None = None
+        self._stop_heartbeat: threading.Event | None = None
+        self._heartbeat_thread: threading.Thread | None = None
 
     def acquire(self, owner: str, command: str) -> dict[str, object]:
         """Acquire lock file or raise ``LockBusyError`` if still active."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
         for _ in range(2):
+            process_start_ticks = _process_start_ticks(os.getpid())
             state: dict[str, object] = {
                 "pid": os.getpid(),
                 "owner": owner,
@@ -285,12 +347,16 @@ class ServiceLock:
                 "heartbeat_at": datetime.now(timezone.utc).isoformat(),
                 "host": socket.gethostname() or "local",
             }
+            if process_start_ticks:
+                state["process_start_ticks"] = process_start_ticks
             try:
                 fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
                 with os.fdopen(fd, "w", encoding="utf-8") as handle:
                     handle.write(json.dumps(state, ensure_ascii=True, indent=2))
                     handle.write("\n")
                 self._held = True
+                self._state = state
+                self._start_heartbeat()
                 return state
             except FileExistsError:
                 active = active_lock_state(self.path, stale_seconds=self.stale_seconds)
@@ -302,10 +368,48 @@ class ServiceLock:
                     raise LockBusyError(self.path, read_json_file(self.path))
         raise LockBusyError(self.path, read_json_file(self.path))
 
+    def _start_heartbeat(self) -> None:
+        """Refresh the lock heartbeat while the current process owns it."""
+        if not self._held or self._state is None:
+            return
+        interval = max(1, min(30, self.stale_seconds // 3 or 1))
+        stop = threading.Event()
+        self._stop_heartbeat = stop
+
+        def _beat() -> None:
+            while not stop.wait(interval):
+                state = read_json_file(self.path)
+                if not state or state.get("pid") != os.getpid():
+                    return
+                updated = dict(self._state or {})
+                updated["heartbeat_at"] = datetime.now(timezone.utc).isoformat()
+                try:
+                    self.path.write_text(
+                        json.dumps(updated, ensure_ascii=True, indent=2) + "\n",
+                        encoding="utf-8",
+                    )
+                except OSError:
+                    return
+                self._state = updated
+
+        self._heartbeat_thread = threading.Thread(
+            target=_beat,
+            name=f"lerim-lock-heartbeat-{self.path.name}",
+            daemon=True,
+        )
+        self._heartbeat_thread.start()
+
     def release(self) -> None:
         """Release lock only when held by current process."""
         if not self._held:
             return
+        if self._stop_heartbeat is not None:
+            self._stop_heartbeat.set()
+        if (
+            self._heartbeat_thread is not None
+            and self._heartbeat_thread is not threading.current_thread()
+        ):
+            self._heartbeat_thread.join(timeout=2)
         state = read_json_file(self.path)
         if state and state.get("pid") != os.getpid():
             self._held = False
@@ -315,6 +419,9 @@ class ServiceLock:
         except OSError:
             pass
         self._held = False
+        self._state = None
+        self._stop_heartbeat = None
+        self._heartbeat_thread = None
 
 
 @dataclass(frozen=True)
@@ -377,181 +484,108 @@ def resolve_window_bounds(
     return until - timedelta(seconds=seconds), until
 
 
-def _stat_signature(path: Path) -> tuple[int, int]:
-	"""Return stable file signature: (mtime_ns, size_bytes)."""
-	stat = path.stat()
-	return int(stat.st_mtime_ns), int(stat.st_size)
-
-
-def _snapshot_dir_md(path: Path) -> dict[str, tuple[int, int]]:
-	"""Return md-file signatures under a directory, keyed by relative path."""
-	if not path.exists() or not path.is_dir():
-		return {}
-	snapshot: dict[str, tuple[int, int]] = {}
-	for item in sorted(path.rglob("*.md")):
-		if not item.is_file():
-			continue
-		rel = str(item.relative_to(path))
-		try:
-			snapshot[rel] = _stat_signature(item)
-		except OSError:
-			continue
-	return snapshot
-
-
-def _capture_memory_snapshot(memory_root: Path) -> dict[str, Any]:
-	"""Capture memory tree state for before/after delta computation."""
-	active: dict[str, tuple[int, int]] = {}
-	if memory_root.exists() and memory_root.is_dir():
-		for file in sorted(memory_root.glob("*.md")):
-			if not file.is_file() or file.name == "index.md":
-				continue
-			try:
-				active[file.name] = _stat_signature(file)
-			except OSError:
-				continue
-	index_path = memory_root / "index.md"
-	index_sig: tuple[int, int] | None = None
-	if index_path.exists() and index_path.is_file():
-		try:
-			index_sig = _stat_signature(index_path)
-		except OSError:
-			index_sig = None
-	return {
-		"active": active,
-		"summaries": _snapshot_dir_md(memory_root / "summaries"),
-		"archived": _snapshot_dir_md(memory_root / "archived"),
-		"index_sig": index_sig,
-	}
-
-
-def _diff_memory_snapshot(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
-	"""Compute memory deltas between two captured snapshots."""
-	before_active = before.get("active") or {}
-	after_active = after.get("active") or {}
-	before_archived = before.get("archived") or {}
-	after_archived = after.get("archived") or {}
-	before_summaries = before.get("summaries") or {}
-	after_summaries = after.get("summaries") or {}
-
-	before_active_names = set(before_active.keys())
-	after_active_names = set(after_active.keys())
-	before_archived_names = set(before_archived.keys())
-	after_archived_names = set(after_archived.keys())
-	before_summary_names = set(before_summaries.keys())
-	after_summary_names = set(after_summaries.keys())
-
-	updated_active = 0
-	for name in before_active_names & after_active_names:
-		if before_active.get(name) != after_active.get(name):
-			updated_active += 1
-
-	return {
-		"memories_new": len(after_active_names - before_active_names),
-		"memories_updated": updated_active,
-		"memories_archived": len(after_archived_names - before_archived_names),
-		"summaries_new": len(after_summary_names - before_summary_names),
-		"index_updated": bool(after.get("index_sig")) and after.get("index_sig") != before.get("index_sig"),
-	}
-
-
 def _new_project_metric() -> dict[str, Any]:
-	"""Create empty per-project metrics row."""
-	return {
-		"sessions_analyzed": 0,
-		"sessions_extracted": 0,
-		"sessions_failed": 0,
-		"sessions_skipped": 0,
-		"memories_new": 0,
-		"memories_updated": 0,
-		"memories_archived": 0,
-		"summaries_new": 0,
-		"index_updated": False,
-		"duration_ms": 0,
-		"last_error": None,
-		"maintain_counts": {
-			"merged": 0,
-			"archived": 0,
-			"consolidated": 0,
-			"unchanged": 0,
-		},
-	}
+    """Create empty per-project metrics row."""
+    return {
+        "sessions_analyzed": 0,
+        "sessions_extracted": 0,
+        "sessions_failed": 0,
+        "sessions_skipped": 0,
+        "records_created": 0,
+        "records_updated": 0,
+        "records_archived": 0,
+        "duration_ms": 0,
+        "last_error": None,
+        "maintain_counts": {
+            "merged": 0,
+            "archived": 0,
+            "consolidated": 0,
+            "unchanged": 0,
+        },
+    }
 
 
 def _merge_project_metric(target: dict[str, Any], source: dict[str, Any]) -> None:
-	"""Merge one per-project metric row into another."""
-	for key in (
-		"sessions_analyzed",
-		"sessions_extracted",
-		"sessions_failed",
-		"sessions_skipped",
-		"memories_new",
-		"memories_updated",
-		"memories_archived",
-		"summaries_new",
-		"duration_ms",
-	):
-		target[key] = int(target.get(key) or 0) + int(source.get(key) or 0)
-	target["index_updated"] = bool(target.get("index_updated")) or bool(source.get("index_updated"))
-	if source.get("last_error"):
-		target["last_error"] = str(source.get("last_error"))
-	t_counts = target.get("maintain_counts") if isinstance(target.get("maintain_counts"), dict) else {}
-	s_counts = source.get("maintain_counts") if isinstance(source.get("maintain_counts"), dict) else {}
-	for key in ("merged", "archived", "consolidated", "unchanged"):
-		t_counts[key] = int(t_counts.get(key) or 0) + int(s_counts.get(key) or 0)
-	target["maintain_counts"] = t_counts
+    """Merge one per-project metric row into another."""
+    for key in (
+        "sessions_analyzed",
+        "sessions_extracted",
+        "sessions_failed",
+        "sessions_skipped",
+        "records_created",
+        "records_updated",
+        "records_archived",
+        "duration_ms",
+    ):
+        target[key] = int(target.get(key) or 0) + int(source.get(key) or 0)
+    if source.get("last_error"):
+        target["last_error"] = str(source.get("last_error"))
+    t_counts = (
+        target.get("maintain_counts")
+        if isinstance(target.get("maintain_counts"), dict)
+        else {}
+    )
+    s_counts = (
+        source.get("maintain_counts")
+        if isinstance(source.get("maintain_counts"), dict)
+        else {}
+    )
+    for key in ("merged", "archived", "consolidated", "unchanged"):
+        t_counts[key] = int(t_counts.get(key) or 0) + int(s_counts.get(key) or 0)
+    target["maintain_counts"] = t_counts
 
 
-def _aggregate_sync_totals(projects_metrics: dict[str, dict[str, Any]]) -> dict[str, Any]:
-	"""Build sync totals across projects for details_json."""
-	totals = {
-		"sessions_analyzed": 0,
-		"sessions_extracted": 0,
-		"sessions_failed": 0,
-		"sessions_skipped": 0,
-		"memories_new": 0,
-		"memories_updated": 0,
-		"memories_archived": 0,
-		"summaries_new": 0,
-		"projects_count": len(projects_metrics),
-		"index_updated": False,
-	}
-	for metrics in projects_metrics.values():
-		for key in (
-			"sessions_analyzed",
-			"sessions_extracted",
-			"sessions_failed",
-			"sessions_skipped",
-			"memories_new",
-			"memories_updated",
-			"memories_archived",
-			"summaries_new",
-		):
-			totals[key] += int(metrics.get(key) or 0)
-		totals["index_updated"] = bool(totals["index_updated"]) or bool(metrics.get("index_updated"))
-	return totals
+def _aggregate_sync_totals(
+    projects_metrics: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Build sync totals across projects for details_json."""
+    totals = {
+        "sessions_analyzed": 0,
+        "sessions_extracted": 0,
+        "sessions_failed": 0,
+        "sessions_skipped": 0,
+        "records_created": 0,
+        "records_updated": 0,
+        "records_archived": 0,
+        "projects_count": len(projects_metrics),
+    }
+    for metrics in projects_metrics.values():
+        for key in (
+            "sessions_analyzed",
+            "sessions_extracted",
+            "sessions_failed",
+            "sessions_skipped",
+            "records_created",
+            "records_updated",
+            "records_archived",
+        ):
+            totals[key] += int(metrics.get(key) or 0)
+    return totals
 
 
-def _aggregate_maintain_totals(projects_metrics: dict[str, dict[str, Any]]) -> dict[str, Any]:
-	"""Build maintain totals across projects for details_json."""
-	counts = {"merged": 0, "archived": 0, "consolidated": 0, "unchanged": 0}
-	totals = {
-		"projects_count": len(projects_metrics),
-		"memories_new": 0,
-		"memories_updated": 0,
-		"memories_archived": 0,
-		"summaries_new": 0,
-		"index_updated": False,
-		"counts": counts,
-	}
-	for metrics in projects_metrics.values():
-		for key in ("memories_new", "memories_updated", "memories_archived", "summaries_new"):
-			totals[key] += int(metrics.get(key) or 0)
-		totals["index_updated"] = bool(totals["index_updated"]) or bool(metrics.get("index_updated"))
-		m_counts = metrics.get("maintain_counts") if isinstance(metrics.get("maintain_counts"), dict) else {}
-		for key in ("merged", "archived", "consolidated", "unchanged"):
-			counts[key] += int(m_counts.get(key) or 0)
-	return totals
+def _aggregate_maintain_totals(
+    projects_metrics: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Build maintain totals across projects for details_json."""
+    counts = {"merged": 0, "archived": 0, "consolidated": 0, "unchanged": 0}
+    totals = {
+        "projects_count": len(projects_metrics),
+        "records_created": 0,
+        "records_updated": 0,
+        "records_archived": 0,
+        "counts": counts,
+    }
+    for metrics in projects_metrics.values():
+        for key in ("records_created", "records_updated", "records_archived"):
+            totals[key] += int(metrics.get(key) or 0)
+        m_counts = (
+            metrics.get("maintain_counts")
+            if isinstance(metrics.get("maintain_counts"), dict)
+            else {}
+        )
+        for key in ("merged", "archived", "consolidated", "unchanged"):
+            counts[key] += int(m_counts.get(key) or 0)
+    return totals
 
 
 def _process_one_job(job: dict[str, Any]) -> dict[str, Any]:
@@ -570,7 +604,6 @@ def _process_one_job(job: dict[str, Any]) -> dict[str, Any]:
 
     repo_path = str(job.get("repo_path") or "").strip()
     project_name = Path(repo_path).name if repo_path else "unknown"
-    project_memory_path = Path(repo_path) / ".lerim" / "memory" if repo_path else None
 
     # Skip sessions that don't match a registered project
     if not repo_path:
@@ -585,56 +618,86 @@ def _process_one_job(job: dict[str, Any]) -> dict[str, Any]:
             "duration_ms": int((time.monotonic() - started_monotonic) * 1000),
         }
 
-    # Validate project directory still exists
-    if not Path(repo_path).is_dir():
-        complete_session_job(rid)
-        return {
-            "status": "skipped",
-            "reason": "project_dir_missing",
-            "run_id": rid,
-            "project_name": project_name,
-            "repo_path": repo_path,
-            "metrics": {},
-            "duration_ms": int((time.monotonic() - started_monotonic) * 1000),
-        }
-
-    # Route memories to the project's .lerim/memory/
-    project_memory = str(project_memory_path)
-    before_snapshot = _capture_memory_snapshot(project_memory_path)
-
     attempts = max(int(job.get("attempts") or 1), 1)
     try:
+        doc = fetch_session_doc(rid) or {}
         session_path = str(job.get("session_path") or "").strip()
         if not session_path:
-            doc = fetch_session_doc(rid) or {}
             session_path = str(doc.get("session_path") or "").strip()
+        if not session_path:
+            error = "Session job is missing session_path; cannot extract."
+            fail_session_job(
+                rid,
+                error=error,
+                retry_backoff_seconds=_retry_backoff_seconds(attempts),
+            )
+            return {
+                "status": "failed",
+                "run_id": rid,
+                "project_name": project_name,
+                "repo_path": repo_path,
+                "error": error,
+                "metrics": {},
+                "duration_ms": int((time.monotonic() - started_monotonic) * 1000),
+            }
         agent = LerimRuntime(default_cwd=repo_path)
-        result = agent.sync(Path(session_path), memory_root=project_memory)
+        heartbeat_stop = _start_job_heartbeat(rid)
+        try:
+            result = agent.sync(
+                Path(session_path),
+                session_id=rid,
+                agent_type=str(
+                    job.get("agent_type") or doc.get("agent_type") or "unknown"
+                ),
+                session_meta={
+                    "cwd": str(job.get("repo_path") or repo_path),
+                    "started_at": str(
+                        job.get("start_time") or doc.get("start_time") or ""
+                    ),
+                },
+            )
+        finally:
+            heartbeat_stop.set()
     except Exception as exc:
         fail_session_job(
             rid,
             error=str(exc),
             retry_backoff_seconds=_retry_backoff_seconds(attempts),
         )
-        after_snapshot = _capture_memory_snapshot(project_memory_path)
         return {
             "status": "failed",
             "run_id": rid,
             "project_name": project_name,
             "repo_path": repo_path,
             "error": str(exc),
-            "metrics": _diff_memory_snapshot(before_snapshot, after_snapshot),
+            "metrics": {},
             "duration_ms": int((time.monotonic() - started_monotonic) * 1000),
         }
     complete_session_job(rid)
-    after_snapshot = _capture_memory_snapshot(project_memory_path)
+    artifact_run_id = str(
+        result.get("mlflow_client_request_id")
+        or Path(str(result.get("run_folder") or "")).name
+        or ""
+    )
     return {
         "status": "extracted",
         "run_id": rid,
+        "artifact_run_id": artifact_run_id,
+        "mlflow_client_request_id": str(
+            result.get("mlflow_client_request_id") or artifact_run_id
+        ),
+        "run_folder": str(result.get("run_folder") or ""),
+        "artifacts": result.get("artifacts")
+        if isinstance(result.get("artifacts"), dict)
+        else {},
         "project_name": project_name,
         "repo_path": repo_path,
         "cost_usd": float(result.get("cost_usd") or 0),
-        "metrics": _diff_memory_snapshot(before_snapshot, after_snapshot),
+        "metrics": {
+            "records_created": int(result.get("records_created") or 0),
+            "records_updated": int(result.get("records_updated") or 0),
+            "records_archived": int(result.get("records_archived") or 0),
+        },
         "duration_ms": int((time.monotonic() - started_monotonic) * 1000),
     }
 
@@ -642,11 +705,10 @@ def _process_one_job(job: dict[str, Any]) -> dict[str, Any]:
 def _process_claimed_jobs(
     claimed: list[dict[str, Any]],
 ) -> tuple[int, int, int, float, dict[str, dict[str, Any]], list[dict[str, Any]]]:
-    """Process claimed jobs sequentially in chronological order.
+    """Process claimed jobs sequentially in the queue-selected order.
 
-    Jobs are already sorted oldest-first by ``claim_session_jobs``.
-    Sequential processing ensures that later sessions can correctly
-    update or supersede memories created by earlier ones.
+    Normal sync claims newest-first to improve first-run backlog quality.  A
+    chronological replay caller can still ask the queue for oldest-first jobs.
 
     Returns
         (extracted, failed, skipped, cost_usd, projects_metrics, events).
@@ -661,12 +723,15 @@ def _process_claimed_jobs(
         result = _process_one_job(job)
         project_name = str(result.get("project_name") or "unknown")
         metric_row = projects_metrics.setdefault(project_name, _new_project_metric())
-        metric_row["sessions_analyzed"] = int(metric_row.get("sessions_analyzed") or 0) + 1
-        metric_row["duration_ms"] = int(metric_row.get("duration_ms") or 0) + int(result.get("duration_ms") or 0)
+        metric_row["sessions_analyzed"] = (
+            int(metric_row.get("sessions_analyzed") or 0) + 1
+        )
+        metric_row["duration_ms"] = int(metric_row.get("duration_ms") or 0) + int(
+            result.get("duration_ms") or 0
+        )
         delta = result.get("metrics") if isinstance(result.get("metrics"), dict) else {}
-        for key in ("memories_new", "memories_updated", "memories_archived", "summaries_new"):
+        for key in ("records_created", "records_updated", "records_archived"):
             metric_row[key] = int(metric_row.get(key) or 0) + int(delta.get(key) or 0)
-        metric_row["index_updated"] = bool(metric_row.get("index_updated")) or bool(delta.get("index_updated"))
 
         event = {
             "time": _now_iso(),
@@ -678,29 +743,41 @@ def _process_claimed_jobs(
             "sessions_extracted": 0,
             "sessions_failed": 0,
             "sessions_skipped": 0,
-            "memories_new": int(delta.get("memories_new") or 0),
-            "memories_updated": int(delta.get("memories_updated") or 0),
-            "memories_archived": int(delta.get("memories_archived") or 0),
-            "summaries_new": int(delta.get("summaries_new") or 0),
-            "index_updated": bool(delta.get("index_updated")),
+            "records_created": int(delta.get("records_created") or 0),
+            "records_updated": int(delta.get("records_updated") or 0),
+            "records_archived": int(delta.get("records_archived") or 0),
             "duration_ms": int(result.get("duration_ms") or 0),
         }
+        for key in (
+            "artifact_run_id",
+            "mlflow_client_request_id",
+            "run_folder",
+            "artifacts",
+        ):
+            if result.get(key):
+                event[key] = result[key]
 
         if result["status"] == "extracted":
             extracted += 1
-            metric_row["sessions_extracted"] = int(metric_row.get("sessions_extracted") or 0) + 1
+            metric_row["sessions_extracted"] = (
+                int(metric_row.get("sessions_extracted") or 0) + 1
+            )
             event["sessions_extracted"] = 1
             cost_usd += result.get("cost_usd", 0.0)
         elif result["status"] == "failed":
             failed += 1
-            metric_row["sessions_failed"] = int(metric_row.get("sessions_failed") or 0) + 1
+            metric_row["sessions_failed"] = (
+                int(metric_row.get("sessions_failed") or 0) + 1
+            )
             metric_row["last_error"] = str(result.get("error") or "")
             event["sessions_failed"] = 1
             if result.get("error"):
                 event["error"] = str(result.get("error"))
         elif result["status"] == "skipped":
             skipped += 1
-            metric_row["sessions_skipped"] = int(metric_row.get("sessions_skipped") or 0) + 1
+            metric_row["sessions_skipped"] = (
+                int(metric_row.get("sessions_skipped") or 0) + 1
+            )
             event["sessions_skipped"] = 1
             if result.get("reason"):
                 event["reason"] = str(result.get("reason"))
@@ -818,7 +895,7 @@ def run_sync_once(
                         session_path=item.session_path,
                         start_time=item.start_time,
                         trigger=trigger,
-                        force=item.changed,
+                        force=force or item.changed,
                         repo_path=str(project_path),
                     )
                     if queued:
@@ -838,7 +915,9 @@ def run_sync_once(
             skipped = len(target_run_ids)
         elif not dry_run:
             # Process up to max_sessions by claiming in a loop.
-            # Each claim returns 1 per project (chronological ordering).
+            # Each claim returns at most 1 job per project.  Normal backlog
+            # extraction is newest-first; explicit replay can request
+            # chronological order directly from the catalog API.
             # After processing, claim again to get the next session.
             total_processed = 0
             while total_processed < claim_limit:
@@ -849,6 +928,7 @@ def run_sync_once(
                 claimed = claim_session_jobs(
                     limit=claim_limit - total_processed,
                     run_ids=[run_id] if run_id else None,
+                    claim_order="newest",
                 )
                 if not claimed:
                     break  # no more pending jobs
@@ -856,9 +936,10 @@ def run_sync_once(
                     rp = str(job.get("repo_path") or "").strip()
                     if rp:
                         projects.add(Path(rp).name)
-                target_run_ids.extend(
-                    str(item.get("run_id") or "") for item in claimed if item.get("run_id")
-                )
+                for item in claimed:
+                    claimed_run_id = str(item.get("run_id") or "")
+                    if claimed_run_id and claimed_run_id not in target_run_ids:
+                        target_run_ids.append(claimed_run_id)
                 (
                     batch_extracted,
                     batch_failed,
@@ -872,7 +953,9 @@ def run_sync_once(
                 skipped += batch_skipped
                 cost_usd += batch_cost
                 for project_name, metrics in batch_projects_metrics.items():
-                    target = projects_metrics.setdefault(project_name, _new_project_metric())
+                    target = projects_metrics.setdefault(
+                        project_name, _new_project_metric()
+                    )
                     _merge_project_metric(target, metrics)
                 sync_events.extend(batch_events)
                 total_processed += len(claimed)
@@ -891,7 +974,7 @@ def run_sync_once(
         if failed > 0 and extracted > 0:
             code = EXIT_PARTIAL
             status = "partial"
-        elif failed > 0 and extracted == 0 and indexed_sessions == 0:
+        elif failed > 0 and extracted == 0:
             code = EXIT_FATAL
             status = "failed"
 
@@ -961,7 +1044,6 @@ def run_sync_once(
 
 def run_maintain_once(
     *,
-    force: bool,
     dry_run: bool,
     trigger: str = "manual",
 ) -> tuple[int, dict]:
@@ -1038,21 +1120,12 @@ def run_maintain_once(
         failed_projects: list[str] = []
         for project_name, project_path_str in projects.items():
             project_path = Path(project_path_str).expanduser().resolve()
-            if not project_path.is_dir():
-                continue
-            project_memory = str(project_path / ".lerim" / "memory")
-            project_memory_path = Path(project_memory)
-            before_snapshot = _capture_memory_snapshot(project_memory_path)
             started_project = time.monotonic()
             metric_row = _new_project_metric()
             try:
                 agent = LerimRuntime(default_cwd=str(project_path))
-                result = agent.maintain(memory_root=project_memory)
+                result = agent.maintain(repo_root=project_path)
                 results[project_name] = result
-                # Check for memory index
-                memory_index_path = Path(project_memory) / "index.md"
-                if memory_index_path.exists():
-                    result["memory_index_exists"] = True
                 maintain_cost = float(result.get("cost_usd") or 0)
                 if maintain_cost:
                     log_activity(
@@ -1062,16 +1135,22 @@ def run_maintain_once(
                         time.monotonic() - t0,
                         cost_usd=maintain_cost,
                     )
-                after_snapshot = _capture_memory_snapshot(project_memory_path)
-                delta = _diff_memory_snapshot(before_snapshot, after_snapshot)
-                for key in ("memories_new", "memories_updated", "memories_archived", "summaries_new"):
-                    metric_row[key] = int(delta.get(key) or 0)
-                metric_row["index_updated"] = bool(delta.get("index_updated"))
-                metric_row["duration_ms"] = int((time.monotonic() - started_project) * 1000)
-                raw_counts = result.get("counts") if isinstance(result.get("counts"), dict) else {}
+                metric_row["records_created"] = int(result.get("records_created") or 0)
+                metric_row["records_updated"] = int(result.get("records_updated") or 0)
+                metric_row["records_archived"] = int(
+                    result.get("records_archived") or 0
+                )
+                metric_row["duration_ms"] = int(
+                    (time.monotonic() - started_project) * 1000
+                )
+                raw_counts = (
+                    result.get("counts")
+                    if isinstance(result.get("counts"), dict)
+                    else {}
+                )
                 metric_row["maintain_counts"] = {
                     "merged": int(raw_counts.get("merged") or 0),
-                    "archived": int(raw_counts.get("archived") or raw_counts.get("decayed") or 0),
+                    "archived": int(raw_counts.get("archived") or 0),
                     "consolidated": int(raw_counts.get("consolidated") or 0),
                     "unchanged": int(raw_counts.get("unchanged") or 0),
                 }
@@ -1079,12 +1158,9 @@ def run_maintain_once(
                 failed_projects.append(project_name)
                 results[project_name] = {"error": str(exc)}
                 metric_row["last_error"] = str(exc)
-                metric_row["duration_ms"] = int((time.monotonic() - started_project) * 1000)
-                after_snapshot = _capture_memory_snapshot(project_memory_path)
-                delta = _diff_memory_snapshot(before_snapshot, after_snapshot)
-                for key in ("memories_new", "memories_updated", "memories_archived", "summaries_new"):
-                    metric_row[key] = int(delta.get(key) or 0)
-                metric_row["index_updated"] = bool(delta.get("index_updated"))
+                metric_row["duration_ms"] = int(
+                    (time.monotonic() - started_project) * 1000
+                )
             projects_metrics[project_name] = metric_row
             maintain_events.append(
                 {
@@ -1092,11 +1168,9 @@ def run_maintain_once(
                     "op_type": "maintain",
                     "status": "failed" if metric_row.get("last_error") else "completed",
                     "project": project_name,
-                    "memories_new": int(metric_row.get("memories_new") or 0),
-                    "memories_updated": int(metric_row.get("memories_updated") or 0),
-                    "memories_archived": int(metric_row.get("memories_archived") or 0),
-                    "summaries_new": int(metric_row.get("summaries_new") or 0),
-                    "index_updated": bool(metric_row.get("index_updated")),
+                    "records_created": int(metric_row.get("records_created") or 0),
+                    "records_updated": int(metric_row.get("records_updated") or 0),
+                    "records_archived": int(metric_row.get("records_archived") or 0),
                     "duration_ms": int(metric_row.get("duration_ms") or 0),
                     "maintain_counts": metric_row.get("maintain_counts") or {},
                     "error": str(metric_row.get("last_error") or ""),
@@ -1131,7 +1205,7 @@ def run_maintain_once(
             if status == "failed"
             else (EXIT_PARTIAL if status == "partial" else EXIT_OK)
         )
-        return code, op_result.to_details_json()
+        return code, op_result.to_response_json()
     except Exception as exc:
         op_result = OperationResult(
             operation="maintain",

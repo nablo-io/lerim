@@ -1,0 +1,5 @@
+case: skip_leaves_other_jobs_untouched
+expected:
+  skipped_status: "done"
+  untouched_dead_status: "dead_letter"
+  untouched_pending_status: "pending"

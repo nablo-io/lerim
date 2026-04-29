@@ -1,0 +1,22 @@
+question: "What do we know about the rollout failure?"
+seed_records:
+  - session_id: "seed-episode-only"
+    kind: "episode"
+    status: "active"
+    title: "Rollout failure investigation"
+    body: "Investigated a rollout failure during deployment. The session captured symptoms and immediate recovery steps, but no lasting rule or durable decision was established."
+    user_intent: "Understand the rollout failure and recover service."
+    what_happened: "Checked logs, rolled back the deployment, and restored service."
+    outcomes: "Service recovered, but no durable root-cause rule was confirmed."
+expected:
+  must_use_tools:
+    - "search_context"
+    - "get_context"
+  answer_must_include_any:
+    - "episodic"
+    - "episode"
+    - "session"
+  answer_must_include_any_missing_durable:
+    - "no durable"
+    - "not a durable"
+    - "no lasting"

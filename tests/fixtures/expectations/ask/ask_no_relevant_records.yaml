@@ -1,0 +1,31 @@
+question: "What do we know about Kubernetes autoscaling policies?"
+seed_records:
+  - session_id: "seed-unrelated-1"
+    kind: "decision"
+    title: "Use explicit tool contracts for writes"
+    body: "Write actions should go through explicit typed tools."
+    decision: "Use explicit tool contracts for writes."
+    why: "This keeps validation and lifecycle rules out of prompt luck."
+  - session_id: "seed-unrelated-2"
+    kind: "fact"
+    title: "Image-enabled workflows depend on libvips"
+    body: "Image tests and transforms depend on libvips."
+expected:
+  must_use_tools:
+    - "search_context"
+  must_not_use_tools: []
+  answer_must_include_any:
+    - "no direct stored support"
+    - "no direct support"
+    - "no relevant"
+    - "no records"
+    - "no stored records found"
+    - "no durable"
+    - "could not find"
+    - "did not find"
+    - "nothing relevant"
+    - "no stored knowledge"
+    - "unrelated"
+    - "do not address"
+    - "do not provide evidence"
+    - "does not contain any information"

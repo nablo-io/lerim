@@ -1,0 +1,13 @@
+case: no_change_when_store_is_already_clean
+summary: Leave an already-clean store unchanged.
+
+expected:
+  must_use_tools:
+    - list_context
+  must_not_use_tools:
+    - archive_context
+    - supersede_context
+    - revise_context
+  preserved_titles:
+    - Keep context and session state in separate stores
+    - Normalize provider events at the adapter boundary

@@ -6,45 +6,56 @@ management so both the argparse CLI and the HTTP API call the same code.
 
 from __future__ import annotations
 
+import hashlib
 import os
-import shutil
 import sqlite3
-import subprocess
-import tempfile
 from contextlib import contextmanager
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import httpx
 
 if TYPE_CHECKING:
-	from collections.abc import Generator
+    from collections.abc import Generator
 
 from lerim import __version__
 from lerim.adapters.registry import (
+    KNOWN_PLATFORMS,
     connect_platform,
+    default_path_for,
     list_platforms,
 )
-from lerim.memory.repo import build_memory_paths, ensure_project_memory
+from lerim.context import ContextStore, resolve_project_identity
 from lerim.server.daemon import (
+    LockBusyError,
+    ServiceLock,
+    WRITER_LOCK_NAME,
+    lock_path,
     resolve_window_bounds,
     run_maintain_once,
     run_sync_once,
 )
+from lerim.server.docker_runtime import (
+    RUNTIME_IMAGE_ENV,
+    RUNTIME_SOURCE_ENV,
+    docker_available,
+)
 from lerim.config.settings import (
     Config,
     get_config,
+    get_user_config_path,
     load_toml_file,
-    reload_config,
+    remove_legacy_memory_dir,
     save_config_patch,
     _write_config_full,
-    USER_CONFIG_PATH,
 )
 from lerim.server.runtime import LerimRuntime
 from lerim.sessions.catalog import (
+    count_all_session_state,
     count_fts_indexed,
+    count_indexed_sessions_for_project,
     count_session_jobs_by_status,
     count_unscoped_sessions_by_agent,
     latest_service_run,
@@ -53,7 +64,11 @@ from lerim.sessions.catalog import (
     list_queue_jobs,
     list_unscoped_sessions,
     queue_health_snapshot,
+    reset_all_session_state,
+    reset_indexed_sessions_for_project,
+    retry_all_dead_letter_jobs,
     retry_session_job,
+    skip_all_dead_letter_jobs,
     skip_session_job,
 )
 
@@ -62,37 +77,41 @@ from lerim.sessions.catalog import (
 
 
 def parse_duration_to_seconds(raw: str) -> int:
-	"""Parse ``<number><unit>`` durations like ``30s`` or ``7d`` to seconds."""
-	value = (raw or "").strip().lower()
-	if len(value) < 2:
-		raise ValueError("duration must be <number><unit>, for example: 30s, 2m, 1h, 7d")
-	unit = value[-1]
-	amount_text = value[:-1]
-	if not amount_text.isdigit():
-		raise ValueError("duration must be <number><unit>, for example: 30s, 2m, 1h, 7d")
-	amount = int(amount_text)
-	if amount <= 0:
-		raise ValueError("duration must be greater than 0")
-	multipliers = {"s": 1, "m": 60, "h": 3600, "d": 86400}
-	if unit not in multipliers:
-		raise ValueError("duration unit must be one of: s, m, h, d")
-	return amount * multipliers[unit]
+    """Parse ``<number><unit>`` durations like ``30s`` or ``7d`` to seconds."""
+    value = (raw or "").strip().lower()
+    if len(value) < 2:
+        raise ValueError(
+            "duration must be <number><unit>, for example: 30s, 2m, 1h, 7d"
+        )
+    unit = value[-1]
+    amount_text = value[:-1]
+    if not amount_text.isdigit():
+        raise ValueError(
+            "duration must be <number><unit>, for example: 30s, 2m, 1h, 7d"
+        )
+    amount = int(amount_text)
+    if amount <= 0:
+        raise ValueError("duration must be greater than 0")
+    multipliers = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+    if unit not in multipliers:
+        raise ValueError("duration unit must be one of: s, m, h, d")
+    return amount * multipliers[unit]
 
 
 def parse_csv(raw: str | None) -> list[str]:
-	"""Split a comma-delimited string into trimmed non-empty values."""
-	if not raw:
-		return []
-	return [part.strip() for part in raw.split(",") if part.strip()]
+    """Split a comma-delimited string into trimmed non-empty values."""
+    if not raw:
+        return []
+    return [part.strip() for part in raw.split(",") if part.strip()]
 
 
 def parse_agent_filter(raw: str | None) -> list[str] | None:
-	"""Normalize agent filter input and drop the ``all`` sentinel."""
-	values = parse_csv(raw)
-	cleaned = [value for value in values if value and value != "all"]
-	if not cleaned:
-		return None
-	return sorted(set(cleaned))
+    """Normalize agent filter input and drop the ``all`` sentinel."""
+    values = parse_csv(raw)
+    cleaned = [value for value in values if value and value != "all"]
+    if not cleaned:
+        return None
+    return sorted(set(cleaned))
 
 
 def looks_like_auth_error(response: str) -> bool:
@@ -111,114 +130,104 @@ def looks_like_auth_error(response: str) -> bool:
 
 
 def _ollama_models(config: Config) -> list[tuple[str, str]]:
-	"""Return deduplicated (base_url, model) pairs for all ollama roles."""
-	seen: set[tuple[str, str]] = set()
-	pairs: list[tuple[str, str]] = []
+    """Return deduplicated (base_url, model) pairs for all ollama roles."""
+    seen: set[tuple[str, str]] = set()
+    pairs: list[tuple[str, str]] = []
 
-	default_base = config.provider_api_bases.get("ollama", "http://127.0.0.1:11434")
+    default_base = config.provider_api_bases.get("ollama", "http://127.0.0.1:11434")
 
-	for role in (config.agent_role,):
-		if role.provider == "ollama":
-			base = role.api_base or default_base
-			key = (base, role.model)
-			if key not in seen:
-				seen.add(key)
-				pairs.append(key)
+    for role in (config.agent_role,):
+        if role.provider == "ollama":
+            base = role.api_base or default_base
+            key = (base, role.model)
+            if key not in seen:
+                seen.add(key)
+                pairs.append(key)
 
-	return pairs
+    return pairs
 
 
 def _is_ollama_reachable(base_url: str, timeout: float = 5.0) -> bool:
-	"""Check if Ollama is reachable at the given base URL."""
-	try:
-		resp = httpx.get(f"{base_url}/api/tags", timeout=timeout)
-		return resp.status_code == 200
-	except (httpx.ConnectError, httpx.TimeoutException, OSError):
-		return False
+    """Check if Ollama is reachable at the given base URL."""
+    try:
+        resp = httpx.get(f"{base_url}/api/tags", timeout=timeout)
+        return resp.status_code == 200
+    except (httpx.ConnectError, httpx.TimeoutException, OSError):
+        return False
 
 
 def _load_model(base_url: str, model: str, timeout: float = 120.0) -> None:
-	"""Warm-load an Ollama model by sending a minimal generation request."""
-	httpx.post(
-		f"{base_url}/api/generate",
-		json={"model": model, "prompt": "hi", "options": {"num_predict": 1}},
-		timeout=timeout,
-	)
+    """Warm-load an Ollama model by sending a minimal generation request."""
+    httpx.post(
+        f"{base_url}/api/generate",
+        json={"model": model, "prompt": "hi", "options": {"num_predict": 1}},
+        timeout=timeout,
+    )
 
 
 def _unload_model(base_url: str, model: str, timeout: float = 30.0) -> None:
-	"""Unload an Ollama model by setting keep_alive to 0."""
-	httpx.post(
-		f"{base_url}/api/generate",
-		json={"model": model, "keep_alive": 0},
-		timeout=timeout,
-	)
+    """Unload an Ollama model by setting keep_alive to 0."""
+    httpx.post(
+        f"{base_url}/api/generate",
+        json={"model": model, "keep_alive": 0},
+        timeout=timeout,
+    )
 
 
 @contextmanager
 def ollama_lifecycle(config: Config) -> Generator[None, None, None]:
-	"""Context manager that loads Ollama models on enter and unloads on exit.
+    """Context manager that loads Ollama models on enter and unloads on exit.
 
-	No-op when no roles use provider="ollama" or when auto_unload is False.
-	Logs warnings on failure but never raises — the daemon must not crash
-	because of lifecycle issues.
-	"""
-	if config.agent_role.provider != "ollama":
-		yield
-		return
+    No-op when no roles use provider="ollama" or when auto_unload is False.
+    Logs warnings on failure but never raises — the daemon must not crash
+    because of lifecycle issues.
+    """
+    if config.agent_role.provider != "ollama":
+        yield
+        return
 
-	from lerim.config.logging import logger
+    from lerim.config.logging import logger
 
-	models = _ollama_models(config)
+    models = _ollama_models(config)
 
-	if not models:
-		yield
-		return
+    if not models:
+        yield
+        return
 
-	# Group models by base_url for a single reachability check per server.
-	bases = {base for base, _ in models}
+    # Group models by base_url for a single reachability check per server.
+    bases = {base for base, _ in models}
 
-	reachable_bases: set[str] = set()
-	for base in bases:
-		if _is_ollama_reachable(base):
-			reachable_bases.add(base)
-		else:
-			logger.warning("ollama not reachable at {}, skipping lifecycle", base)
+    reachable_bases: set[str] = set()
+    for base in bases:
+        if _is_ollama_reachable(base):
+            reachable_bases.add(base)
+        else:
+            logger.warning("ollama not reachable at {}, skipping lifecycle", base)
 
-	# Warm-load models on reachable servers.
-	for base, model in models:
-		if base not in reachable_bases:
-			continue
-		try:
-			logger.info("loading ollama model {}/{}", base, model)
-			_load_model(base, model)
-		except Exception as exc:
-			logger.warning("failed to warm-load {}/{}: {}", base, model, exc)
+    # Warm-load models on reachable servers.
+    for base, model in models:
+        if base not in reachable_bases:
+            continue
+        try:
+            logger.info("loading ollama model {}/{}", base, model)
+            _load_model(base, model)
+        except Exception as exc:
+            logger.warning("failed to warm-load {}/{}: {}", base, model, exc)
 
-	try:
-		yield
-	finally:
-		if not config.auto_unload:
-			return
+    try:
+        yield
+    finally:
+        if not config.auto_unload:
+            return
 
-		for base, model in models:
-			if base not in reachable_bases:
-				continue
-			try:
-				logger.info("unloading ollama model {}/{}", base, model)
-				_unload_model(base, model)
-			except Exception as exc:
-				logger.warning("failed to unload {}/{}: {}", base, model, exc)
-
-
-# ── Known agent default paths ───────────────────────────────────────
-
-AGENT_DEFAULT_PATHS: dict[str, str] = {
-    "claude": "~/.claude/projects",
-    "codex": "~/.codex/sessions",
-    "cursor": "~/Library/Application Support/Cursor/User/globalStorage",
-    "opencode": "~/.local/share/opencode",
-}
+        for base, model in models:
+            if base not in reachable_bases:
+                continue
+            try:
+                logger.info("unloading ollama model {}/{}", base, model)
+                _unload_model(base, model)
+            except Exception as exc:
+                logger.warning("failed to unload {}/{}: {}", base, model, exc)
 
 
 def api_health() -> dict[str, Any]:
@@ -234,17 +243,11 @@ def _registered_projects(config: Config) -> list[tuple[str, Path]]:
     return items
 
 
-def _project_memory_root(project_path: Path) -> Path:
-    """Return per-project memory root path."""
-    return project_path / ".lerim" / "memory"
-
-
-def _ensure_memory_root_layout(memory_root: Path) -> None:
-    """Ensure memory root has canonical folders + index file."""
-    ensure_project_memory(build_memory_paths(memory_root.parent))
-    index_path = memory_root / "index.md"
-    if not index_path.exists():
-        index_path.write_text("# Memory Index\n", encoding="utf-8")
+def _context_store(config: Config) -> ContextStore:
+    """Return the canonical global context store."""
+    store = ContextStore(config.context_db_path)
+    store.initialize()
+    return store
 
 
 def _resolve_selected_projects(
@@ -276,67 +279,50 @@ def _resolve_selected_projects(
         return [all_projects[0]]
     if not all_projects:
         return []
-    raise ValueError("scope=project requires a project name when multiple projects are registered.")
+    raise ValueError(
+        "scope=project requires a project name when multiple projects are registered."
+    )
 
 
-def _copy_memory_file(src: Path, dst_dir: Path, *, prefix: str) -> str:
-    """Copy one memory markdown file into merged ask memory root."""
-    safe_prefix = prefix.replace("/", "_").replace("\\", "_")
-    target_name = f"{safe_prefix}__{src.name}"
-    target = dst_dir / target_name
-    if target.exists():
-        stem = src.stem
-        suffix = src.suffix
-        counter = 2
-        while True:
-            candidate = dst_dir / f"{safe_prefix}__{stem}_{counter}{suffix}"
-            if not candidate.exists():
-                target = candidate
-                target_name = candidate.name
-                break
-            counter += 1
-    shutil.copy2(src, target)
-    return target_name
+def _count_project_records(config: Config, project_path: Path) -> int:
+    """Count canonical records for one registered project."""
+    store = _context_store(config)
+    identity = resolve_project_identity(project_path)
+    store.register_project(identity)
+    with store.connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(1) AS total FROM records WHERE project_id = ?",
+            (identity.project_id,),
+        ).fetchone()
+    return int(row["total"]) if row else 0
 
 
-def _build_merged_ask_memory_root(
-    selected_projects: list[tuple[str, Path]],
-) -> tuple[Path, str]:
-    """Build temporary merged memory root for ask scope=all."""
-    temp_root = Path(tempfile.mkdtemp(prefix="lerim-ask-"))
-    memory_root = temp_root / "memory"
-    _ensure_memory_root_layout(memory_root)
-    index_lines = ["# Memory Index", ""]
-    copied_any = False
+def _session_stats_for_repo(
+    *,
+    sessions_db_path: Path,
+    repo_path: str,
+) -> tuple[int, str | None]:
+    """Return indexed-session count and latest session start time for one repo."""
+    if not sessions_db_path.exists():
+        return 0, None
 
-    for name, project_path in selected_projects:
-        src_root = _project_memory_root(project_path)
-        if not src_root.exists():
-            continue
-        copied_names: list[str] = []
-        for src in sorted(src_root.glob("*.md")):
-            if src.name == "index.md":
-                continue
-            copied_names.append(_copy_memory_file(src, memory_root, prefix=name))
-        if not copied_names:
-            continue
-        copied_any = True
-        index_lines.append(f"## {name}")
-        for copied in copied_names:
-            index_lines.append(f"- [{copied}]({copied})")
-        index_lines.append("")
+    try:
+        with sqlite3.connect(sessions_db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """
+                SELECT COUNT(1) AS total, MAX(start_time) AS latest_start_time
+                FROM session_docs
+                WHERE repo_path = ?
+                """,
+                (repo_path,),
+            ).fetchone()
+    except sqlite3.Error:
+        return 0, None
 
-    if not copied_any:
-        index_lines.extend(["## No Memories Yet", "- No project memories found.", ""])
-    (memory_root / "index.md").write_text("\n".join(index_lines), encoding="utf-8")
-    return memory_root, str(temp_root)
-
-
-def _count_memory_files(memory_root: Path) -> int:
-    """Count markdown memory files under one memory root."""
-    if not memory_root.exists():
-        return 0
-    return sum(1 for _ in memory_root.rglob("*.md"))
+    if not row:
+        return 0, None
+    return int(row["total"] or 0), str(row["latest_start_time"] or "") or None
 
 
 def _queue_counts_for_repo(
@@ -407,6 +393,7 @@ def api_ask(
     *,
     scope: str = "all",
     project: str | None = None,
+    verbose: bool = False,
 ) -> dict[str, Any]:
     """Run one ask query against the runtime agent and return result dict."""
     config = get_config()
@@ -422,38 +409,231 @@ def api_ask(
         return {
             "answer": str(exc),
             "agent_session_id": "",
-            "memories_used": [],
+            "projects_used": [],
             "error": True,
             "cost_usd": 0.0,
         }
 
-    cleanup_root: str | None = None
-    if normalized_scope == "all" and len(selected_projects) > 1:
-        memory_root_path, cleanup_root = _build_merged_ask_memory_root(selected_projects)
-    elif selected_projects:
-        memory_root_path = _project_memory_root(selected_projects[0][1])
-        _ensure_memory_root_layout(memory_root_path)
-    else:
-        memory_root_path = config.global_data_dir / "memory"
-        _ensure_memory_root_layout(memory_root_path)
-
     agent = LerimRuntime()
-    try:
-        response, session_id, cost_usd = agent.ask(
-            question, cwd=str(config.global_data_dir), memory_root=str(memory_root_path)
-        )
-    finally:
-        if cleanup_root:
-            shutil.rmtree(cleanup_root, ignore_errors=True)
+    project_ids: list[str] = []
+    repo_root: str | Path | None = None
+    if selected_projects:
+        for _name, path in selected_projects:
+            identity = resolve_project_identity(path)
+            _context_store(config).register_project(identity)
+            project_ids.append(identity.project_id)
+        repo_root = selected_projects[0][1]
+    response, session_id, cost_usd, debug = agent.ask(
+        question,
+        project_ids=project_ids or None,
+        repo_root=repo_root,
+        include_debug=bool(verbose),
+    )
     error = looks_like_auth_error(response)
-    return {
+    payload = {
         "answer": response,
         "agent_session_id": session_id,
-        "memories_used": [name for name, _ in selected_projects],
+        "projects_used": [name for name, _ in selected_projects],
         "error": bool(error),
         "cost_usd": cost_usd,
         "scope": normalized_scope,
     }
+    if verbose and debug is not None:
+        payload["debug"] = debug
+    return payload
+
+
+def api_query(
+    *,
+    entity: str,
+    mode: str,
+    scope: str = "all",
+    project: str | None = None,
+    kind: str | None = None,
+    status: str | None = None,
+    source_session_id: str | None = None,
+    created_since: str | None = None,
+    created_until: str | None = None,
+    updated_since: str | None = None,
+    updated_until: str | None = None,
+    valid_at: str | None = None,
+    order_by: str = "created_at",
+    limit: int = 20,
+    offset: int = 0,
+    include_total: bool = False,
+) -> dict[str, Any]:
+    """Run one deterministic context query against the canonical context store."""
+    config = get_config()
+    normalized_scope = "project" if str(scope).strip().lower() == "project" else "all"
+    try:
+        selected_projects = _resolve_selected_projects(
+            config=config,
+            scope=normalized_scope,
+            project=project,
+        )
+    except ValueError as exc:
+        return {
+            "error": True,
+            "message": str(exc),
+            "projects_used": [],
+        }
+
+    store = _context_store(config)
+    project_ids: list[str] = []
+    for _name, path in selected_projects:
+        identity = resolve_project_identity(path)
+        store.register_project(identity)
+        project_ids.append(identity.project_id)
+
+    try:
+        payload = store.query(
+            entity=entity,
+            mode=mode,
+            project_ids=project_ids,
+            kind=kind,
+            status=status,
+            source_session_id=source_session_id,
+            created_since=created_since,
+            created_until=created_until,
+            updated_since=updated_since,
+            updated_until=updated_until,
+            valid_at=valid_at,
+            order_by=order_by,
+            limit=limit,
+            offset=offset,
+            include_total=include_total,
+        )
+    except ValueError as exc:
+        return {
+            "error": True,
+            "message": str(exc),
+            "projects_used": [name for name, _ in selected_projects],
+            "status_code": 400,
+        }
+    except sqlite3.Error:
+        return {
+            "error": True,
+            "message": "Context query storage is unavailable.",
+            "projects_used": [name for name, _ in selected_projects],
+            "status_code": 503,
+        }
+    return {
+        **payload,
+        "error": False,
+        "projects_used": [name for name, _ in selected_projects],
+        "scope": normalized_scope,
+    }
+
+
+def api_memory_reset(
+    *,
+    project: str | None = None,
+    all_projects: bool = False,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Reset learned memory for one project or all projects, preserving setup."""
+    if bool(all_projects) == bool(project):
+        return {
+            "error": True,
+            "message": "Provide exactly one of --project or --all.",
+        }
+
+    config = get_config()
+    store = _context_store(config)
+    kept = ["config", "env", "platforms", "projects"]
+    lock: ServiceLock | None = None
+    if not dry_run:
+        lock = ServiceLock(lock_path(WRITER_LOCK_NAME), stale_seconds=60)
+        try:
+            lock.acquire("memory-reset", "lerim memory reset")
+        except LockBusyError as exc:
+            return {
+                "error": True,
+                "message": (
+                    f"Cannot reset memory while sync or maintain is writing. {exc}"
+                ),
+            }
+
+    try:
+        if all_projects:
+            context_counts = (
+                store.count_all_memory() if dry_run else store.reset_all_memory()
+            )
+            session_counts = (
+                count_all_session_state() if dry_run else reset_all_session_state()
+            )
+            cloud_state_path = config.global_data_dir / "cloud_shipper_state.json"
+            cloud_state_count = 1 if cloud_state_path.exists() else 0
+            if not dry_run and cloud_state_path.exists():
+                cloud_state_path.unlink()
+            return {
+                "error": False,
+                "scope": "all",
+                "project": None,
+                "dry_run": dry_run,
+                "deleted": {
+                    **context_counts,
+                    **session_counts,
+                    "cloud_shipper_state": cloud_state_count,
+                },
+                "kept": kept,
+                "notes": [],
+            }
+
+        try:
+            selected = _resolve_selected_projects(
+                config=config,
+                scope="project",
+                project=project,
+            )
+        except ValueError as exc:
+            return {"error": True, "message": str(exc)}
+        if not selected:
+            return {
+                "error": True,
+                "message": "No registered project matched reset scope.",
+            }
+
+        project_name, project_path = selected[0]
+        identity = resolve_project_identity(project_path)
+        context_counts = (
+            store.count_project_memory(identity.project_id)
+            if dry_run
+            else store.reset_project_memory(identity.project_id)
+        )
+        session_counts = (
+            count_indexed_sessions_for_project(str(project_path))
+            if dry_run
+            else reset_indexed_sessions_for_project(str(project_path))
+        )
+        return {
+            "error": False,
+            "scope": "project",
+            "project": project_name,
+            "project_path": str(project_path),
+            "project_id": identity.project_id,
+            "dry_run": dry_run,
+            "deleted": {
+                **context_counts,
+                **session_counts,
+                "cloud_shipper_state": 0,
+            },
+            "kept": kept,
+            "notes": [
+                "service_runs unchanged for project reset because service runs are global",
+                "cloud_shipper_state unchanged for project reset because watermarks are global",
+            ],
+        }
+    finally:
+        if not dry_run:
+            try:
+                remove_legacy_memory_dir(config.global_data_dir)
+            except Exception as exc:
+                from lerim.config.logging import logger
+
+                logger.warning("legacy memory cleanup failed: {}", exc)
+        if lock is not None:
+            lock.release()
 
 
 def api_sync(
@@ -468,7 +648,7 @@ def api_sync(
     dry_run: bool = False,
     ignore_lock: bool = False,
 ) -> dict[str, Any]:
-    """Run one sync cycle and return summary dict."""
+    """Run one blocking sync cycle and return a summary dict."""
     config = get_config()
     window_start, window_end = resolve_window_bounds(
         window=window or f"{config.sync_window_days}d",
@@ -490,26 +670,28 @@ def api_sync(
             window_end=window_end,
         )
     queue_health = queue_health_snapshot()
-    payload: dict[str, Any] = {"code": code, **asdict(summary), "queue_health": queue_health}
+    payload: dict[str, Any] = {
+        "code": code,
+        **asdict(summary),
+        "queue_health": queue_health,
+    }
     if queue_health.get("degraded"):
-        payload["warning"] = (
-            "Queue degraded. "
-            + str(queue_health.get("advice") or "Run `lerim queue --failed`.")
+        payload["warning"] = "Queue degraded. " + str(
+            queue_health.get("advice") or "Run `lerim queue --failed`."
         )
     return payload
 
 
-def api_maintain(force: bool = False, dry_run: bool = False) -> dict[str, Any]:
-    """Run one maintain cycle and return result dict."""
+def api_maintain(dry_run: bool = False) -> dict[str, Any]:
+    """Run one blocking maintain cycle and return a result dict."""
     config = get_config()
     with ollama_lifecycle(config):
-        code, payload = run_maintain_once(force=force, dry_run=dry_run)
+        code, payload = run_maintain_once(dry_run=dry_run)
     queue_health = queue_health_snapshot()
     result: dict[str, Any] = {"code": code, **payload, "queue_health": queue_health}
     if queue_health.get("degraded"):
-        result["warning"] = (
-            "Queue degraded. "
-            + str(queue_health.get("advice") or "Run `lerim queue --failed`.")
+        result["warning"] = "Queue degraded. " + str(
+            queue_health.get("advice") or "Run `lerim queue --failed`."
         )
     return result
 
@@ -531,6 +713,50 @@ def _duration_ms_from_run(run: dict[str, Any]) -> int | None:
     if not started or not completed:
         return None
     return int((completed - started).total_seconds() * 1000)
+
+
+def _schedule_item(
+    *,
+    latest: dict[str, Any] | None,
+    interval_minutes: int,
+    now: datetime,
+) -> dict[str, Any]:
+    """Build public schedule metadata for one recurring daemon task."""
+    interval_seconds = max(int(interval_minutes) * 60, 30)
+    latest = latest or {}
+    status = str(latest.get("status") or "").strip().lower()
+    started_at = str(latest.get("started_at") or "").strip()
+    completed_at = str(latest.get("completed_at") or "").strip()
+    running = status == "started" and not completed_at
+
+    anchor = _parse_iso_time(completed_at) or _parse_iso_time(started_at)
+    next_due: datetime | None = None
+    seconds_until: int | None = None
+    if not running:
+        next_due = (anchor + timedelta(seconds=interval_seconds)) if anchor else now
+        seconds_until = max(0, int((next_due - now).total_seconds()))
+
+    return {
+        "interval_minutes": int(interval_minutes),
+        "interval_seconds": interval_seconds,
+        "running": running,
+        "last_status": status or None,
+        "last_started_at": started_at or None,
+        "last_completed_at": completed_at or None,
+        "next_due_at": next_due.isoformat() if next_due else None,
+        "seconds_until_next": seconds_until,
+    }
+
+
+def _sync_metrics_from_details(details: dict[str, Any]) -> dict[str, Any]:
+    """Return the structured sync metrics payload from service-run details."""
+    sync_metrics = details.get("sync_metrics")
+    return sync_metrics if isinstance(sync_metrics, dict) else {}
+
+
+def _public_error_message(raw: Any) -> str:
+    """Return a public-safe error marker without internal paths or provider details."""
+    return "Error details hidden" if str(raw or "").strip() else ""
 
 
 def _normalize_activity_item(run: dict[str, Any]) -> dict[str, Any]:
@@ -557,7 +783,7 @@ def _normalize_activity_item(run: dict[str, Any]) -> dict[str, Any]:
         "duration_ms": _duration_ms_from_run(run),
         "projects": project_names,
         "project_label": project_label,
-        "error": str(details.get("error") or ""),
+        "error": _public_error_message(details.get("error")),
     }
 
     if op_type == "maintain":
@@ -571,18 +797,6 @@ def _normalize_activity_item(run: dict[str, Any]) -> dict[str, Any]:
             if isinstance(maintain_metrics.get("counts"), dict)
             else {}
         )
-        if not counts:
-            agg = {"merged": 0, "archived": 0, "consolidated": 0, "unchanged": 0}
-            projects = details.get("projects") if isinstance(details.get("projects"), dict) else {}
-            for project_result in projects.values():
-                if not isinstance(project_result, dict):
-                    continue
-                raw = project_result.get("counts") if isinstance(project_result.get("counts"), dict) else {}
-                agg["merged"] += int(raw.get("merged") or 0)
-                agg["archived"] += int(raw.get("archived") or raw.get("decayed") or 0)
-                agg["consolidated"] += int(raw.get("consolidated") or 0)
-                agg["unchanged"] += int(raw.get("unchanged") or 0)
-            counts = agg
         base.update(
             {
                 "maintain_counts": {
@@ -591,50 +805,24 @@ def _normalize_activity_item(run: dict[str, Any]) -> dict[str, Any]:
                     "consolidated": int(counts.get("consolidated") or 0),
                     "unchanged": int(counts.get("unchanged") or 0),
                 },
-                "memories_new": int(maintain_metrics.get("memories_new") or 0),
-                "memories_updated": int(maintain_metrics.get("memories_updated") or 0),
-                "memories_archived": int(maintain_metrics.get("memories_archived") or 0),
-                "index_updated": bool(maintain_metrics.get("index_updated")),
+                "records_created": int(maintain_metrics.get("records_created") or 0),
+                "records_updated": int(maintain_metrics.get("records_updated") or 0),
+                "records_archived": int(maintain_metrics.get("records_archived") or 0),
             }
         )
         return base
 
-    sync_metrics = details.get("sync_metrics") if isinstance(details.get("sync_metrics"), dict) else {}
+    sync_metrics = _sync_metrics_from_details(details)
     base.update(
         {
-            "sessions_analyzed": int(
-                sync_metrics.get("sessions_analyzed")
-                or details.get("indexed_sessions")
-                or details.get("queued_sessions")
-                or 0
-            ),
-            "sessions_extracted": int(
-                sync_metrics.get("sessions_extracted")
-                or details.get("extracted_sessions")
-                or 0
-            ),
-            "sessions_failed": int(
-                sync_metrics.get("sessions_failed")
-                or details.get("failed_sessions")
-                or 0
-            ),
-            "sessions_skipped": int(
-                sync_metrics.get("sessions_skipped")
-                or details.get("skipped_sessions")
-                or 0
-            ),
-            "memories_new": int(
-                sync_metrics.get("memories_new")
-                or details.get("learnings_new")
-                or 0
-            ),
-            "memories_updated": int(
-                sync_metrics.get("memories_updated")
-                or details.get("learnings_updated")
-                or 0
-            ),
-            "memories_archived": int(sync_metrics.get("memories_archived") or 0),
-            "index_updated": bool(sync_metrics.get("index_updated")),
+            "sessions_analyzed": int(sync_metrics.get("sessions_analyzed") or 0),
+            "sessions_extracted": int(sync_metrics.get("sessions_extracted") or 0),
+            "sessions_failed": int(sync_metrics.get("sessions_failed") or 0),
+            "sessions_skipped": int(sync_metrics.get("sessions_skipped") or 0),
+            "skipped_unscoped": int(sync_metrics.get("skipped_unscoped") or 0),
+            "records_created": int(sync_metrics.get("records_created") or 0),
+            "records_updated": int(sync_metrics.get("records_updated") or 0),
+            "records_archived": int(sync_metrics.get("records_archived") or 0),
         }
     )
     return base
@@ -648,6 +836,7 @@ def _recent_activity(
     """Return normalized recent service activity for status UI."""
     rows = list_service_runs(limit=max(1, int(limit)))
     items = [_normalize_activity_item(run) for run in rows]
+    items = [item for item in items if not _is_empty_activity_item(item)]
     if allowed_projects:
         filtered: list[dict[str, Any]] = []
         for item in items:
@@ -659,6 +848,71 @@ def _recent_activity(
                 filtered.append(item)
         items = filtered
     return items
+
+
+def _is_empty_activity_item(item: dict[str, Any]) -> bool:
+    """Return whether an activity row carries no project scope and no useful counters."""
+    return (
+        not item.get("projects")
+        and not item.get("error")
+        and int(item.get("sessions_analyzed") or 0) == 0
+        and int(item.get("sessions_extracted") or 0) == 0
+        and int(item.get("sessions_failed") or 0) == 0
+        and int(item.get("sessions_skipped") or 0) == 0
+        and int(item.get("skipped_unscoped") or 0) == 0
+        and int(item.get("records_created") or 0) == 0
+        and int(item.get("records_updated") or 0) == 0
+        and int(item.get("records_archived") or 0) == 0
+        and not item.get("maintain_counts")
+    )
+
+
+def _normalize_latest_run(run: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Return a stable latest-run payload with normalized record-era fields only."""
+    if not isinstance(run, dict):
+        return None
+    details = run.get("details") if isinstance(run.get("details"), dict) else {}
+    normalized = _normalize_activity_item(run)
+    details_payload: dict[str, Any] = {
+        "projects": normalized.get("projects") or [],
+        "project_label": normalized.get("project_label") or "",
+        "error": _public_error_message(details.get("error")),
+    }
+    if str(run.get("job_type") or "") == "maintain":
+        details_payload["maintain_counts"] = normalized.get("maintain_counts") or {}
+        details_payload["records_created"] = int(normalized.get("records_created") or 0)
+        details_payload["records_updated"] = int(normalized.get("records_updated") or 0)
+        details_payload["records_archived"] = int(
+            normalized.get("records_archived") or 0
+        )
+    else:
+        details_payload["sessions_analyzed"] = int(
+            normalized.get("sessions_analyzed") or 0
+        )
+        details_payload["sessions_extracted"] = int(
+            normalized.get("sessions_extracted") or 0
+        )
+        details_payload["sessions_failed"] = int(normalized.get("sessions_failed") or 0)
+        details_payload["sessions_skipped"] = int(
+            normalized.get("sessions_skipped") or 0
+        )
+        details_payload["records_created"] = int(normalized.get("records_created") or 0)
+        details_payload["records_updated"] = int(normalized.get("records_updated") or 0)
+        details_payload["records_archived"] = int(
+            normalized.get("records_archived") or 0
+        )
+        details_payload["skipped_unscoped"] = int(
+            normalized.get("skipped_unscoped") or 0
+        )
+    return {
+        "id": run.get("id"),
+        "job_type": run.get("job_type"),
+        "status": run.get("status"),
+        "started_at": run.get("started_at"),
+        "completed_at": run.get("completed_at"),
+        "trigger": run.get("trigger"),
+        "details": details_payload,
+    }
 
 
 def _running_activity_rows(
@@ -681,7 +935,9 @@ def _running_activity_rows(
         repo_path = str(job.get("repo_path") or "").strip()
         if allowed_repo_paths and repo_path not in allowed_repo_paths:
             continue
-        project_name = repo_to_name.get(repo_path) or (Path(repo_path).name if repo_path else "global")
+        project_name = repo_to_name.get(repo_path) or (
+            Path(repo_path).name if repo_path else "global"
+        )
         row = grouped.setdefault(
             project_name,
             {
@@ -696,10 +952,9 @@ def _running_activity_rows(
                 "sessions_extracted": 0,
                 "sessions_failed": 0,
                 "sessions_skipped": 0,
-                "memories_new": 0,
-                "memories_updated": 0,
-                "memories_archived": 0,
-                "index_updated": False,
+                "records_created": 0,
+                "records_updated": 0,
+                "records_archived": 0,
             },
         )
         row["sessions_analyzed"] = int(row.get("sessions_analyzed") or 0) + 1
@@ -713,6 +968,39 @@ def _running_activity_rows(
     return items
 
 
+def _public_platforms(platforms: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return platform metadata without local agent paths."""
+    output: list[dict[str, Any]] = []
+    for item in platforms:
+        public_item: dict[str, Any] = {
+            "name": str(item.get("name") or ""),
+            "connected_at": item.get("connected_at") or "",
+            "session_count": int(item.get("session_count") or 0),
+            "exists": bool(item.get("exists")),
+        }
+        status = str(item.get("status") or "").strip()
+        if status:
+            public_item["status"] = status
+        validation = item.get("validation")
+        if isinstance(validation, dict):
+            public_item["validation"] = {"ok": bool(validation.get("ok"))}
+        output.append(public_item)
+    return output
+
+
+def _runtime_identity() -> dict[str, Any]:
+    """Return runtime build identity surfaced by Docker or direct execution."""
+    source = os.environ.get(RUNTIME_SOURCE_ENV) or "direct"
+    identity: dict[str, Any] = {
+        "version": __version__,
+        "source": source,
+    }
+    image = os.environ.get(RUNTIME_IMAGE_ENV)
+    if image:
+        identity["image"] = image
+    return identity
+
+
 def api_status(
     *,
     scope: str = "all",
@@ -721,7 +1009,6 @@ def api_status(
     """Return runtime status summary."""
     config = get_config()
     normalized_scope = "project" if str(scope).strip().lower() == "project" else "all"
-    selection_error: str | None = None
     try:
         selected_projects = _resolve_selected_projects(
             config=config,
@@ -729,15 +1016,27 @@ def api_status(
             project=project,
         )
     except ValueError as exc:
-        selection_error = str(exc)
-        selected_projects = []
+        return {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "runtime": _runtime_identity(),
+            "error": str(exc),
+            "projects": [],
+            "scope": {
+                "strict_project_only": True,
+                "mode": normalized_scope,
+                "skipped_unscoped": 0,
+            },
+        }
 
     projects_payload: list[dict[str, Any]] = []
-    total_memory = 0
+    total_records = 0
     for name, path in selected_projects:
-        memory_root = _project_memory_root(path)
-        memory_count = _count_memory_files(memory_root)
-        total_memory += memory_count
+        record_count = _count_project_records(config, path)
+        total_records += record_count
+        indexed_sessions_count, latest_session_start_time = _session_stats_for_repo(
+            sessions_db_path=config.sessions_db_path,
+            repo_path=str(path),
+        )
         queue_counts, blocked_run_id, last_error = _queue_counts_for_repo(
             sessions_db_path=config.sessions_db_path,
             repo_path=str(path),
@@ -745,36 +1044,71 @@ def api_status(
         projects_payload.append(
             {
                 "name": name,
-                "path": str(path),
-                "exists": path.exists(),
-                "memory_dir": str(memory_root),
-                "memory_count": memory_count,
+                "project_id": resolve_project_identity(path).project_id,
+                "record_count": record_count,
+                "indexed_sessions_count": indexed_sessions_count,
+                "latest_session_start_time": latest_session_start_time,
                 "queue": queue_counts,
                 "oldest_blocked_run_id": blocked_run_id,
-                "last_error": last_error,
+                "last_error": _public_error_message(last_error),
             }
         )
     if not projects_payload and normalized_scope == "all":
-        total_memory = _count_memory_files(config.global_data_dir / "memory")
+        total_records = 0
 
-    latest_sync = latest_service_run("sync")
-    latest_maintain = latest_service_run("maintain")
+    now = datetime.now(timezone.utc)
+    latest_sync_raw = latest_service_run("sync")
+    latest_maintain_raw = latest_service_run("maintain")
     queue = count_session_jobs_by_status()
     queue_health = queue_health_snapshot()
-    latest_sync_details = (latest_sync or {}).get("details") or {}
+    latest_sync_details = (latest_sync_raw or {}).get("details") or {}
+    latest_sync_metrics = (
+        _sync_metrics_from_details(latest_sync_details)
+        if isinstance(latest_sync_details, dict)
+        else {}
+    )
     unscoped_by_agent = count_unscoped_sessions_by_agent(projects=config.projects)
 
     selected_project_names = {name for name, _ in selected_projects}
 
+    platforms = _public_platforms(list_platforms(config.platforms_path))
+    recent_activity = (
+        _running_activity_rows(selected_projects=selected_projects)
+        + _recent_activity(
+            limit=12,
+            allowed_projects=selected_project_names
+            if normalized_scope == "project"
+            else None,
+        )
+    )[:12]
+
+    latest_sync = _normalize_latest_run(latest_sync_raw)
+
     payload: dict[str, Any] = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "connected_agents": list(config.agents.keys()),
-        "platforms": list_platforms(config.platforms_path),
-        "memory_count": total_memory,
+        "timestamp": now.isoformat(),
+        "runtime": _runtime_identity(),
+        "connected_agents": [
+            str(item.get("name") or "") for item in platforms if item.get("name")
+        ],
+        "platforms": platforms,
+        "record_count": total_records,
         "sessions_indexed_count": count_fts_indexed(),
         "queue": queue,
         "queue_health": queue_health,
         "projects": projects_payload,
+        "sync_window_days": config.sync_window_days,
+        "schedule": {
+            "sync": _schedule_item(
+                latest=latest_sync_raw,
+                interval_minutes=config.sync_interval_minutes,
+                now=now,
+            ),
+            "maintain": _schedule_item(
+                latest=latest_maintain_raw,
+                interval_minutes=config.maintain_interval_minutes,
+                now=now,
+            ),
+        },
         "unscoped_sessions": {
             "total": sum(unscoped_by_agent.values()),
             "by_agent": unscoped_by_agent,
@@ -782,33 +1116,27 @@ def api_status(
         "scope": {
             "strict_project_only": True,
             "mode": normalized_scope,
-            "skipped_unscoped": int(latest_sync_details.get("skipped_unscoped") or 0),
+            "skipped_unscoped": int(latest_sync_metrics.get("skipped_unscoped") or 0),
         },
         "latest_sync": latest_sync,
-        "latest_maintain": latest_maintain,
-        "recent_activity": (
-            _running_activity_rows(selected_projects=selected_projects)
-            + _recent_activity(
-                limit=12,
-                allowed_projects=selected_project_names if normalized_scope == "project" else None,
-            )
-        )[:12],
+        "latest_maintain": _normalize_latest_run(latest_maintain_raw),
+        "recent_activity": recent_activity,
     }
-    if selection_error:
-        payload["error"] = selection_error
     return payload
 
 
 def api_connect_list() -> list[dict[str, Any]]:
     """Return list of connected platforms."""
     config = get_config()
-    return list_platforms(config.platforms_path)
+    return _public_platforms(list_platforms(config.platforms_path))
 
 
 def api_connect(platform: str, path: str | None = None) -> dict[str, Any]:
     """Connect a platform and return result."""
     config = get_config()
-    return connect_platform(config.platforms_path, platform, custom_path=path)
+    result = connect_platform(config.platforms_path, platform, custom_path=path)
+    public = _public_platforms([result])
+    return public[0] if public else {"name": platform, "status": "unknown_platform"}
 
 
 # ── Job queue management ─────────────────────────────────────────────
@@ -816,64 +1144,71 @@ def api_connect(platform: str, path: str | None = None) -> dict[str, Any]:
 
 def api_retry_job(run_id: str) -> dict[str, Any]:
     """Retry a dead_letter job, returning result."""
-    ok = retry_session_job(run_id)
-    return {"retried": ok, "run_id": run_id, "queue": count_session_jobs_by_status()}
+    return _queue_action_result(
+        run_id=run_id,
+        result_key="retried",
+        mutate=retry_session_job,
+    )
 
 
 def api_skip_job(run_id: str) -> dict[str, Any]:
     """Skip a dead_letter job, returning result."""
-    ok = skip_session_job(run_id)
-    return {"skipped": ok, "run_id": run_id, "queue": count_session_jobs_by_status()}
+    return _queue_action_result(
+        run_id=run_id,
+        result_key="skipped",
+        mutate=skip_session_job,
+    )
 
 
 def api_retry_all_dead_letter() -> dict[str, Any]:
     """Retry all dead_letter jobs across all projects."""
-    dead = list_queue_jobs(status_filter="dead_letter")
-    retried = 0
-    for job in dead:
-        rid = str(job.get("run_id") or "")
-        if rid and retry_session_job(rid):
-            retried += 1
-    return {"retried": retried, "queue": count_session_jobs_by_status()}
+    return _queue_bulk_action_result(
+        result_key="retried",
+        mutate_all=retry_all_dead_letter_jobs,
+    )
 
 
 def api_skip_all_dead_letter() -> dict[str, Any]:
     """Skip all dead_letter jobs across all projects."""
-    dead = list_queue_jobs(status_filter="dead_letter")
-    skipped = 0
-    for job in dead:
-        rid = str(job.get("run_id") or "")
-        if rid and skip_session_job(rid):
-            skipped += 1
-    return {"skipped": skipped, "queue": count_session_jobs_by_status()}
+    return _queue_bulk_action_result(
+        result_key="skipped",
+        mutate_all=skip_all_dead_letter_jobs,
+    )
+
+
+def _queue_action_result(
+    *,
+    run_id: str,
+    result_key: str,
+    mutate: Any,
+) -> dict[str, Any]:
+    """Apply one queue mutation and return the common action payload."""
+    ok = mutate(run_id)
+    return {result_key: ok, "run_id": run_id, "queue": count_session_jobs_by_status()}
+
+
+def _queue_bulk_action_result(*, result_key: str, mutate_all: Any) -> dict[str, Any]:
+    """Apply one queue mutation to every dead-letter job."""
+    changed = int(mutate_all())
+    return {result_key: changed, "queue": count_session_jobs_by_status()}
 
 
 def api_queue_jobs(
     status: str | None = None,
     project: str | None = None,
-    project_like: str | None = None,
 ) -> dict[str, Any]:
     """List queue jobs with optional filters."""
     project_filter: str | None = None
     project_exact = False
     if project:
         config = get_config()
-        try:
-            selected = _resolve_selected_projects(
-                config=config, scope="project", project=project
-            )
-        except ValueError:
-            # Backward-compatible fallback for HTTP/API callers that still
-            # pass free-form project substrings.
-            selected = []
-            project_filter = str(project)
-            project_exact = False
+        selected = _resolve_selected_projects(
+            config=config, scope="project", project=project
+        )
         if selected:
             _name, project_path = selected[0]
             project_filter = str(project_path)
             project_exact = True
-    elif project_like:
-        project_filter = project_like
 
     jobs = list_queue_jobs(
         status_filter=status,
@@ -899,45 +1234,57 @@ def api_unscoped(*, limit: int = 50) -> dict[str, Any]:
 # ── Project management ───────────────────────────────────────────────
 
 
-def api_project_list() -> list[dict[str, Any]]:
+def api_project_list(*, include_paths: bool = True) -> list[dict[str, Any]]:
     """Return registered projects from config."""
     config = get_config()
     result: list[dict[str, Any]] = []
     for name, path_str in config.projects.items():
         resolved = Path(path_str).expanduser().resolve()
-        result.append(
-            {
-                "name": name,
-                "path": str(resolved),
-                "exists": resolved.exists(),
-                "has_lerim": (resolved / ".lerim").is_dir(),
-            }
-        )
+        item: dict[str, Any] = {
+            "name": name,
+            "project_id": resolve_project_identity(resolved).project_id,
+            "exists": resolved.exists(),
+        }
+        if include_paths:
+            item["path"] = str(resolved)
+        result.append(item)
     return result
 
 
-def api_project_add(path_str: str) -> dict[str, Any]:
+def _project_config_name(resolved: Path, existing_projects: dict[str, str]) -> str:
+    """Return a deterministic config key for one registered project path."""
+    base_name = resolved.name
+    current = existing_projects.get(base_name)
+    if current is None or Path(current).expanduser().resolve() == resolved:
+        return base_name
+    suffix = hashlib.sha1(str(resolved).encode("utf-8")).hexdigest()[:6]
+    return f"{base_name}-{suffix}"
+
+
+def api_project_add(path_str: str, *, include_paths: bool = True) -> dict[str, Any]:
     """Register a project directory and return status."""
     resolved = Path(path_str).expanduser().resolve()
     if not resolved.is_dir():
-        return {"error": f"Not a directory: {resolved}", "name": None}
+        message = f"Not a directory: {resolved}" if include_paths else "Not a directory"
+        return {"error": message, "name": None}
 
-    name = resolved.name
-    # Create canonical project memory layout under .lerim/
-    lerim_dir = resolved / ".lerim"
-    lerim_dir.mkdir(parents=True, exist_ok=True)
-    memory_root = lerim_dir / "memory"
-    _ensure_memory_root_layout(memory_root)
-
+    config = get_config()
+    name = _project_config_name(resolved, config.projects or {})
     # Update config
     save_config_patch({"projects": {name: str(resolved)}})
+    config = get_config()
+    store = _context_store(config)
+    identity = resolve_project_identity(resolved)
+    store.register_project(identity)
 
-    return {
+    payload: dict[str, Any] = {
         "name": name,
-        "path": str(resolved),
-        "created_lerim_dir": True,
-        "memory_dir": str(memory_root),
+        "project_id": identity.project_id,
     }
+    if include_paths:
+        payload["path"] = str(resolved)
+        payload["context_db_path"] = str(config.context_db_path)
+    return payload
 
 
 def api_project_remove(name: str) -> dict[str, Any]:
@@ -947,8 +1294,9 @@ def api_project_remove(name: str) -> dict[str, Any]:
         return {"error": f"Project not registered: {name}", "removed": False}
 
     existing: dict[str, Any] = {}
-    if USER_CONFIG_PATH.exists():
-        existing = load_toml_file(USER_CONFIG_PATH)
+    user_config_path = get_user_config_path()
+    if user_config_path.exists():
+        existing = load_toml_file(user_config_path)
 
     projects = existing.get("projects", {})
     if isinstance(projects, dict) and name in projects:
@@ -966,234 +1314,19 @@ def api_project_remove(name: str) -> dict[str, Any]:
 def detect_agents() -> dict[str, dict[str, Any]]:
     """Detect available coding agents by checking known default paths."""
     result: dict[str, dict[str, Any]] = {}
-    for name, default_path in AGENT_DEFAULT_PATHS.items():
-        resolved = Path(default_path).expanduser()
+    for name in KNOWN_PLATFORMS:
+        resolved = default_path_for(name)
         result[name] = {
-            "path": str(resolved),
-            "exists": resolved.exists(),
+            "path": str(resolved) if resolved else "",
+            "exists": resolved.exists() if resolved else False,
         }
     return result
-
-
-def docker_available() -> bool:
-    """Check if Docker is installed and the daemon is running."""
-    try:
-        result = subprocess.run(
-            ["docker", "info"],
-            capture_output=True,
-            timeout=10,
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
 
 
 def write_init_config(selected_agents: dict[str, str]) -> Path:
     """Write initial [agents] config and return the config file path."""
     save_config_patch({"agents": selected_agents})
-    return USER_CONFIG_PATH
-
-
-# ── Docker management ────────────────────────────────────────────────
-
-
-COMPOSE_PATH = Path.home() / ".lerim" / "docker-compose.yml"
-GHCR_IMAGE = "ghcr.io/lerim-dev/lerim-cli"
-
-
-_API_KEY_ENV_NAMES = (
-    "ANTHROPIC_API_KEY",
-    "MINIMAX_API_KEY",
-    "OPENAI_API_KEY",
-    "OPENCODE_API_KEY",
-    "OPENROUTER_API_KEY",
-    "ZAI_API_KEY",
-)
-
-
-
-def _find_package_root() -> Path | None:
-    """Locate the Lerim source tree root by walking up from this file."""
-    candidate = Path(__file__).resolve().parent
-    for _ in range(5):
-        if (candidate / "Dockerfile").is_file():
-            return candidate
-        candidate = candidate.parent
-    return None
-
-
-def _generate_compose_yml(build_local: bool = False) -> str:
-    """Generate docker-compose.yml content from current config.
-
-    When *build_local* is True the compose file uses a ``build:`` directive
-    pointing at the local source tree (requires a Dockerfile).  Otherwise it
-    references the pre-built GHCR image tagged with the current version.
-    """
-    config = reload_config()
-    home = str(Path.home())
-
-    # Mount only .lerim/ subdirectories — agent should NOT see source code.
-    # Global lerim data (config, index, cache)
-    lerim_dir = f"{home}/.lerim"
-    volumes = [f"      - {lerim_dir}:{lerim_dir}"]
-
-    # Agent session dirs (read-only — agent reads traces but never modifies them)
-    for _name, path_str in config.agents.items():
-        resolved = str(Path(path_str).expanduser().resolve())
-        volumes.append(f"      - {resolved}:{resolved}:ro")
-
-    # Project .lerim dirs only (NOT the whole project directory)
-    for _name, path_str in config.projects.items():
-        resolved = Path(path_str).expanduser().resolve()
-        lerim_subdir = resolved / ".lerim"
-        volumes.append(f"      - {lerim_subdir}:{lerim_subdir}")
-
-    volumes_block = "\n".join(volumes)
-    port = config.server_port
-
-    # Forward API keys by name only — Docker reads values from host env.
-    # NEVER write secret values into the compose file.
-    env_lines = [
-        f"      - HOME={home}",
-        "      - FASTEMBED_CACHE_PATH=/opt/lerim/models",
-    ]
-    for key in _API_KEY_ENV_NAMES:
-        if os.environ.get(key):
-            env_lines.append(f"      - {key}")
-    # Forward MLflow flag so tracing is enabled inside the container
-    if os.environ.get("LERIM_MLFLOW"):
-        env_lines.append("      - LERIM_MLFLOW")
-    env_block = "\n".join(env_lines)
-
-    if build_local:
-        pkg_root = _find_package_root()
-        if pkg_root is None:
-            raise FileNotFoundError(
-                "Cannot find Dockerfile in the Lerim source tree. "
-                "Use 'lerim up' without --build to pull the GHCR image."
-            )
-        image_or_build = f"    build: {pkg_root}"
-    else:
-        image_or_build = f"    image: {GHCR_IMAGE}:{__version__}"
-
-    # Set working_dir to first registered project's .lerim dir so
-    # git_root_for() can work with the mounted .lerim subdirectory.
-    workdir_line = ""
-    if config.projects:
-        first_project = next(iter(config.projects.values()))
-        resolved_project = Path(first_project).expanduser().resolve()
-        workdir_line = f'\n    working_dir: "{resolved_project / ".lerim"}"'
-
-    # Resolve seccomp profile path (shipped with the package)
-    seccomp_path = Path(__file__).parent / "lerim-seccomp.json"
-    seccomp_line = ""
-    if seccomp_path.exists():
-        seccomp_line = f"\n      - seccomp={seccomp_path}"
-
-    return f"""\
-# Auto-generated by lerim up — do not edit manually.
-# Regenerated from ~/.lerim/config.toml on every `lerim up`.
-services:
-  lerim:
-{image_or_build}
-    container_name: lerim{workdir_line}
-    command: ["--host", "0.0.0.0", "--port", "{port}"]
-    restart: "no"
-    ports:
-      - "127.0.0.1:{port}:{port}"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    # Container hardening
-    read_only: true
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true{seccomp_line}
-    pids_limit: 256
-    mem_limit: 2g
-    tmpfs:
-      - /tmp:size=100M
-      - {home}/.codex:size=50M
-      - {home}/.config:size=10M
-      - /root/.codex:size=50M
-      - /root/.config:size=10M
-    environment:
-{env_block}
-    volumes:
-{volumes_block}
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:{port}/api/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-"""
-
-
-def api_up(build_local: bool = False) -> dict[str, Any]:
-    """Generate compose file and start Docker container.
-
-    When *build_local* is True the image is built from the local Dockerfile
-    instead of pulling the pre-built GHCR image.  Docker output is streamed
-    to stderr in real-time so the user sees pull/build progress.
-    """
-    if not docker_available():
-        return {"error": "Docker is not installed or not running."}
-
-    try:
-        compose_content = _generate_compose_yml(build_local=build_local)
-    except FileNotFoundError as exc:
-        return {"error": str(exc)}
-
-    COMPOSE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    COMPOSE_PATH.write_text(compose_content, encoding="utf-8")
-    # Owner-only read/write — compose file may reference secret key names.
-    COMPOSE_PATH.chmod(0o600)
-
-    cmd = ["docker", "compose", "-f", str(COMPOSE_PATH), "up", "-d"]
-    if build_local:
-        cmd.append("--build")
-
-    try:
-        result = subprocess.run(cmd, timeout=300)
-    except subprocess.TimeoutExpired:
-        return {"error": "Docker compose up timed out after 300 seconds."}
-    if result.returncode != 0:
-        return {"error": "docker compose up failed"}
-
-    return {"status": "started", "compose_path": str(COMPOSE_PATH)}
-
-
-def api_down() -> dict[str, Any]:
-    """Stop Docker container. Reports whether it was actually running."""
-    if not COMPOSE_PATH.exists():
-        return {"status": "not_running", "message": "No compose file found."}
-
-    was_running = is_container_running()
-
-    result = subprocess.run(
-        ["docker", "compose", "-f", str(COMPOSE_PATH), "down"],
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    if result.returncode != 0:
-        return {"error": result.stderr.strip() or "docker compose down failed"}
-    return {"status": "stopped", "was_running": was_running}
-
-
-def is_container_running() -> bool:
-    """Check if the Lerim Docker container API is reachable."""
-    import urllib.request
-    import urllib.error
-
-    config = get_config()
-    url = f"http://localhost:{config.server_port}/api/health"
-    try:
-        req = urllib.request.Request(url, method="GET")
-        with urllib.request.urlopen(req, timeout=2) as resp:
-            return resp.status == 200
-    except (urllib.error.URLError, OSError, TimeoutError):
-        return False
+    return get_user_config_path()
 
 
 if __name__ == "__main__":

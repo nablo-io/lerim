@@ -1,0 +1,14 @@
+case: concise_report_style_durable_rewritten
+summary: Concise decision records with direct decision and why fields should remain active, useful decisions.
+
+expected:
+  must_use_tools:
+    - list_context
+  must_not_use_tools:
+    - archive_context
+    - supersede_context
+  record_text_must_include_all:
+    - queue row
+    - worker ownership
+    - restart
+    - failover

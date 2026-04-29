@@ -1,0 +1,25 @@
+case: runtime_requirement_from_diagnostics
+summary: Diagnostics can reveal a durable runtime requirement without preserving the diagnostic transcript.
+
+expected:
+  episode_count: 1
+  durable_count: 1
+  fact_count: 1
+  must_use_tools:
+    - read_trace
+    - save_context
+  must_not_use_tools:
+    - prune_trace_reads
+  fact_text_must_include_all:
+    - project roots
+    - absolute paths
+  fact_text_must_include_any:
+    - container
+    - mounted
+    - read-only
+    - service
+  fact_text_must_not_include:
+    - queue
+    - status timestamps
+    - command transcript
+    - rebuild timing

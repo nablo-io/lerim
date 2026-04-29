@@ -8,9 +8,7 @@
 [roles.agent]
 provider = "minimax"
 model = "MiniMax-M2.5"
-fallback_models = ["zai:glm-4.7"]
 max_iters_maintain = 30
 max_iters_ask = 30
-thinking = true
 temperature = 1.0
 max_tokens = 32000

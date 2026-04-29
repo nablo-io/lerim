@@ -1,0 +1,5 @@
+{"role": "user", "content": "Tighten the existing storage-boundary record if this is the same meaning. Do not fork it into a duplicate."}
+{"role": "assistant", "content": "I will check existing nearby records before updating anything."}
+{"role": "user", "content": "This session sharpened the main storage split rule: keep product state and queue runtime state separate because lifecycle and recovery semantics differ."}
+{"role": "assistant", "content": "The routing detail about reading context DB for product queries is just the application of that stronger storage-boundary decision."}
+{"role": "user", "content": "Do not update the separate routing record if it is already correct. Improve the main storage-boundary record only."}

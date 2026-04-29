@@ -1,0 +1,7 @@
+case: scope_extract_project_a_does_not_touch_project_b
+expected:
+  changed_project: "alpha"
+  untouched_project: "beta"
+  records_created_in_alpha: 1
+  records_updated_in_alpha: 1
+  beta_version_count: 1

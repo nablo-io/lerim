@@ -1,0 +1,9 @@
+{"role":"user","content":"We need to settle two separate things from this debugging session. First, do not expose raw SQL to normal product agents; DB access should stay behind typed domain tools. Second, the image-processing tests and transforms keep failing on CI because libvips is missing there."}
+{"role":"assistant","content":"Understood. I will keep those as separate candidates only if they stay independent after I read the session details."}
+{"role":"assistant","content":"I checked the tool surface first. The product-agent question is about architecture and control boundaries, not just this one patch."}
+{"role":"assistant","content":"The typed tool path keeps validation, project scoping, and lifecycle rules inside code rather than prompt luck."}
+{"role":"assistant","content":"I also checked the CI failures. The raw symptom is an image pipeline crash, but the durable point is the missing dependency requirement."}
+{"role":"assistant","content":"The failing environments run image-enabled code paths but do not install libvips."}
+{"role":"assistant","content":"There was also routine noise: I removed a temporary debug print, shortened one assertion, and renamed a helper variable. Those are not durable context."}
+{"role":"user","content":"Important: do not merge those two ideas. The raw SQL boundary is one architectural decision. The libvips requirement is a separate environment fact."}
+{"role":"assistant","content":"Agreed. One durable decision and one durable fact. The local cleanup details should stay out of durable records."}

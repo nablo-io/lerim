@@ -1,0 +1,24 @@
+case: late_disambiguation_at_end_of_trace
+summary: The agent should read through the final clarifying chunk before writing the durable record.
+
+expected:
+  episode_count: 1
+  durable_count: 1
+  durable_kind_any_of:
+    - decision
+    - fact
+    - constraint
+  min_read_trace_calls: 2
+  must_use_tools:
+    - read_trace
+    - note_trace_findings
+    - save_context
+  must_not_use_tools: []
+  durable_text_must_include_all:
+    - lease
+    - ownership
+    - queue row
+  durable_text_must_include_any:
+    - restart
+    - failover
+  durable_text_must_not_include: []

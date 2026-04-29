@@ -1,0 +1,20 @@
+question: "Why did we separate product state from queue processing state?"
+seed_records:
+  - session_id: "seed-semantic"
+    kind: "decision"
+    title: "Separate product state from queue processing state"
+    body: "Keep product-domain state separate from queue-processing state."
+    decision: "Separate product state from queue-processing state."
+    why: "They have different write patterns, recovery behavior, and failure risks."
+  - session_id: "seed-semantic"
+    kind: "fact"
+    title: "Queue processing state is runtime state"
+    body: "Queue-processing state behaves like runtime coordination state, not user-facing product state."
+expected:
+  must_use_tools:
+    - "search_context"
+    - "get_context"
+  must_not_use_tools: []
+  answer_must_include_all:
+    - "recovery"
+    - "failure"

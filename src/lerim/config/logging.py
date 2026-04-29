@@ -4,8 +4,8 @@ Minimal stderr output for human readability. Detailed agent/LLM tracing
 is handled by OpenTelemetry (see tracing.py), not by log lines.
 
 File sinks persist logs locally for ``lerim logs`` and future tooling:
-- ``~/.lerim/logs/lerim.log``   — human-readable, same format as stderr
-- ``~/.lerim/logs/lerim.jsonl`` — structured JSON-per-line
+- ``~/.lerim/logs/YYYY/MM/DD/lerim.log``   — human-readable process log
+- ``~/.lerim/logs/YYYY/MM/DD/lerim.jsonl`` — structured JSON-per-line log
 """
 
 from __future__ import annotations
@@ -14,18 +14,42 @@ import json as _json
 import logging
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 from loguru import logger as _BASE_LOGGER
+from lerim.config.settings import get_global_data_dir_path
 
 
 _logger = _BASE_LOGGER
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 
-LOG_DIR: Path = Path.home() / ".lerim" / "logs"
-"""Default directory for persistent log files."""
+LOG_ROOT: Path = get_global_data_dir_path() / "logs"
+"""Root directory for persistent log files."""
+
+LOG_DIR: Path = LOG_ROOT
+"""Root directory for persistent log files. Kept for callers/tests."""
+
+
+def dated_log_dir(moment: datetime | None = None, *, root: Path | None = None) -> Path:
+    """Return the UTC day directory for persistent logs."""
+    when = moment or datetime.now(timezone.utc)
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    when = when.astimezone(timezone.utc)
+    base = root or LOG_DIR
+    return base / f"{when.year:04d}" / f"{when.month:02d}" / f"{when.day:02d}"
+
+
+def log_file_path(filename: str, moment: datetime | None = None) -> Path:
+    """Return the dated path for one log filename."""
+    return dated_log_dir(moment) / filename
+
+
+def iter_log_files(filename: str = "lerim.jsonl") -> list[Path]:
+    """Return dated log files in chronological path order."""
+    return sorted(LOG_DIR.glob(f"[0-9][0-9][0-9][0-9]/[0-9][0-9]/[0-9][0-9]/{filename}"))
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -47,6 +71,8 @@ def _log_filter(record: dict) -> bool:
     logger_name = str(record.get("name") or "")
     if logger_name.startswith("openai"):
         return _env_flag("LERIM_LOG_OPENAI_HTTP", default=False)
+    if logger_name.startswith("anthropic"):
+        return _env_flag("LERIM_LOG_ANTHROPIC_HTTP", default=False)
     if logger_name in ("asyncio", "httpx", "httpcore"):
         return False
     message = str(record.get("message") or "")
@@ -55,61 +81,31 @@ def _log_filter(record: dict) -> bool:
     return True
 
 
+class _DailyTextSink:
+    """Loguru sink that writes formatted text to the current day file."""
+
+    def __init__(self, filename: str) -> None:
+        self._filename = filename
+
+    def write(self, message: str) -> None:
+        """Write one already-formatted log line to the record's day file."""
+        record = message.record  # type: ignore[attr-defined]
+        path = log_file_path(self._filename, record["time"])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(str(message))
+
+
 class _JsonlSink:
-    """Custom loguru sink that writes compact JSON lines to a rotating file.
+    """Loguru sink that writes compact JSON lines to the current day file.
 
     Loguru's ``format`` callable is treated as a *template* factory, not a
     final-string producer, so we use a sink object instead to get full control
     over the output bytes.
     """
 
-    def __init__(self, path: Path, rotation: str, retention: int) -> None:
-        self._path = path
-        self._rotation = rotation
-        self._retention = retention
-        self._fh: Any = None
-        self._written: int = 0
-        self._max_bytes = self._parse_rotation(rotation)
-        self._retention_count = retention
-        self._open()
-
-    @staticmethod
-    def _parse_rotation(rotation: str) -> int:
-        """Convert a rotation string like ``'10 MB'`` to bytes."""
-        parts = rotation.strip().split()
-        value = float(parts[0])
-        unit = parts[1].upper() if len(parts) > 1 else "B"
-        multipliers = {"B": 1, "KB": 1024, "MB": 1024 ** 2, "GB": 1024 ** 3}
-        return int(value * multipliers.get(unit, 1))
-
-    def _open(self) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._fh = open(self._path, "a", encoding="utf-8")
-        try:
-            self._written = self._path.stat().st_size
-        except OSError:
-            self._written = 0
-
-    def _rotate(self) -> None:
-        """Rotate files: current -> .1, .1 -> .2, etc. Drop beyond retention."""
-        if self._fh:
-            self._fh.close()
-        # Shift existing rotated files
-        for i in range(self._retention_count, 0, -1):
-            src = self._path.with_suffix(f".jsonl.{i}" if i > 0 else ".jsonl")
-            if i == 1:
-                src = self._path
-            else:
-                src = self._path.parent / f"{self._path.stem}.{i - 1}{self._path.suffix}"
-            dst = self._path.parent / f"{self._path.stem}.{i}{self._path.suffix}"
-            if i == 1:
-                src = self._path
-            if src.exists():
-                if i >= self._retention_count:
-                    src.unlink(missing_ok=True)
-                else:
-                    src.rename(dst)
-        self._open()
+    def __init__(self, filename: str = "lerim.jsonl") -> None:
+        self._filename = filename
 
     def write(self, message: str) -> None:
         """Called by loguru for each log message. ``message`` is the formatted string."""
@@ -122,12 +118,10 @@ class _JsonlSink:
             "extra": {k: v for k, v in (record.get("extra") or {}).items()},
         }
         line = _json.dumps(entry, ensure_ascii=True, default=str) + "\n"
-        if self._fh:
-            self._fh.write(line)
-            self._fh.flush()
-            self._written += len(line.encode("utf-8"))
-            if self._written >= self._max_bytes:
-                self._rotate()
+        path = log_file_path(self._filename, record["time"])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(line)
 
 
 class _InterceptHandler(logging.Handler):
@@ -153,8 +147,8 @@ def configure_logging(level: str | None = None) -> None:
 
     Three sinks are registered:
     1. **stderr** — coloured, human-readable (existing behaviour).
-    2. **~/.lerim/logs/lerim.log** — plain-text, same layout as stderr.
-    3. **~/.lerim/logs/lerim.jsonl** — structured JSON per line.
+    2. **~/.lerim/logs/YYYY/MM/DD/lerim.log** — plain text.
+    3. **~/.lerim/logs/YYYY/MM/DD/lerim.jsonl** — structured JSON per line.
 
     File sinks use the same ``_log_filter`` and log level as stderr.
     """
@@ -177,33 +171,33 @@ def configure_logging(level: str | None = None) -> None:
     )
 
     # ── persistent file sinks ─────────────────────────────────────────
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Human-readable log (for ``tail -f``)
-    _logger.add(
-        str(LOG_DIR / "lerim.log"),
-        level=level,
-        format=_FILE_FORMAT,
-        filter=_log_filter,
-        rotation="10 MB",
-        retention=7,
-        colorize=False,
-        backtrace=False,
-        diagnose=False,
-        encoding="utf-8",
-    )
+        # Human-readable log (for ``tail -f``)
+        _logger.add(
+            _DailyTextSink("lerim.log"),
+            level=level,
+            format=_FILE_FORMAT,
+            filter=_log_filter,
+            colorize=False,
+            backtrace=False,
+            diagnose=False,
+        )
 
-    # Structured JSONL log (for ``lerim logs`` and tooling/dashboard)
-    _jsonl_sink = _JsonlSink(LOG_DIR / "lerim.jsonl", rotation="10 MB", retention=7)
-    _logger.add(
-        _jsonl_sink,
-        level=level,
-        format="{message}",
-        filter=_log_filter,
-        colorize=False,
-        backtrace=False,
-        diagnose=False,
-    )
+        # Structured JSONL log (for ``lerim logs`` and tooling/dashboard)
+        _jsonl_sink = _JsonlSink("lerim.jsonl")
+        _logger.add(
+            _jsonl_sink,
+            level=level,
+            format="{message}",
+            filter=_log_filter,
+            colorize=False,
+            backtrace=False,
+            diagnose=False,
+        )
+    except OSError as exc:
+        _logger.warning(f"persistent Lerim logs disabled: {exc}")
 
     logging.basicConfig(handlers=[_InterceptHandler()], level=0)
 
@@ -212,15 +206,21 @@ def configure_logging(level: str | None = None) -> None:
         logging.getLogger(name).propagate = True
 
     # Silence noisy third-party loggers
-    for noisy in ("httpx", "httpcore", "openai"):
+    for noisy in ("httpx", "httpcore", "openai", "anthropic"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
-configure_logging()
-
 logger = _logger
 
-__all__ = ["logger", "configure_logging", "LOG_DIR"]
+__all__ = [
+    "logger",
+    "configure_logging",
+    "dated_log_dir",
+    "iter_log_files",
+    "log_file_path",
+    "LOG_DIR",
+    "LOG_ROOT",
+]
 
 
 if __name__ == "__main__":

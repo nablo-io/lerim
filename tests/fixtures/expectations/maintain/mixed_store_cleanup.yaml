@@ -1,0 +1,21 @@
+case: mixed_store_cleanup
+summary: Handle archive, supersede, and durable-record rewrite in one maintain pass.
+
+expected:
+  must_use_tools:
+    - list_context
+    - get_context
+    - archive_context
+    - supersede_context
+    - revise_context
+  required_change_kinds:
+    - archive
+    - supersede
+    - update
+  rewritten_text_must_include_all:
+    - provider
+    - adapter
+    - stable contract
+  rewritten_text_must_not_include:
+    - task audit
+    - temporary implementation detail

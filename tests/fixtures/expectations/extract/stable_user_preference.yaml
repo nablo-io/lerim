@@ -1,0 +1,24 @@
+case: stable_user_preference
+summary: A stable workflow preference should become one preference record, not just an episode recap.
+
+expected:
+  episode_count: 1
+  durable_count: 1
+  preference_count: 1
+  must_use_tools:
+    - read_trace
+    - save_context
+  must_not_use_tools:
+    - prune_trace_reads
+  preference_text_must_include_all:
+    - tightly coupled
+  preference_text_must_include_any:
+    - one coherent change
+    - coherence
+    - coherent
+    - do not split
+    - fragmentation
+  preference_text_must_not_include:
+    - helper
+    - temporary log
+    - assertion

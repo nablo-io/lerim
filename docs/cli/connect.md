@@ -4,7 +4,7 @@ Manage agent platform connections for session ingestion.
 
 ## Overview
 
-Register, list, or remove agent platform connections. Lerim reads session data from connected platforms to build memory.
+Register, list, or remove agent platform connections. Lerim reads session data from connected platforms to build shared context records.
 
 Supported platforms: `claude`, `codex`, `cursor`, `opencode`
 
@@ -12,6 +12,7 @@ Supported platforms: `claude`, `codex`, `cursor`, `opencode`
 
 ```bash
 lerim connect list
+lerim connect
 lerim connect auto
 lerim connect <platform> [--path PATH]
 lerim connect remove <platform>
@@ -49,6 +50,7 @@ The path is expanded (`~` is resolved) and must exist on disk.
 
 ```bash
 lerim connect list
+lerim connect
 ```
 
 ### Disconnect a platform
@@ -63,9 +65,9 @@ lerim connect remove claude
   <div class="param-header">
     <span class="param-name">platform_name</span>
     <span class="param-type">string</span>
-    <span class="param-badge required">required</span>
+    <span class="param-badge default">optional</span>
   </div>
-  <p class="param-desc">Action or platform: <code>list</code>, <code>auto</code>, <code>remove</code>, or a platform name.</p>
+  <p class="param-desc">Action or platform: <code>list</code>, <code>auto</code>, <code>remove</code>, or a platform name. Omit it to list connected platforms.</p>
 </div>
 
 <div class="param-field">

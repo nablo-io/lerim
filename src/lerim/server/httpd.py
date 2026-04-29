@@ -1,4 +1,4 @@
-"""HTTP server: JSON APIs for sessions, memories, pipeline, queue, and config.
+"""HTTP server: JSON APIs for sessions, pipeline, queue, and config.
 
 Optional bundled static files under ``dashboard/`` (repo or ``/opt/lerim/dashboard``)
 may serve a local UI. If no ``index.html`` is present, GET ``/`` returns a
@@ -11,7 +11,7 @@ import json
 import mimetypes
 import sqlite3
 import threading
-from collections import defaultdict
+import uuid
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
@@ -19,7 +19,6 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
-from lerim.adapters.common import load_jsonl_dict_lines
 from lerim.config.logging import logger
 from lerim.server.api import (
     api_ask,
@@ -29,6 +28,7 @@ from lerim.server.api import (
     api_maintain,
     api_project_add,
     api_project_list,
+    api_query,
     api_project_remove,
     api_queue_jobs,
     api_retry_all_dead_letter,
@@ -42,13 +42,12 @@ from lerim.server.api import (
 from lerim.config.settings import (
     Config,
     get_config,
-    get_config_sources,
-    get_user_config_path,
     save_config_patch,
 )
-import frontmatter as fm_lib
 
+from lerim.adapters.common import load_jsonl_dict_lines
 from lerim.config.providers import list_provider_models
+from lerim.server.dashboard_data import build_extract_report, extract_session_details
 from lerim.sessions.catalog import (
     count_session_jobs_by_status,
     fetch_session_doc,
@@ -59,43 +58,6 @@ from lerim.sessions.catalog import (
 )
 
 
-def build_extract_report(
-    *,
-    window_start: datetime | None = None,
-    window_end: datetime | None = None,
-    agent_types: list[str] | None = None,
-) -> dict[str, Any]:
-    """Build aggregate extraction stats for dashboard and maintenance views."""
-    rows, _ = list_sessions_window(
-        limit=500,
-        offset=0,
-        agent_types=agent_types,
-        since=window_start,
-        until=window_end,
-    )
-    totals = defaultdict(int)
-    for row in rows:
-        totals["sessions"] += 1
-        totals["messages"] += int(row.get("message_count") or 0)
-        totals["tool_calls"] += int(row.get("tool_call_count") or 0)
-        totals["errors"] += int(row.get("error_count") or 0)
-        totals["tokens"] += int(row.get("total_tokens") or 0)
-    return {
-        "window_start": window_start.isoformat() if window_start else None,
-        "window_end": window_end.isoformat() if window_end else None,
-        "agent_filter": ",".join(agent_types) if agent_types else "all",
-        "aggregates": {"totals": dict(totals)},
-        "narratives": {
-            "at_a_glance": {
-                "working": "",
-                "hindering": "",
-                "quick_wins": "",
-                "horizon": "",
-            }
-        },
-    }
-
-
 _REPO_DASHBOARD = Path(__file__).resolve().parents[3] / "dashboard"
 DASHBOARD_DIR = _REPO_DASHBOARD if _REPO_DASHBOARD.is_dir() else Path("/opt/lerim/dashboard")
 # Public web UI is hosted separately (lerim-cloud); this is the marketing/docs entry.
@@ -103,7 +65,6 @@ _LERIM_CLOUD_UI_URL = "https://lerim.dev"
 MAX_BODY_BYTES = 1_000_000
 READ_ONLY_MESSAGE = "Dashboard is read-only. Use CLI commands for write actions."
 _REPORT_CACHE: dict[str, Any] = {"at": None, "value": None}
-_SESSION_DETAILS_CACHE: dict[str, dict[str, Any]] = {}
 
 
 def _iso_now() -> str:
@@ -112,88 +73,8 @@ def _iso_now() -> str:
 
 
 def _query_param(query: dict[str, list[str]], key: str, default: str = "") -> str:
-	"""Extract a single query parameter value with fallback."""
+	"""Extract a single query parameter value."""
 	return (query.get(key) or [default])[0]
-
-
-def _matches_any_field(item: dict[str, Any], token: str, *fields: str) -> bool:
-	"""Check if token appears in any of the specified fields (case-insensitive)."""
-	return any(token in str(item.get(f, "")).lower() for f in fields)
-
-
-def _extract_session_details(session_path: str) -> dict[str, Any]:
-    """Extract model name and tool usage counts from a session JSONL trace.
-
-    Results are cached per session_path for the server lifetime.
-    Handles Claude, Codex, and OpenCode JSONL formats.
-    """
-    if session_path in _SESSION_DETAILS_CACHE:
-        return _SESSION_DETAILS_CACHE[session_path]
-    result: dict[str, Any] = {"model": "", "tools": {}}
-
-    def _pick_model(row: dict[str, Any], msg_obj: Any, payload_obj: Any) -> str:
-        """Pick best-effort model id from known trace formats."""
-        msg = msg_obj if isinstance(msg_obj, dict) else {}
-        payload = payload_obj if isinstance(payload_obj, dict) else {}
-        model_cfg = row.get("modelConfig")
-        model_info = row.get("modelInfo")
-        payload_info = payload.get("info")
-        collab = payload.get("collaboration_mode")
-        collab_settings = collab.get("settings") if isinstance(collab, dict) else None
-        payload_session = payload.get("session")
-        candidates: list[Any] = [
-            row.get("model"),
-            row.get("model_name"),
-            msg.get("model"),
-            model_cfg.get("modelName") if isinstance(model_cfg, dict) else "",
-            model_info.get("modelName") if isinstance(model_info, dict) else "",
-            payload.get("model"),
-            payload_info.get("model") if isinstance(payload_info, dict) else "",
-            collab_settings.get("model") if isinstance(collab_settings, dict) else "",
-            payload_session.get("model") if isinstance(payload_session, dict) else "",
-        ]
-        for value in candidates:
-            text = str(value or "").strip()
-            if text:
-                return text
-        return ""
-
-    try:
-        rows = load_jsonl_dict_lines(Path(session_path).expanduser())
-        for row in rows:
-            # Claude format: message.model, tool_use blocks in content
-            msg = row.get("message") if isinstance(row.get("message"), dict) else {}
-            payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
-
-            picked_model = _pick_model(row, msg, payload)
-            if picked_model and not result["model"]:
-                result["model"] = picked_model
-
-            for block in (
-                msg.get("content", []) if isinstance(msg.get("content"), list) else []
-            ):
-                if isinstance(block, dict) and block.get("type") == "tool_use":
-                    name = str(block.get("name", "unknown"))
-                    result["tools"][name] = result["tools"].get(name, 0) + 1
-
-            # OpenCode format: model field at top level, tool_name field
-            if row.get("tool_name"):
-                name = str(row["tool_name"])
-                result["tools"][name] = result["tools"].get(name, 0) + 1
-
-            # Cursor format tool call events
-            if row.get("type") == "tool_call" and row.get("name"):
-                name = str(row["name"])
-                result["tools"][name] = result["tools"].get(name, 0) + 1
-
-            # Codex format: type=response_item with function_call
-            if payload.get("type") == "function_call":
-                name = str(payload.get("name", "unknown"))
-                result["tools"][name] = result["tools"].get(name, 0) + 1
-    except Exception:
-        pass
-    _SESSION_DETAILS_CACHE[session_path] = result
-    return result
 
 
 def _parse_int(
@@ -374,7 +255,7 @@ def _compute_stats(rows: list[sqlite3.Row]) -> dict[str, Any]:
             continue
         if not session_path:
             continue
-        details = _extract_session_details(session_path)
+        details = extract_session_details(session_path)
         model_name = str(details.get("model") or "").strip()
         if model_name:
             bucket = model_usage.setdefault(
@@ -404,11 +285,6 @@ def _compute_stats(rows: list[sqlite3.Row]) -> dict[str, Any]:
         "avg_session_duration_ms": avg_duration,
         "error_rate": run_error_rate,
         "duration_data_available": duration_data_available,
-        # Backward-compatible aliases.
-        "avg_messages_per_run": avg_messages,
-        "avg_tool_calls_per_run": avg_tool_calls,
-        "avg_duration_ms": avg_duration,
-        "run_error_rate": run_error_rate,
     }
     daily_activity = []
     for day in sorted(daily.keys()):
@@ -460,434 +336,15 @@ def _load_messages_for_run(run_doc: dict[str, Any]) -> list[dict[str, Any]]:
     return output
 
 
-def _list_memory_files_dashboard() -> list[Path]:
-    """List all markdown files across registered project memory dirs.
-
-    Memory lives per-project only (<project>/.lerim/memory/).
-    Global ~/.lerim/ has no memory dir — it holds infrastructure only.
-    """
-    config = get_config()
-
-    # Collect per-project memory dirs (the only source of knowledge).
-    mem_dirs: list[Path] = []
-    for _name, project_path in config.projects.items():
-        mem_dirs.append(
-            Path(project_path).expanduser().resolve()
-            / ".lerim"
-            / "memory"
-        )
-    # Also include config.memory_dir in case CWD is in an unregistered project.
-    mem_dirs.append(config.memory_dir)
-
-    # Deduplicate by resolved path, then collect .md files from each (flat layout).
-    seen: set[Path] = set()
-    paths: list[Path] = []
-    for d in mem_dirs:
-        resolved = d.resolve()
-        if resolved in seen:
-            continue
-        seen.add(resolved)
-        if resolved.exists():
-            paths.extend(sorted(resolved.rglob("*.md")))
-    return paths
-
-
-def _read_fm(path: Path) -> dict[str, Any] | None:
-    """Read frontmatter from a memory file, returning None on error."""
-    try:
-        post = fm_lib.load(str(path))
-        fm = dict(post.metadata)
-        fm["_body"] = post.content
-        fm["_path"] = str(path)
-        return fm
-    except Exception:
-        return None
-
-
-def _load_all_memories() -> list[dict[str, Any]]:
-    """Load all memory files as frontmatter dicts."""
-    items: list[dict[str, Any]] = []
-    for path in _list_memory_files_dashboard():
-        fm = _read_fm(path)
-        if fm:
-            items.append(fm)
-    return items
-
-
-def _serialize_memory(fm: dict[str, Any], *, with_body: bool) -> dict[str, Any]:
-    """Serialize memory frontmatter dict for dashboard APIs."""
-    payload = {k: v for k, v in fm.items() if not k.startswith("_")}
-    if with_body:
-        payload["body"] = fm.get("_body", "")
-    else:
-        body = str(fm.get("_body", "")).strip()[:240]
-        payload["snippet"] = body
-        payload["preview"] = body
-    return payload
-
-
-def _filter_memories(
-    all_items: list[dict[str, Any]],
-    *,
-    query: str | None,
-    type_filter: str | None,
-    state_filter: str | None,
-    project_filter: str | None,
-) -> list[dict[str, Any]]:
-    """Apply lightweight memory filters for dashboard list/query APIs."""
-    items = all_items
-    if type_filter:
-        items = [item for item in items if _detect_type(item) == type_filter]
-    # state_filter is reserved for future use
-    if project_filter:
-        token = project_filter.strip().lower()
-        if token:
-            items = [
-                item for item in items
-                if _matches_any_field(item, token, "source", "_path")
-            ]
-    if query:
-        token = query.strip().lower()
-        if token:
-            items = [
-                item for item in items
-                if _matches_any_field(item, token, "name", "_body", "description")
-            ]
-    return items
-
-
-def _detect_type(fm: dict[str, Any]) -> str:
-    """Detect memory type from frontmatter 'type' field."""
-    return str(fm.get("type", "project"))
-
-
-def _edge_id(source: str, target: str, kind: str) -> str:
-    """Build stable edge identity for in-memory graph payload dedupe."""
-    return f"{source}|{target}|{kind}"
-
-
-def _memory_graph_options(items: list[dict[str, Any]]) -> dict[str, list[str]]:
-    """Return available filter options derived from loaded memory items."""
-    types = sorted({_detect_type(fm) for fm in items})
-    projects: set[str] = set()
-    for fm in items:
-        # Try to extract project from file path
-        path = str(fm.get("_path", ""))
-        if ".lerim" in path:
-            parent = path.split(".lerim")[0].rstrip("/")
-            if parent:
-                projects.add(Path(parent).name)
-    return {
-        "types": types,
-        "states": [],
-        "projects": sorted(projects),
-        "tags": [],
-    }
-
-
-def _graph_filter_values(filters: dict[str, Any], key: str) -> list[str]:
-    """Normalize scalar/list filter values from graph query payload."""
-    raw = filters.get(key)
-    if isinstance(raw, list):
-        return [str(item).strip() for item in raw if str(item).strip()]
-    if isinstance(raw, str) and raw.strip():
-        return [raw.strip()]
-    return []
-
-
-def _graph_limits(
-    payload: dict[str, Any],
-    *,
-    default_nodes: int,
-    default_edges: int,
-    minimum_edges: int,
-) -> tuple[int, int]:
-    """Resolve node/edge limits with safe bounds."""
-    limits = payload.get("limits") or {}
-    max_nodes = _parse_int(
-        str(limits.get("max_nodes") or str(default_nodes)),
-        default_nodes,
-        minimum=50,
-        maximum=5000,
-    )
-    max_edges = _parse_int(
-        str(limits.get("max_edges") or str(default_edges)),
-        default_edges,
-        minimum=minimum_edges,
-        maximum=12000,
-    )
-    return max_nodes, max_edges
-
-
-def _load_memory_graph_edges(
-    *,
-    memory_ids: list[str] | None = None,
-    seed_memory_id: str | None = None,
-    limit: int = 4000,
-) -> list[tuple[str, str, str, float]]:
-    """Load explicit memory graph edges from optional graph SQLite index."""
-    config = get_config()
-    graph_path = config.global_data_dir / "index" / "graph.sqlite3"
-    if not graph_path.exists():
-        return []
-    try:
-        with sqlite3.connect(graph_path) as conn:
-            conn.row_factory = sqlite3.Row
-            if seed_memory_id:
-                rows = conn.execute(
-                    """
-                    SELECT source_id, target_id, reason, score
-                    FROM graph_edges
-                    WHERE source_id = ? OR target_id = ?
-                    LIMIT ?
-                    """,
-                    (seed_memory_id, seed_memory_id, max(1, int(limit))),
-                ).fetchall()
-            elif memory_ids:
-                placeholders = ",".join("?" for _ in memory_ids)
-                rows = conn.execute(
-                    f"""
-                    SELECT source_id, target_id, reason, score
-                    FROM graph_edges
-                    WHERE source_id IN ({placeholders}) AND target_id IN ({placeholders})
-                    LIMIT ?
-                    """,
-                    [*memory_ids, *memory_ids, max(1, int(limit))],
-                ).fetchall()
-            else:
-                rows = []
-    except sqlite3.Error:
-        return []
-    return [
-        (
-            str(row["source_id"] or ""),
-            str(row["target_id"] or ""),
-            str(row["reason"] or "related"),
-            float(row["score"] or 0.5),
-        )
-        for row in rows
-    ]
-
-
-def _build_memory_graph_payload(
-    *,
-    selected: list[dict[str, Any]],
-    matched_memories: int,
-    max_nodes: int,
-    max_edges: int,
-) -> dict[str, Any]:
-    """Build graph explorer nodes/edges payload from selected memory dicts."""
-    nodes: dict[str, dict[str, Any]] = {}
-    edges: dict[str, dict[str, Any]] = {}
-
-    def add_node(
-        node_id: str, *, label: str, kind: str, score: float, properties: dict[str, Any]
-    ) -> None:
-        """Insert one graph node once, preserving first-seen payload."""
-        if node_id in nodes:
-            return
-        nodes[node_id] = {
-            "id": node_id,
-            "label": label,
-            "kind": kind,
-            "score": score,
-            "properties": properties,
-        }
-
-    def add_edge(
-        source: str,
-        target: str,
-        kind: str,
-        weight: float,
-        properties: dict[str, Any] | None = None,
-    ) -> None:
-        """Insert one graph edge once, keyed by deterministic edge id."""
-        edge_id = _edge_id(source, target, kind)
-        if edge_id in edges:
-            return
-        edges[edge_id] = {
-            "id": edge_id,
-            "source": source,
-            "target": target,
-            "kind": kind,
-            "weight": weight,
-            "properties": properties or {},
-        }
-
-    for fm in selected:
-        mid = str(fm.get("id", ""))
-        memory_id = f"mem:{mid}"
-        type_val = _detect_type(fm)
-        add_node(
-            memory_id,
-            label=str(fm.get("name", "")),
-            kind="memory",
-            score=0.7,
-            properties={
-                "memory_id": mid,
-                "type": type_val,
-                "description": str(fm.get("description", "")),
-                "body_preview": str(fm.get("_body", "")).strip()[:480],
-                "updated": str(fm.get("updated", "")),
-            },
-        )
-        type_id = f"type:{type_val}"
-        add_node(type_id, label=type_val, kind="type", score=0.4, properties={})
-        add_edge(memory_id, type_id, "typed_as", 0.6)
-
-    memory_ids = [str(fm.get("id", "")) for fm in selected if fm.get("id")]
-    for source_id, target_id, reason, score in _load_memory_graph_edges(
-        memory_ids=memory_ids, limit=4000
-    ):
-        source = f"mem:{source_id}"
-        target = f"mem:{target_id}"
-        if source in nodes and target in nodes:
-            add_edge(source, target, reason, score)
-
-    node_values = list(nodes.values())
-    edge_values = list(edges.values())
-    truncated = False
-    warnings: list[str] = []
-    if len(node_values) > max_nodes:
-        node_values = node_values[:max_nodes]
-        allowed = {item["id"] for item in node_values}
-        edge_values = [
-            item
-            for item in edge_values
-            if item["source"] in allowed and item["target"] in allowed
-        ]
-        truncated = True
-    if len(edge_values) > max_edges:
-        edge_values = edge_values[:max_edges]
-        truncated = True
-    if truncated:
-        warnings.append("Result truncated to requested node/edge limits.")
-
-    return {
-        "nodes": node_values,
-        "edges": edge_values,
-        "total_memories": matched_memories,
-        "truncated": truncated,
-        "warnings": warnings,
-    }
-
-
-def _memory_graph_query(payload: dict[str, Any]) -> dict[str, Any]:
-    """Execute memory graph query with filters and return bounded payload."""
-    query = str(payload.get("query") or "")
-    filters = payload.get("filters") if isinstance(payload.get("filters"), dict) else {}
-    max_nodes, max_edges = _graph_limits(
-        payload, default_nodes=200, default_edges=3000, minimum_edges=100
-    )
-
-    type_values = _graph_filter_values(filters or {}, "type")
-    tag_values = _graph_filter_values(filters or {}, "tags")
-
-    all_items = _load_all_memories()
-    selected = _filter_memories(
-        all_items,
-        query=query,
-        type_filter=type_values[0] if type_values else None,
-        state_filter=None,
-        project_filter=None,
-    )
-
-    if type_values:
-        allowed_types = set(type_values)
-        selected = [
-            item for item in selected if _detect_type(item) in allowed_types
-        ]
-    if tag_values:
-        allowed_tags = set(tag_values)
-        selected = [
-            item for item in selected if allowed_tags.intersection(item.get("tags", []))
-        ]
-
-    matched_memories = len(selected)
-    return _build_memory_graph_payload(
-        selected=selected[:max_nodes],
-        matched_memories=matched_memories,
-        max_nodes=max_nodes,
-        max_edges=max_edges,
-    )
-
-
-def _memory_graph_expand(payload: dict[str, Any]) -> dict[str, Any]:
-    """Expand one memory node by related/tag neighborhood."""
-    node_id = str(payload.get("node_id") or "")
-    max_nodes, max_edges = _graph_limits(
-        payload, default_nodes=500, default_edges=1200, minimum_edges=50
-    )
-    if not node_id.startswith("mem:"):
-        return {
-            "nodes": [],
-            "edges": [],
-            "stats": {"added_nodes": 0, "added_edges": 0, "truncated": False},
-            "warnings": ["Only memory node expansion is supported in this build."],
-        }
-    memory_id = node_id.split("mem:", 1)[1]
-    all_items = _load_all_memories()
-    seed = next((fm for fm in all_items if str(fm.get("id", "")) == memory_id), None)
-    if seed is None:
-        return {
-            "nodes": [],
-            "edges": [],
-            "stats": {"added_nodes": 0, "added_edges": 0, "truncated": False},
-            "warnings": ["Selected memory no longer exists."],
-        }
-
-    neighbor_ids: set[str] = {memory_id}
-    seed_tags = set(seed.get("tags", []))
-    for fm in all_items:
-        fid = str(fm.get("id", ""))
-        if fid == memory_id:
-            continue
-        if seed_tags.intersection(fm.get("tags", [])):
-            neighbor_ids.add(fid)
-
-    for source_id, target_id, _reason, _score in _load_memory_graph_edges(
-        seed_memory_id=memory_id, limit=500
-    ):
-        if source_id == memory_id and target_id:
-            neighbor_ids.add(target_id)
-        if target_id == memory_id and source_id:
-            neighbor_ids.add(source_id)
-
-    focused = [fm for fm in all_items if str(fm.get("id", "")) in neighbor_ids]
-    graph = _build_memory_graph_payload(
-        selected=focused[:max_nodes],
-        matched_memories=len(focused),
-        max_nodes=max_nodes,
-        max_edges=max_edges,
-    )
-    return {
-        "nodes": graph["nodes"],
-        "edges": graph["edges"],
-        "stats": {
-            "added_nodes": len(graph["nodes"]),
-            "added_edges": len(graph["edges"]),
-            "truncated": bool(graph.get("stats", {}).get("truncated")),
-        },
-        "warnings": graph.get("warnings", []),
-    }
-
-
 def _serialize_full_config(config: Config) -> dict[str, Any]:
     """Serialize full Config dataclass to a dashboard-friendly JSON dict."""
 
     def _role_dict(role: Any) -> dict[str, Any]:
         """Convert RoleConfig to a dict."""
-        base: dict[str, Any] = {
+        return {
             "provider": role.provider,
             "model": role.model,
-            "api_base": getattr(role, "api_base", ""),
-            "openrouter_provider_order": list(
-                getattr(role, "openrouter_provider_order", ())
-            ),
         }
-        if hasattr(role, "fallback_models"):
-            base["fallback_models"] = list(role.fallback_models)
-        return base
 
     return {
         "server": {
@@ -898,14 +355,21 @@ def _serialize_full_config(config: Config) -> dict[str, Any]:
             "sync_window_days": config.sync_window_days,
             "sync_max_sessions": config.sync_max_sessions,
         },
-        "memory": {
-            "dir": str(config.memory_dir),
+        "embedding": {
+            "model_id": config.embedding_model_id,
+            "semantic_shortlist_size": config.semantic_shortlist_size,
+            "lexical_shortlist_size": config.lexical_shortlist_size,
         },
         "roles": {
             "agent": _role_dict(config.agent_role),
         },
         "mlflow_enabled": config.mlflow_enabled,
-        "data_dir": str(config.data_dir),
+        "auto_unload": config.auto_unload,
+        "cloud_authenticated": config.cloud_token is not None,
+        "connections": {
+            "agents": sorted(config.agents),
+            "projects": sorted(config.projects),
+        },
     }
 
 
@@ -948,9 +412,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return {}
         try:
             parsed = json.loads(body.decode("utf-8"))
-        except json.JSONDecodeError:
-            return {}
-        return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError as exc:
+            raise ValueError("Invalid JSON body") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError("JSON body must be an object")
+        return parsed
 
     def _serve_cloud_stub_html(self) -> None:
         """Serve minimal HTML when no bundled dashboard assets exist."""
@@ -1109,46 +575,6 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
         messages = _load_messages_for_run(run_doc)
         self._json({"messages": messages})
 
-    def _api_memories(self, query: dict[str, list[str]]) -> None:
-        """Return filtered memory list for dashboard memory explorer."""
-        all_items = _load_all_memories()
-        query_text = _query_param(query, "query").strip()
-        type_filter = _query_param(query, "type").strip()
-        state_filter = _query_param(query, "state").strip()
-        project_filter = _query_param(query, "project").strip()
-        items = _filter_memories(
-            all_items,
-            query=query_text,
-            type_filter=type_filter or None,
-            state_filter=state_filter or None,
-            project_filter=project_filter or None,
-        )
-        self._json(
-            {
-                "items": [
-                    _serialize_memory(item, with_body=False) for item in items[:300]
-                ],
-                "total": len(items),
-                "summary": f"{len(items)} memories",
-            }
-        )
-
-    def _api_memory_detail(self, path: str) -> None:
-        """Return full memory details for one memory id."""
-        memory_id = unquote(path.split("/api/memories/", 1)[1])
-        all_items = _load_all_memories()
-        fm = next(
-            (item for item in all_items if str(item.get("id", "")) == memory_id), None
-        )
-        if fm is None:
-            self._error(HTTPStatus.NOT_FOUND, "Memory not found")
-            return
-        self._json({"memory": _serialize_memory(fm, with_body=True)})
-
-    def _api_memory_graph_options(self) -> None:
-        """Return memory-graph filter option lists."""
-        self._json(_memory_graph_options(_load_all_memories()))
-
     def _api_refine_status(self) -> None:
         """Return queue and recent run status for refine panel."""
         payload = {
@@ -1252,8 +678,6 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
         config = get_config()
         payload = {
             "effective": _serialize_full_config(config),
-            "sources": get_config_sources(),
-            "user_config_path": str(get_user_config_path()),
             "read_only": False,
         }
         self._json(payload)
@@ -1271,17 +695,15 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
             "/api/runs/stats": self._api_runs_stats,
             "/api/runs": self._api_runs,
             "/api/search": self._api_search,
-            "/api/memories": self._api_memories,
             "/api/config/models": self._api_config_models,
         }
         if path == "/api/jobs/queue":
             status_f = _query_param(query, "status") or None
             project_f = _query_param(query, "project") or None
-            project_like_f = _query_param(query, "project_like") or None
-            queue_kwargs: dict[str, Any] = {"status": status_f, "project": project_f}
-            if project_like_f:
-                queue_kwargs["project_like"] = project_like_f
-            self._json(api_queue_jobs(**queue_kwargs))
+            try:
+                self._json(api_queue_jobs(status=status_f, project=project_f))
+            except ValueError as exc:
+                self._error(HTTPStatus.BAD_REQUEST, str(exc))
             return
         if path == "/api/status":
             scope = _query_param(query, "scope", "all")
@@ -1307,8 +729,9 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
             "/api/health": lambda: self._json(api_health()),
             "/api/live": self._api_live,
             "/api/connect": lambda: self._json({"platforms": api_connect_list()}),
-            "/api/project/list": lambda: self._json({"projects": api_project_list()}),
-            "/api/memory-graph/options": self._api_memory_graph_options,
+            "/api/project/list": lambda: self._json(
+                {"projects": api_project_list(include_paths=False)}
+            ),
             "/api/refine/status": self._api_refine_status,
             "/api/refine/report": self._api_refine_report,
             "/api/config": self._api_config,
@@ -1322,14 +745,15 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
         if path.startswith("/api/runs/") and path.endswith("/messages"):
             self._api_run_messages(path)
             return
-        if path.startswith("/api/memories/"):
-            self._api_memory_detail(path)
-            return
         self._error(HTTPStatus.NOT_FOUND, "Not found")
 
     def _api_config_save(self) -> None:
         """Save config patch to user config TOML file."""
-        body = self._read_json_body()
+        try:
+            body = self._read_json_body()
+        except ValueError as exc:
+            self._error(HTTPStatus.BAD_REQUEST, str(exc))
+            return
         patch = body.get("patch")
         if not isinstance(patch, dict) or not patch:
             self._error(HTTPStatus.BAD_REQUEST, "Missing 'patch' object in body")
@@ -1339,8 +763,6 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
             self._json(
                 {
                     "effective": updated,
-                    "sources": get_config_sources(),
-                    "user_config_path": str(get_user_config_path()),
                 }
             )
         except Exception as exc:
@@ -1351,32 +773,42 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
 
     def _handle_api_post(self, path: str) -> None:
         """Dispatch POST API routes to supported actions."""
+        def read_body() -> dict[str, Any] | None:
+            try:
+                return self._read_json_body()
+            except ValueError as exc:
+                self._error(HTTPStatus.BAD_REQUEST, str(exc))
+                return None
+
         if path == "/api/ask":
-            body = self._read_json_body()
+            body = read_body()
+            if body is None:
+                return
             question = str(body.get("question") or "").strip()
             if not question:
                 self._error(HTTPStatus.BAD_REQUEST, "Missing 'question'")
                 return
-            if "limit" in body:
+            allowed = {"question", "scope", "project", "verbose"}
+            unknown = sorted(key for key in body if key not in allowed)
+            if unknown:
                 self._error(
                     HTTPStatus.BAD_REQUEST,
-                    "The 'limit' field was removed from /api/ask.",
+                    f"Unsupported field(s): {', '.join(unknown)}",
                 )
                 return
-            import threading
-
             result_holder: list[dict[str, Any]] = []
             scope = str(body.get("scope") or "all")
             project = body.get("project")
             project_name = str(project).strip() if isinstance(project, str) else None
+            verbose = bool(body.get("verbose"))
 
             def _run_ask() -> None:
                 """Execute ask in background thread."""
                 if scope == "all" and not project_name:
-                    result_holder.append(api_ask(question))
+                    result_holder.append(api_ask(question, verbose=verbose))
                 else:
                     result_holder.append(
-                        api_ask(question, scope=scope, project=project_name)
+                        api_ask(question, scope=scope, project=project_name, verbose=verbose)
                     )
 
             thread = threading.Thread(target=_run_ask)
@@ -1387,54 +819,108 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
             else:
                 self._error(HTTPStatus.GATEWAY_TIMEOUT, "Ask timed out")
             return
+        if path == "/api/query":
+            body = read_body()
+            if body is None:
+                return
+            try:
+                limit = int(body.get("limit") or 20)
+                offset = int(body.get("offset") or 0)
+            except (TypeError, ValueError):
+                self._error(HTTPStatus.BAD_REQUEST, "limit and offset must be integers")
+                return
+            result = api_query(
+                entity=str(body.get("entity") or "").strip(),
+                mode=str(body.get("mode") or "").strip(),
+                scope=str(body.get("scope") or "all"),
+                project=str(body.get("project") or "").strip() or None,
+                kind=str(body.get("kind") or "").strip() or None,
+                status=str(body.get("status") or "").strip() or None,
+                source_session_id=str(body.get("source_session_id") or "").strip() or None,
+                created_since=str(body.get("created_since") or "").strip() or None,
+                created_until=str(body.get("created_until") or "").strip() or None,
+                updated_since=str(body.get("updated_since") or "").strip() or None,
+                updated_until=str(body.get("updated_until") or "").strip() or None,
+                valid_at=str(body.get("valid_at") or "").strip() or None,
+                order_by=str(body.get("order_by") or "created_at"),
+                limit=limit,
+                offset=offset,
+                include_total=bool(body.get("include_total")),
+            )
+            if result.get("error"):
+                status = int(result.get("status_code") or HTTPStatus.BAD_REQUEST)
+                self._error(HTTPStatus(status), str(result.get("message") or "query failed"))
+                return
+            self._json(result)
+            return
         if path == "/api/sync":
-            body = self._read_json_body()
-            import threading
-            import uuid
+            body = read_body()
+            if body is None:
+                return
+            if "ignore_lock" in body:
+                self._error(
+                    HTTPStatus.BAD_REQUEST,
+                    "ignore_lock is not supported for /api/sync.",
+                )
+                return
+
+            sync_kwargs = {
+                "agent": body.get("agent"),
+                "window": body.get("window") or None,
+                "since": body.get("since"),
+                "until": body.get("until"),
+                "max_sessions": body.get("max_sessions"),
+                "run_id": body.get("run_id"),
+                "no_extract": bool(body.get("no_extract")),
+                "force": bool(body.get("force")),
+                "dry_run": bool(body.get("dry_run")),
+            }
+            if bool(body.get("blocking")):
+                self._json(api_sync(**sync_kwargs))
+                return
 
             job_id = str(uuid.uuid4())[:8]
 
             def _run_sync() -> None:
                 """Execute sync in background."""
-                api_sync(
-                    agent=body.get("agent"),
-                    window=body.get("window", "7d"),
-                    since=body.get("since"),
-                    until=body.get("until"),
-                    max_sessions=body.get("max_sessions"),
-                    run_id=body.get("run_id"),
-                    no_extract=bool(body.get("no_extract")),
-                    force=bool(body.get("force")),
-                    dry_run=bool(body.get("dry_run")),
-                    ignore_lock=bool(body.get("ignore_lock")),
-                )
+                api_sync(**sync_kwargs)
 
             threading.Thread(
                 target=_run_sync, name=f"sync-{job_id}", daemon=True
             ).start()
-            self._json({"status": "started", "job_id": job_id})
+            self._json({"status": "started", "job_id": job_id, "mode": "async"})
             return
         if path == "/api/maintain":
-            body = self._read_json_body()
-            import threading
-            import uuid
+            body = read_body()
+            if body is None:
+                return
+            if "force" in body:
+                self._error(
+                    HTTPStatus.BAD_REQUEST,
+                    "force is not supported for /api/maintain.",
+                )
+                return
+
+            maintain_kwargs = {"dry_run": bool(body.get("dry_run"))}
+            if bool(body.get("blocking")):
+                self._json(api_maintain(**maintain_kwargs))
+                return
 
             job_id = str(uuid.uuid4())[:8]
 
             def _run_maintain() -> None:
                 """Execute maintain in background."""
-                api_maintain(
-                    force=bool(body.get("force")),
-                    dry_run=bool(body.get("dry_run")),
-                )
+                api_maintain(**maintain_kwargs)
 
             threading.Thread(
                 target=_run_maintain, name=f"maintain-{job_id}", daemon=True
             ).start()
-            self._json({"status": "started", "job_id": job_id})
+            self._json({"status": "started", "job_id": job_id, "mode": "async"})
             return
         if path == "/api/connect":
-            body = self._read_json_body()
+            body = read_body()
+            if body is None:
+                return
             platform = str(body.get("platform") or "").strip()
             if not platform:
                 self._error(HTTPStatus.BAD_REQUEST, "Missing 'platform'")
@@ -1443,19 +929,23 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
             self._json(result)
             return
         if path == "/api/project/add":
-            body = self._read_json_body()
+            body = read_body()
+            if body is None:
+                return
             proj_path = str(body.get("path") or "").strip()
             if not proj_path:
                 self._error(HTTPStatus.BAD_REQUEST, "Missing 'path'")
                 return
-            result = api_project_add(proj_path)
+            result = api_project_add(proj_path, include_paths=False)
             status_code = (
                 HTTPStatus.BAD_REQUEST if result.get("error") else HTTPStatus.OK
             )
             self._json(result, status=status_code)
             return
         if path == "/api/project/remove":
-            body = self._read_json_body()
+            body = read_body()
+            if body is None:
+                return
             name = str(body.get("name") or "").strip()
             if not name:
                 self._error(HTTPStatus.BAD_REQUEST, "Missing 'name'")
@@ -1486,14 +976,6 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
                 self._error(HTTPStatus.BAD_REQUEST, "Missing run_id in path")
                 return
             self._json(api_skip_job(run_id))
-            return
-        if path == "/api/memory-graph/query":
-            payload = self._read_json_body()
-            self._json(_memory_graph_query(payload))
-            return
-        if path == "/api/memory-graph/expand":
-            payload = self._read_json_body()
-            self._json(_memory_graph_expand(payload))
             return
         if path == "/api/config":
             self._api_config_save()

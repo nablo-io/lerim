@@ -1,0 +1,23 @@
+case: reference_extraction
+summary: An external source of truth should become a reference record.
+
+expected:
+  episode_count: 1
+  durable_count: 1
+  reference_count: 1
+  must_use_tools:
+    - read_trace
+    - save_context
+  must_not_use_tools:
+    - revise_context
+  reference_text_must_include_all:
+    - linear
+    - ingest
+  reference_text_must_include_any:
+    - source of truth
+    - future context
+    - authoritative
+    - consult
+  reference_text_must_not_include:
+    - docs/
+    - file path

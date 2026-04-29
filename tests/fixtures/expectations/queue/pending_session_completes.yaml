@@ -1,0 +1,5 @@
+case: pending_session_completes
+expected:
+  final_status: "done"
+  attempts: 1
+  extracted_sessions: 1

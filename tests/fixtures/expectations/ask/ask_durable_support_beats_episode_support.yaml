@@ -1,0 +1,25 @@
+question: "What do we know about rollout failures?"
+seed_records:
+  - session_id: "seed-durable-rollout"
+    record_id: "rec_rollout_guardrail"
+    kind: "constraint"
+    title: "Production rollouts must use canary plus automatic rollback"
+    body: "Production rollouts must use a canary step plus automatic rollback so failures stop before full deployment."
+  - session_id: "seed-episode-rollout"
+    record_id: "rec_rollout_incident"
+    kind: "episode"
+    title: "Rollout failure investigation"
+    body: "Investigated a noisy rollout failure, watched metrics crater, and manually rolled back after the canary alarm fired."
+    user_intent: "Understand the rollout incident."
+    what_happened: "A production rollout failed during canary and required rollback."
+    outcomes: "The team reaffirmed the canary and automatic rollback guardrail."
+expected:
+  must_use_tools:
+    - search_context
+    - get_context
+  must_not_use_tools: []
+  answer_must_include_all:
+    - canary
+    - rollback
+  answer_must_not_include:
+    - support is only episodic

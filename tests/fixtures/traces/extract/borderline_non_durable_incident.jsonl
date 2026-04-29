@@ -1,0 +1,7 @@
+{"role":"user","content":"Please fix the failing order summary smoke test on this branch. It started failing after the last rename."}
+{"role":"assistant","content":"I will reproduce the failure, inspect the fixture, and patch only what is needed."}
+{"tool":"exec_command","args":{"cmd":"uv run pytest tests/smoke/test_order_summary.py -q"},"result":"AssertionError: expected status='queued', got 'pending' from tests/fixtures/order_summary.json"}
+{"tool":"read_file","args":{"path":"tests/fixtures/order_summary.json"},"result":"Fixture still uses the old pending status snapshot from before the branch-only rename."}
+{"tool":"read_file","args":{"path":"src/orders/summary.py"},"result":"Current code already maps the renamed field correctly; only the checked-in branch fixture is stale."}
+{"tool":"apply_patch","args":{"path":"tests/fixtures/order_summary.json"},"result":"Regenerated the stale fixture so it matches current code output."}
+{"role":"assistant","content":"The failure came from a stale branch fixture that had not been regenerated after the rename. The current code path was already correct. This was a local artifact, not a new project rule or durable dependency."}

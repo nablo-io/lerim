@@ -1,0 +1,31 @@
+question: "How many records do we have for this project?"
+seed_records:
+  - session_id: "seed-count"
+    kind: "decision"
+    title: "Separate product state from queue state"
+    body: "Keep product state separate from queue-processing state."
+    decision: "Separate product state from queue-processing state."
+    why: "They have different recovery behavior and failure modes."
+  - session_id: "seed-count"
+    kind: "fact"
+    title: "Image-enabled workflows depend on libvips"
+    body: "Image tests and transforms depend on libvips."
+  - session_id: "seed-count-archived"
+    kind: "decision"
+    status: "archived"
+    valid_from: "2025-01-01T00:00:00+00:00"
+    valid_until: "2026-03-01T00:00:00+00:00"
+    title: "Archived decision should not count by default"
+    body: "Retired decisions should not appear in current exact counts."
+    decision: "Retired decision"
+    why: "It was replaced and is no longer current."
+expected:
+  must_use_tools:
+    - "count_context"
+  must_not_use_tools:
+    - "search_context"
+    - "get_context"
+    - "list_context"
+  answer_must_include_any:
+    - "2"
+    - "two"

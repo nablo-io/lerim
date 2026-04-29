@@ -1,0 +1,5 @@
+case: failed_job_retry_path_completes_on_second_run
+expected:
+  first_status: "failed"
+  second_status: "done"
+  attempts: 2
