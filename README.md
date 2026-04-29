@@ -13,12 +13,16 @@
   <a href="https://pypi.org/project/lerim/"><img src="https://img.shields.io/pypi/v/lerim?style=flat-square&color=2563eb" alt="PyPI version"></a>
   <a href="https://pypi.org/project/lerim/"><img src="https://img.shields.io/pypi/pyversions/lerim?style=flat-square" alt="Python versions"></a>
   <a href="https://github.com/lerim-dev/lerim-cli/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-BSL--1.1-10b981?style=flat-square" alt="License"></a>
+  <a href="https://github.com/lerim-dev/lerim-cli/actions"><img src="https://img.shields.io/github/actions/workflow/status/lerim-dev/lerim-cli/ci.yml?style=flat-square&label=tests" alt="Tests"></a>
+  <a href="https://github.com/lerim-dev/lerim-cli"><img src="https://img.shields.io/github/stars/lerim-dev/lerim-cli?style=flat-square" alt="GitHub stars"></a>
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/lerim/">PyPI</a>
+  <a href="https://lerim.dev/">Website</a>
   ·
   <a href="https://docs.lerim.dev">Docs</a>
+  ·
+  <a href="https://pypi.org/project/lerim/">PyPI</a>
   ·
   <a href="https://github.com/lerim-dev/lerim-cli/blob/main/LICENSE">License</a>
 </p>
@@ -97,6 +101,68 @@ Ask a question:
 lerim ask "What do we already know about the auth flow?"
 ```
 
+## What the Commands Do
+
+### `lerim up`
+
+Starts Lerim in the background so it can watch your workflow and process context jobs.
+
+### `lerim status`
+
+Shows service health and current status.
+
+### `lerim status --live`
+
+Shows live status updates. This is useful for demos and for watching background extraction happen.
+
+### `lerim sync`
+
+Indexes sessions and extracts durable context from recent work. When Lerim is running in the background, sync work is scheduled from your configured intervals.
+
+### `lerim maintain`
+
+Improves context quality over time by merging duplicates, archiving weak records, and refreshing useful context. Background maintenance is also driven by configured intervals.
+
+### `lerim ask`
+
+Lets you ask questions against accumulated project context.
+
+```bash
+lerim ask "Why did we choose SQLite for local metadata?"
+```
+
+## Configuration
+
+`lerim init` creates the default local configuration. You can override settings in:
+
+```text
+~/.lerim/config.toml
+```
+
+API keys are read from environment variables, stored by default in:
+
+```text
+~/.lerim/.env
+```
+
+Example `.env`:
+
+```bash
+MINIMAX_API_KEY=your-key
+OPENROUTER_API_KEY=your-key
+OPENAI_API_KEY=your-key
+ZAI_API_KEY=your-key
+```
+
+Example provider config:
+
+```toml
+[roles.agent]
+provider = "minimax"
+model = "MiniMax-M2.7"
+fallback_models = ["zai:glm-4.7"]
+```
+
 ## How It Works
 
 Lerim has three main flows:
@@ -163,9 +229,25 @@ lerim status
 lerim status --live
 lerim logs --follow
 lerim queue
+lerim queue --failed
 lerim sync
 lerim maintain
 lerim ask "What decisions exist about caching?"
+```
+
+Setup and management:
+
+```bash
+lerim connect auto
+lerim project list
+lerim project remove <name>
+lerim skill install
+```
+
+Alternative to the background service:
+
+```bash
+lerim serve
 ```
 
 ## Development
@@ -191,3 +273,20 @@ Start here if you want to read the codebase:
 - [src/lerim/skills/cli-reference.md](src/lerim/skills/cli-reference.md)
 - [docs/concepts/how-it-works.md](docs/concepts/how-it-works.md)
 - [docs/concepts/context-model.md](docs/concepts/context-model.md)
+
+## Contributing
+
+Contributions are welcome.
+
+Good starting points include:
+
+- session adapters and adding more agents
+- extraction quality
+- context maintenance quality
+- docs and demo examples
+
+Helpful links:
+
+- [Contributing Guide](https://docs.lerim.dev/contributing/getting-started/)
+- [Open issues](https://github.com/lerim-dev/lerim-cli/issues)
+- Agent adapter examples: `src/lerim/adapters/`
