@@ -63,6 +63,7 @@ Lerim fixes that by turning raw traces into reusable context records and making 
 - Local-first storage. Durable context lives in one global SQLite database at `~/.lerim/context.sqlite3`.
 - Shared across agents. What Claude Code learns can be reused by Codex, Cursor, or another supported agent later.
 - Background maintenance. `sync` ingests sessions, `maintain` consolidates overlap and archives stale records, `ask` retrieves relevant precedent.
+- Generated Working Memory. `working-memory` keeps a compact Markdown startup view at `~/.lerim/workspace/current/<project_id>/WORKING_MEMORY.md`.
 - Hybrid retrieval. Lerim combines local ONNX embeddings stored through `sqlite-vec` with SQLite FTS5 and RRF fusion.
 - Clean agent tool surface. The runtime exposes semantic DB-era tools like `list_context`, `search_context`, `get_context`, `save_context`, `revise_context`, and `count_context` instead of file CRUD.
 
@@ -131,6 +132,18 @@ Lets you ask questions against accumulated project context.
 lerim ask "Why did we choose SQLite for local metadata?"
 ```
 
+### `lerim working-memory`
+
+Reads or refreshes a generated Markdown startup context for the current project.
+This is the fast path a coding agent can read at the start of work without
+running retrieval or synthesis in real time.
+
+```bash
+lerim working-memory show
+lerim working-memory status
+lerim working-memory refresh
+```
+
 ## Configuration
 
 `lerim init` creates the default local configuration. You can override settings in:
@@ -165,7 +178,7 @@ fallback_models = ["zai:glm-4.7"]
 
 ## How It Works
 
-Lerim has three main flows:
+Lerim has four main flows:
 
 1. `sync`
    Reads new traces/session metadata and extracts durable context records.
@@ -175,6 +188,10 @@ Lerim has three main flows:
 
 3. `ask`
    Retrieves relevant records and answers a question using the current context layer.
+
+4. `working-memory`
+   Generates a compact, cited Markdown view from recent durable records so agents
+   can start with fast context before querying deeper.
 
 In practice, this means Lerim becomes the shared precedent store behind your agent workflows.
 
@@ -192,6 +209,7 @@ Global Lerim state lives under `~/.lerim/`:
 - `context.sqlite3` — canonical durable context store
 - `index/sessions.sqlite3` — session catalog and queue
 - `workspace/` — sync and maintain run artifacts
+- `workspace/current/<project_id>/WORKING_MEMORY.md` — generated current Working Memory view
 - `cache/traces/` — compacted agent trace cache
 - `models/embeddings/` — local embedding model cache
 - `models/huggingface/` — Hugging Face library cache
@@ -232,6 +250,8 @@ lerim queue
 lerim queue --failed
 lerim sync
 lerim maintain
+lerim working-memory show
+lerim working-memory status
 lerim ask "What decisions exist about caching?"
 ```
 

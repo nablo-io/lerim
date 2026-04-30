@@ -23,4 +23,5 @@ The current architecture is simple:
 - [Installation](installation.md)
 - [Quickstart](quickstart.md)
 - [How It Works](concepts/how-it-works.md)
+- [Working Memory](concepts/working-memory.md)
 - [CLI Overview](cli/overview.md)

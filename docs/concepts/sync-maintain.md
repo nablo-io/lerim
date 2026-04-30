@@ -75,14 +75,20 @@ The maintain and ask flows use explicit request-turn budgets from config:
 
 ## Automatic scheduling
 
-The daemon runs sync and maintain on independent intervals:
+The daemon runs sync, maintain, and Working Memory on independent schedules:
 
 | Path | Config key | Default (see `default.toml`) |
 |------|------------|---------|
 | Sync | `sync_interval_minutes` | `30` |
 | Maintain | `maintain_interval_minutes` | `60` |
+| Working Memory | built-in daily pass | `24h` |
 
-Both trigger immediately on daemon startup, then repeat at their configured intervals.
+Sync and maintain trigger immediately on daemon startup, then repeat at their
+configured intervals. Working Memory also runs from the daemon loop, but it
+skips projects with no records changed since the current artifact was generated.
+
+Maintain also triggers Working Memory for a project when maintain changed records
+for that project. Sync does not directly trigger Working Memory.
 
 ### Local model memory management
 
@@ -96,6 +102,8 @@ lerim sync --run-id <id>             # sync a specific session
 lerim sync --dry-run                 # preview without writing
 lerim maintain                       # run maintain cycle
 lerim maintain --dry-run             # preview without writing
+lerim working-memory status          # check generated startup context
+lerim working-memory refresh         # refresh only if records changed
 ```
 
 ---

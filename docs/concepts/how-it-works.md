@@ -10,7 +10,8 @@ The flow is:
 2. traces are normalized
 3. `sync` extracts durable context records
 4. `maintain` cleans and supersedes records
-5. `ask` retrieves records and answers questions
+5. `working-memory` generates fast startup context from records
+6. `ask` retrieves records and answers questions
 
 For operational targets and scale boundaries, see
 [Capacity and SLOs](capacity-and-slos.md).
@@ -69,6 +70,22 @@ Search indexes are derived, not canonical:
 - If counts diverge, `ask` can still run, but retrieval is operationally
   degraded until maintenance or write-time refresh rebuilds derived rows from
   canonical records.
+
+## Working Memory
+
+Working Memory is also derived, not canonical. It renders a compact
+`WORKING_MEMORY.md` from active project records so a coding agent can start with
+fast context and then query deeper only when needed.
+
+```mermaid
+flowchart LR
+    A["context.sqlite3 records"] --> B["Working Memory synthesis"]
+    B --> C["dated run artifacts"]
+    C --> D["workspace/current/<project_id>/WORKING_MEMORY.md"]
+    D --> E["coding agent startup"]
+```
+
+See [Working Memory](working-memory.md) for the full generation flow.
 
 ## Why this design
 

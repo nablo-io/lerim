@@ -6,7 +6,7 @@ The maintained test surface is DB-first.
 
 What we test:
 
-- unit tests for config, adapters, store, tools, CLI, API, daemon, and runtime
+- unit tests for config, adapters, store, tools, CLI, API, daemon, runtime, and generated Working Memory
 - smoke tests for quick real-LLM extract sanity
 - integration tests for real extract, maintain, semantic ask, cloud sync state, and multi-project scope flows
 - integration tests for runtime orchestration behavior like workspace artifact layout, ask debug trace ordering, and mutation count reporting
@@ -51,6 +51,7 @@ Design rule:
 - `extract` cases are trace-driven
 - `ask` and `maintain` cases are mostly seeded-state-driven
 - scope/runtime/cloud/queue clusters use the smallest real setup that exercises that behavior
+- runtime cases cover generated Working Memory artifact layout, current-copy behavior, skip behavior, and empty-state generation
 
 Some extract pressure cases generate a long trace dynamically instead of checking in a giant fixture. That is intentional. Use a generated trace when the test is about context pressure or pruning, not about exact transcript wording.
 
@@ -85,6 +86,7 @@ Rules:
 - adapter tests cover compact-trace visibility for canonical message fields and structured event messages without keyword heuristics
 - session catalog tests cover queue claim availability, content-hash refresh/change detection, and stable pagination ordering
 - config tests cover provider client lifecycle, provider-specific model settings, fallback-model parsing, strict config parsing, and SDK log-noise filters
+- Working Memory tests cover cwd project resolution, freshness counts, markdown citations, CLI local reads, and artifact writes without live LLM calls
 
 ## Testing rules
 
@@ -106,6 +108,7 @@ The current system is:
 - canonical durable context in `~/.lerim/context.sqlite3`
 - canonical session catalog in `~/.lerim/index/sessions.sqlite3`
 - canonical run artifacts in `~/.lerim/workspace/`
+- generated Working Memory artifacts in `~/.lerim/workspace/current/<project_id>/WORKING_MEMORY.md`
 - local semantic retrieval via ONNX embeddings + `sqlite-vec` + FTS5 + RRF
 - extract tools: `read_trace`, `search_context`, `get_context`, `save_context`, `revise_context`, `note_trace_findings`, `prune_trace_reads`
 - maintain tools: `list_context`, `search_context`, `get_context`, `revise_context`, `archive_context`, `supersede_context`

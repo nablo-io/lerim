@@ -11,6 +11,9 @@ Commands that call the HTTP API (`ask`, `sync`, `maintain`, `status`) require a
 running server (`lerim up` or `lerim serve`). `unscoped` also requires the running
 API. Most other commands are **host-only**
 (local files, Docker CLI, local SQLite state).
+`working-memory show`, `working-memory status`, and `working-memory path` are
+fast local reads. `working-memory refresh` runs local generation for the resolved
+project and records a service run.
 
 ## Global flags
 
@@ -36,6 +39,7 @@ API. Most other commands are **host-only**
 - `connect`
 - `sync`
 - `maintain`
+- `working-memory` (`show`, `status`, `path`, `refresh`) (host-only)
 - `dashboard`
 - `ask`
 - `query`
@@ -213,10 +217,62 @@ lerim maintain --dry-run      # preview only, no writes
 |------|-------------|
 | `--dry-run` | Record a run but skip actual record changes |
 
+### `lerim working-memory` (host-only)
+
+Generated markdown startup context for coding agents. The markdown lives under
+`~/.lerim/workspace/current/<project_id>/WORKING_MEMORY.md` and is a derived
+view of `~/.lerim/context.sqlite3`, not a second memory store.
+
+```bash
+lerim working-memory show              # print current generated markdown
+lerim working-memory status            # show freshness metadata
+lerim working-memory path              # print stable current file path
+lerim working-memory refresh           # regenerate if records changed
+lerim working-memory refresh --force   # regenerate even if unchanged
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `show` | Print the current `WORKING_MEMORY.md` without model calls |
+| `status` | Print availability, generated time, age, records included, changed-record count, current path, latest run, and suggested action |
+| `path` | Print the stable expected current artifact path |
+| `refresh` | Generate dated artifacts and update the stable current copy |
+
+| Flag | Description |
+|------|-------------|
+| `--project` | Registered project name or path. Defaults to the project resolved from cwd |
+| `--force` | On `refresh`, regenerate even when no context records changed |
+| `--json` | Emit structured JSON for `status`, `path`, and `refresh` |
+
+Notes:
+- Coding agents should call `lerim working-memory show` instead of hardcoding a `project_id`.
+- Use `lerim working-memory status` for dynamic freshness: current age, record-change count, current path, latest run folder, and suggested action.
+- Daily daemon refresh and maintain-triggered refresh skip unchanged projects.
+- Sync does not directly trigger Working Memory in v1.
+
+Flow:
+
+```mermaid
+flowchart TD
+    A["manual refresh, daily daemon, or maintain trigger"] --> B["resolve registered project"]
+    B --> C["count changed record_versions since generated_at"]
+    C --> D{"current artifact exists and changed count is 0?"}
+    D -- "yes" --> E["skip without model call"]
+    D -- "no or --force" --> F["load active candidate records"]
+    F --> G{"candidate records exist?"}
+    G -- "no" --> H["render empty-state markdown"]
+    G -- "yes" --> I["run Working Memory synthesis agent"]
+    I --> J["validate cited record IDs"]
+    H --> K["write dated run artifacts"]
+    J --> K
+    K --> L["copy latest files to workspace/current/<project_id>"]
+```
+
 ### Background sync and maintain
 
 There is **no** separate `lerim daemon` command. The daemon loop (sync + maintain
-on `sync_interval_minutes` / `maintain_interval_minutes`) runs **inside**
+on `sync_interval_minutes` / `maintain_interval_minutes`, plus daily Working Memory)
+runs **inside**
 `lerim serve` and therefore inside `lerim up` (Docker).
 
 ### `lerim dashboard`
