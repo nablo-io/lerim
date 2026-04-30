@@ -588,6 +588,83 @@ def _aggregate_maintain_totals(
     return totals
 
 
+def _record_count_delta(payload: dict[str, Any]) -> int:
+    """Return total context record changes from a runtime payload."""
+    return (
+        int(payload.get("records_created") or 0)
+        + int(payload.get("records_updated") or 0)
+        + int(payload.get("records_archived") or 0)
+    )
+
+
+def run_working_memory_for_project(
+    *,
+    project_name: str,
+    project_path: Path,
+    trigger: str,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Run one Working Memory refresh and record a service-run row."""
+    started = _now_iso()
+    try:
+        agent = LerimRuntime(default_cwd=str(project_path))
+        result = agent.working_memory(
+            repo_root=project_path,
+            project_name=project_name,
+            force=force,
+        )
+        status = "skipped" if result.get("status") == "skipped" else "completed"
+        _record_service_event(
+            record_service_run,
+            job_type="working-memory",
+            status=status,
+            started_at=started,
+            trigger=trigger,
+            details=result,
+        )
+        return result
+    except Exception as exc:
+        details = {
+            "project": project_name,
+            "repo_path": str(project_path),
+            "error": str(exc),
+        }
+        _record_service_event(
+            record_service_run,
+            job_type="working-memory",
+            status="failed",
+            started_at=started,
+            trigger=trigger,
+            details=details,
+        )
+        return {"status": "failed", **details}
+
+
+def run_working_memory_daily(*, trigger: str = "daemon") -> dict[str, Any]:
+    """Refresh Working Memory for all registered projects, skipping unchanged ones."""
+    reload_config()
+    config = get_config()
+    projects = config.projects or {}
+    results: dict[str, dict[str, Any]] = {}
+    for project_name, project_path_str in projects.items():
+        project_path = Path(project_path_str).expanduser().resolve()
+        results[project_name] = run_working_memory_for_project(
+            project_name=project_name,
+            project_path=project_path,
+            trigger=trigger,
+            force=False,
+        )
+    generated = sum(1 for item in results.values() if item.get("status") == "generated")
+    skipped = sum(1 for item in results.values() if item.get("status") == "skipped")
+    failed = sum(1 for item in results.values() if item.get("status") == "failed")
+    return {
+        "projects": results,
+        "generated": generated,
+        "skipped": skipped,
+        "failed": failed,
+    }
+
+
 def _process_one_job(job: dict[str, Any]) -> dict[str, Any]:
     """Process a single claimed session job. Thread-safe (own agent instance)."""
     started_monotonic = time.monotonic()
@@ -1154,6 +1231,14 @@ def run_maintain_once(
                     "consolidated": int(raw_counts.get("consolidated") or 0),
                     "unchanged": int(raw_counts.get("unchanged") or 0),
                 }
+                if _record_count_delta(metric_row) > 0:
+                    wm_result = run_working_memory_for_project(
+                        project_name=project_name,
+                        project_path=project_path,
+                        trigger="maintain",
+                        force=False,
+                    )
+                    results[project_name]["working_memory"] = wm_result
             except Exception as exc:
                 failed_projects.append(project_name)
                 results[project_name] = {"error": str(exc)}

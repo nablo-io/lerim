@@ -15,13 +15,32 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from lerim.agents.ask import run_ask
-from lerim.agents.contracts import MaintainResultContract, SyncResultContract
+from lerim.agents.contracts import (
+    MaintainResultContract,
+    SyncResultContract,
+    WorkingMemoryResultContract,
+)
 from lerim.agents.extract import ExtractionResult, run_extraction
 from lerim.agents.maintain import run_maintain
 from lerim.agents.mlflow_observability import finish_mlflow_run, lerim_mlflow_run
+from lerim.agents.working_memory import run_working_memory_synthesis
 from lerim.config.providers import build_pydantic_model
 from lerim.config.settings import Config, get_config
 from lerim.context import resolve_project_identity
+from lerim.working_memory import (
+    WORKING_MEMORY_FILENAME,
+    WORKING_MEMORY_OPERATION,
+    build_manifest,
+    count_changed_records_since,
+    empty_working_memory_draft,
+    included_record_ids,
+    load_candidate_records,
+    render_working_memory_markdown,
+    utc_now_iso,
+    validate_draft,
+    WorkingMemoryProject,
+    working_memory_paths,
+)
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 
 logger = logging.getLogger("lerim.runtime")
@@ -804,6 +823,214 @@ class LerimRuntime:
                 return MaintainResultContract.model_validate(payload).model_dump(
                     mode="json"
                 )
+        except Exception as exc:
+            _mark_run_failed(
+                artifact_paths=artifact_paths,
+                manifest=manifest,
+                exc=exc,
+            )
+            raise
+
+    # ------------------------------------------------------------------
+    # Working Memory flow
+    # ------------------------------------------------------------------
+
+    def working_memory(
+        self,
+        repo_root: str | Path | None = None,
+        *,
+        project_name: str | None = None,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        """Generate or skip one project's derived Working Memory artifact."""
+        resolved_repo_root = (
+            Path(repo_root).expanduser().resolve()
+            if repo_root
+            else Path(self._default_cwd or Path.cwd()).expanduser().resolve()
+        )
+        project_identity = resolve_project_identity(resolved_repo_root)
+        display_name = project_name or project_identity.project_slug
+        resolved_workspace_root = _resolve_runtime_roots(config=self.config)
+        store = _store_for_config(self.config)
+        store.register_project(project_identity)
+        current_paths = working_memory_paths(
+            self.config,
+            project_identity.project_id,
+        )
+        current_manifest: dict[str, Any] = {}
+        if current_paths.current_manifest.is_file():
+            try:
+                current_manifest = json.loads(
+                    current_paths.current_manifest.read_text(encoding="utf-8")
+                )
+            except (OSError, json.JSONDecodeError):
+                current_manifest = {}
+        previous_generated_at = str(current_manifest.get("generated_at") or "").strip()
+        changed_since_previous = count_changed_records_since(
+            store,
+            project_id=project_identity.project_id,
+            since=previous_generated_at or None,
+        )
+        current_exists = current_paths.current_file.is_file()
+        if current_exists and not force and changed_since_previous == 0:
+            payload = {
+                "status": "skipped",
+                "project": display_name,
+                "project_id": project_identity.project_id,
+                "generated_at": previous_generated_at or None,
+                "context_db_path": str(self.config.context_db_path),
+                "workspace_root": str(resolved_workspace_root),
+                "run_folder": None,
+                "current_file": str(current_paths.current_file),
+                "current_manifest": str(current_paths.current_manifest),
+                "records_considered": 0,
+                "records_included": int(current_manifest.get("records_included") or 0),
+                "records_changed_since_previous": 0,
+                "included_record_ids": list(
+                    current_manifest.get("included_record_ids") or []
+                ),
+                "skip_reason": "no_records_changed_since_previous_generation",
+                "cost_usd": 0.0,
+            }
+            return WorkingMemoryResultContract.model_validate(payload).model_dump(
+                mode="json"
+            )
+
+        run_id, run_folder = _new_run_folder(
+            resolved_workspace_root,
+            WORKING_MEMORY_OPERATION,
+        )
+        artifact_paths = _build_artifact_paths(run_folder, include_session_log=False)
+        artifact_paths["working_memory"] = run_folder / WORKING_MEMORY_FILENAME
+        artifact_paths["subagents_log"].write_text("", encoding="utf-8")
+        started_at = utc_now_iso()
+        manifest = {
+            "run_id": run_id,
+            "operation": WORKING_MEMORY_OPERATION,
+            "status": "running",
+            "started_at": started_at,
+            "mlflow_client_request_id": run_id,
+            "project_id": project_identity.project_id,
+            "project": display_name,
+            "repo_path": str(project_identity.repo_path),
+            "workspace_root": str(resolved_workspace_root),
+            "run_folder": str(run_folder),
+            "artifacts": {key: str(path) for key, path in artifact_paths.items()},
+        }
+        _write_json_artifact(artifact_paths["manifest"], manifest)
+        _append_jsonl_artifact(
+            artifact_paths["events"],
+            {"ts": started_at, "event": "started", "run_id": run_id},
+        )
+
+        try:
+            candidates = load_candidate_records(
+                store,
+                project_id=project_identity.project_id,
+            )
+            messages: list[ModelMessage] = []
+            if candidates:
+                def _primary_builder() -> Any:
+                    return build_pydantic_model("agent", config=self.config)
+
+                def _call(model: Any) -> tuple[Any, list[ModelMessage]]:
+                    return run_working_memory_synthesis(
+                        model=model,
+                        candidates=candidates,
+                        return_messages=True,
+                    )
+
+                draft, messages = self._run_with_fallback(
+                    flow=WORKING_MEMORY_OPERATION,
+                    callable_fn=_call,
+                    model_builders=[_primary_builder],
+                )
+                if not draft.summary and not draft.sections:
+                    raise ValueError("working_memory_synthesis_empty")
+            else:
+                draft = empty_working_memory_draft()
+            allowed_ids = {str(record.get("record_id") or "") for record in candidates}
+            validate_draft(draft, allowed_record_ids=allowed_ids)
+            record_ids = included_record_ids(draft)
+            generated_at = utc_now_iso()
+            project = WorkingMemoryProject(
+                name=display_name,
+                identity=project_identity,
+            )
+            markdown = render_working_memory_markdown(
+                project=project,
+                generated_at=generated_at,
+                records_included=len(record_ids),
+                changed_since_generation=0,
+                draft=draft,
+            )
+            _write_text_with_newline(artifact_paths["working_memory"], markdown)
+            response_text = (
+                f"Working Memory generated with {len(record_ids)} cited record(s)."
+            )
+            _write_text_with_newline(artifact_paths["agent_log"], response_text)
+            try:
+                _write_agent_trace(artifact_paths["agent_trace"], messages)
+            except Exception as exc:
+                logger.warning(f"[working-memory] Failed to write agent trace: {exc}")
+                artifact_paths["agent_trace"].write_text("[]", encoding="utf-8")
+
+            manifest = build_manifest(
+                run_id=run_id,
+                status="succeeded",
+                generated_at=generated_at,
+                project=project,
+                records_considered=len(candidates),
+                records_included=len(record_ids),
+                included_record_ids_value=record_ids,
+                changed_records_since_previous=changed_since_previous,
+                current_file=current_paths.current_file,
+                run_folder=run_folder,
+            )
+            manifest["completed_at"] = utc_now_iso()
+            manifest["workspace_root"] = str(resolved_workspace_root)
+            manifest["artifacts"] = {
+                key: str(path) for key, path in artifact_paths.items()
+            }
+            _write_json_artifact(artifact_paths["manifest"], manifest)
+            _append_jsonl_artifact(
+                artifact_paths["events"],
+                {
+                    "ts": manifest["completed_at"],
+                    "event": "succeeded",
+                    "run_id": run_id,
+                    "records_considered": len(candidates),
+                    "records_included": len(record_ids),
+                    "records_changed_since_previous": changed_since_previous,
+                },
+            )
+            from lerim.working_memory import write_current_artifacts
+
+            write_current_artifacts(
+                paths=current_paths,
+                run_markdown=artifact_paths["working_memory"],
+                run_manifest=artifact_paths["manifest"],
+            )
+            payload = {
+                "status": "generated",
+                "project": display_name,
+                "project_id": project_identity.project_id,
+                "generated_at": generated_at,
+                "context_db_path": str(self.config.context_db_path),
+                "workspace_root": str(resolved_workspace_root),
+                "run_folder": str(run_folder),
+                "current_file": str(current_paths.current_file),
+                "current_manifest": str(current_paths.current_manifest),
+                "records_considered": len(candidates),
+                "records_included": len(record_ids),
+                "records_changed_since_previous": changed_since_previous,
+                "included_record_ids": list(record_ids),
+                "skip_reason": None,
+                "cost_usd": 0.0,
+            }
+            return WorkingMemoryResultContract.model_validate(payload).model_dump(
+                mode="json"
+            )
         except Exception as exc:
             _mark_run_failed(
                 artifact_paths=artifact_paths,

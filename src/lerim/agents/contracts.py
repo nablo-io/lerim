@@ -38,6 +38,26 @@ class MaintainResultContract(BaseModel):
 	cost_usd: float = 0.0
 
 
+class WorkingMemoryResultContract(BaseModel):
+	"""Stable Working Memory refresh payload schema used by CLI and daemon."""
+
+	status: str
+	project: str
+	project_id: str
+	generated_at: str | None = None
+	context_db_path: str
+	workspace_root: str
+	run_folder: str | None = None
+	current_file: str
+	current_manifest: str
+	records_considered: int = 0
+	records_included: int = 0
+	records_changed_since_previous: int = 0
+	included_record_ids: list[str] = []
+	skip_reason: str | None = None
+	cost_usd: float = 0.0
+
+
 if __name__ == "__main__":
 	"""Run contract model smoke checks."""
 	sync = SyncResultContract(

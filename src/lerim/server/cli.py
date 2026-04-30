@@ -47,6 +47,8 @@ from lerim.server.docker_runtime import (
 from lerim.server.daemon import (
     run_maintain_once,
     run_sync_once,
+    run_working_memory_daily,
+    run_working_memory_for_project,
     resolve_window_bounds,
 )
 from lerim.server.cli_api_client import (
@@ -59,7 +61,14 @@ from lerim.config.logging import configure_logging
 from lerim.cloud.auth import cmd_auth, cmd_auth_logout, cmd_auth_status
 from lerim.config.settings import get_config, get_user_config_path, get_user_env_path
 from lerim.config.tracing import configure_tracing
+from lerim.context import ContextStore
 from lerim.context.query_spec import QUERY_ENTITIES, QUERY_MODES, QUERY_ORDER_FIELDS
+from lerim.working_memory import (
+    resolve_working_memory_project,
+    status_to_dict,
+    working_memory_paths,
+    working_memory_status,
+)
 
 
 def _emit(message: object = "", *, file: Any | None = None) -> None:
@@ -261,6 +270,112 @@ def _cmd_maintain(args: argparse.Namespace) -> int:
             if advice:
                 _emit(f"  {advice}")
     return 0
+
+
+def _working_memory_project_from_args(args: argparse.Namespace) -> Any:
+    """Resolve the current Working Memory project for CLI commands."""
+    config = get_config()
+    return resolve_working_memory_project(
+        config=config,
+        project=getattr(args, "project", None),
+        cwd=Path.cwd(),
+    )
+
+
+def _cmd_working_memory(args: argparse.Namespace) -> int:
+    """Handle local Working Memory commands."""
+    action = getattr(args, "working_memory_action", None)
+    if not action:
+        _emit("Usage: lerim working-memory {show,status,path,refresh}", file=sys.stderr)
+        return 2
+    try:
+        project = _working_memory_project_from_args(args)
+    except ValueError as exc:
+        if args.json:
+            _emit(json.dumps({"error": True, "message": str(exc)}, indent=2))
+        else:
+            _emit(str(exc), file=sys.stderr)
+        return 1
+
+    config = get_config()
+    paths = working_memory_paths(config, project.identity.project_id)
+
+    if action == "path":
+        payload = {
+            "project": project.name,
+            "project_id": project.identity.project_id,
+            "current_file": str(paths.current_file),
+            "exists": paths.current_file.is_file(),
+        }
+        if args.json:
+            _emit(json.dumps(payload, indent=2, ensure_ascii=True))
+        else:
+            _emit(paths.current_file)
+        return 0
+
+    if action == "show":
+        if paths.current_file.is_file():
+            _emit(paths.current_file.read_text(encoding="utf-8").rstrip("\n"))
+            return 0
+        message = (
+            f"No Working Memory generated yet for project `{project.name}`.\n"
+            "Run: lerim working-memory refresh"
+        )
+        if args.json:
+            _emit(
+                json.dumps(
+                    {
+                        "error": True,
+                        "project": project.name,
+                        "project_id": project.identity.project_id,
+                        "current_file": str(paths.current_file),
+                        "message": message,
+                    },
+                    indent=2,
+                    ensure_ascii=True,
+                )
+            )
+        else:
+            _emit(message)
+        return 1
+
+    if action == "status":
+        store = ContextStore(config.context_db_path)
+        status = working_memory_status(config=config, store=store, project=project)
+        payload = status_to_dict(status)
+        if args.json:
+            _emit(json.dumps(payload, indent=2, ensure_ascii=True))
+        else:
+            _emit("Working Memory:")
+            for key, value in payload.items():
+                _emit(f"- {key}: {value}")
+        return 0
+
+    if action == "refresh":
+        result = run_working_memory_for_project(
+            project_name=project.name,
+            project_path=project.identity.repo_path,
+            trigger="manual",
+            force=bool(getattr(args, "force", False)),
+        )
+        if args.json:
+            _emit(json.dumps(result, indent=2, ensure_ascii=True))
+        else:
+            if result.get("status") == "skipped":
+                _emit(f"Working Memory skipped for {project.name}: {result.get('skip_reason')}")
+            elif result.get("status") == "failed":
+                _emit(f"Working Memory failed for {project.name}: {result.get('error')}", file=sys.stderr)
+                return 1
+            else:
+                _emit(f"Working Memory generated for {project.name}.")
+            if result.get("current_file"):
+                _emit(f"- current_file: {result.get('current_file')}")
+            if result.get("run_folder"):
+                _emit(f"- run_folder: {result.get('run_folder')}")
+        return 0
+
+    _emit(f"Unknown working-memory action: {action}", file=sys.stderr)
+    return 2
 
 
 def _cmd_dashboard(args: argparse.Namespace) -> int:
@@ -1211,6 +1326,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
 
         sync_interval = max(config.sync_interval_minutes * 60, 30)
         maintain_interval = max(config.maintain_interval_minutes * 60, 30)
+        working_memory_interval = 24 * 60 * 60
 
         # Initialise to (now - interval) so both trigger on the first
         # iteration regardless of the monotonic clock epoch.  In Docker
@@ -1220,6 +1336,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         _now_init = time.monotonic()
         last_sync = _now_init - sync_interval
         last_maintain = _now_init - maintain_interval
+        last_working_memory = _now_init - working_memory_interval
         last_degraded_log_at = 0.0
         degraded_log_interval_seconds = 300.0
 
@@ -1281,6 +1398,15 @@ def _cmd_serve(args: argparse.Namespace) -> int:
                     logger.warning("daemon maintain error: {}", exc)
                 last_maintain = time.monotonic()
 
+            if now - last_working_memory >= working_memory_interval:
+                try:
+                    with ollama_lifecycle(config):
+                        details = run_working_memory_daily(trigger="daily")
+                    logger.info("daemon working-memory done — {}", details)
+                except Exception as exc:
+                    logger.warning("daemon working-memory error: {}", exc)
+                last_working_memory = time.monotonic()
+
             # Ship to cloud (best-effort)
             if config.cloud_token:
                 try:
@@ -1308,7 +1434,11 @@ def _cmd_serve(args: argparse.Namespace) -> int:
 
             next_sync = last_sync + sync_interval
             next_maintain = last_maintain + maintain_interval
-            sleep_for = max(1.0, min(next_sync, next_maintain) - time.monotonic())
+            next_working_memory = last_working_memory + working_memory_interval
+            sleep_for = max(
+                1.0,
+                min(next_sync, next_maintain, next_working_memory) - time.monotonic(),
+            )
             stop_event.wait(sleep_for)
 
     daemon_thread = threading.Thread(
@@ -1538,6 +1668,44 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_dry_run_flag(maintain)
     maintain.set_defaults(func=_cmd_maintain)
+
+    # ── working-memory ───────────────────────────────────────────────
+    working_memory = sub.add_parser(
+        "working-memory",
+        formatter_class=_F,
+        help="Read or refresh generated project Working Memory",
+        description=(
+            "Generated markdown startup context for coding agents.\n\n"
+            "Examples:\n"
+            "  lerim working-memory show\n"
+            "  lerim working-memory status\n"
+            "  lerim working-memory refresh --force"
+        ),
+    )
+    working_memory_sub = working_memory.add_subparsers(
+        dest="working_memory_action"
+    )
+    for action_name in ("show", "status", "path"):
+        action = working_memory_sub.add_parser(
+            action_name,
+            formatter_class=_F,
+            help=f"{action_name} Working Memory",
+        )
+        action.add_argument(
+            "--project",
+            help="Registered project name or path. Defaults to cwd project.",
+        )
+    wm_refresh = working_memory_sub.add_parser(
+        "refresh",
+        formatter_class=_F,
+        help="Generate Working Memory for the resolved project",
+    )
+    wm_refresh.add_argument(
+        "--project",
+        help="Registered project name or path. Defaults to cwd project.",
+    )
+    _add_force_flag(wm_refresh)
+    working_memory.set_defaults(func=_cmd_working_memory)
 
     # ── dashboard ────────────────────────────────────────────────────
     dashboard = sub.add_parser(
@@ -1930,6 +2098,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "memory" and not getattr(args, "memory_action", None):
+        parser.parse_args([args.command, "--help"])
+        return 0
+
+    if args.command == "working-memory" and not getattr(
+        args,
+        "working_memory_action",
+        None,
+    ):
         parser.parse_args([args.command, "--help"])
         return 0
 

@@ -32,7 +32,6 @@ from lerim.server.daemon import (
     LockBusyError,
     ServiceLock,
     WRITER_LOCK_NAME,
-    lock_path,
     resolve_window_bounds,
     run_maintain_once,
     run_sync_once,
@@ -543,7 +542,10 @@ def api_memory_reset(
     kept = ["config", "env", "platforms", "projects"]
     lock: ServiceLock | None = None
     if not dry_run:
-        lock = ServiceLock(lock_path(WRITER_LOCK_NAME), stale_seconds=60)
+        lock = ServiceLock(
+            config.global_data_dir / "index" / WRITER_LOCK_NAME,
+            stale_seconds=60,
+        )
         try:
             lock.acquire("memory-reset", "lerim memory reset")
         except LockBusyError as exc:
