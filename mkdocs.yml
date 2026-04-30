@@ -98,6 +98,7 @@ nav:
     - Context Model: concepts/context-model.md
     - Supported Agents: concepts/supported-agents.md
     - Sync & Maintain: concepts/sync-maintain.md
+    - Working Memory: concepts/working-memory.md
   - CLI Reference:
     - Overview: cli/overview.md
     - lerim init: cli/init.md
@@ -106,6 +107,7 @@ nav:
     - lerim up / down / logs: cli/up-down-logs.md
     - lerim sync: cli/sync.md
     - lerim maintain: cli/maintain.md
+    - lerim working-memory: cli/working-memory.md
     - lerim ask: cli/ask.md
     - lerim query: cli/query.md
     - lerim queue: cli/queue.md
