@@ -46,6 +46,11 @@ git_branch  # noqa
 model_config  # noqa
 last_context_tokens  # noqa
 metrics_version  # noqa
+records_changed_since_generation  # noqa
+latest_run_folder  # noqa
+suggested_action  # noqa
+records_changed_since_previous  # noqa
+skip_reason  # noqa
 
 # Pydantic validators and Agent validators registered by decorators
 validate_level  # noqa

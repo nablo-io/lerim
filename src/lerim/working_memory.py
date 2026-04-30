@@ -7,7 +7,7 @@ import shutil
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
 from lerim.config.project_scope import match_session_project
 from lerim.config.settings import Config
@@ -17,7 +17,6 @@ WORKING_MEMORY_FILENAME = "WORKING_MEMORY.md"
 WORKING_MEMORY_MANIFEST_FILENAME = "manifest.json"
 WORKING_MEMORY_OPERATION = "working-memory"
 MAX_CANDIDATE_RECORDS = 80
-TARGET_LINE_COUNT = 50
 MAX_LINE_COUNT = 80
 REFERENCE_LINE_LIMIT = 12
 KIND_PRIORITY = {
@@ -102,31 +101,6 @@ class WorkingMemoryStatus:
     current_manifest: str
     latest_run_folder: str | None
     suggested_action: str
-
-
-@dataclass(frozen=True)
-class WorkingMemoryGenerationResult:
-    """Result payload for a refresh attempt."""
-
-    status: str
-    project: str
-    project_id: str
-    generated_at: str | None
-    records_considered: int
-    records_included: int
-    records_changed_since_previous: int
-    included_record_ids: tuple[str, ...]
-    current_file: str
-    current_manifest: str
-    run_folder: str | None
-    skip_reason: str | None = None
-
-
-class WorkingMemorySynthesizer(Protocol):
-    """Port for compressing candidate context records into cited sections."""
-
-    def __call__(self, candidates: list[dict[str, Any]]) -> WorkingMemoryDraft:
-        """Return a cited Working Memory draft for candidate records."""
 
 
 def utc_now_iso() -> str:
@@ -739,11 +713,4 @@ def status_to_dict(status: WorkingMemoryStatus) -> dict[str, Any]:
     """Convert status dataclass to JSON-ready dict."""
     payload = asdict(status)
     payload["age"] = human_age(status.age_seconds)
-    return payload
-
-
-def result_to_dict(result: WorkingMemoryGenerationResult) -> dict[str, Any]:
-    """Convert generation result dataclass to JSON-ready dict."""
-    payload = asdict(result)
-    payload["included_record_ids"] = list(result.included_record_ids)
     return payload
