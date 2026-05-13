@@ -1,30 +1,33 @@
-"""Bridge BAML-selected actions to Lerim's existing extraction tools."""
+"""Bridge synthesized BAML records to Lerim's canonical extraction tools."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-import inspect
 import json
 from pathlib import Path
-from typing import Any, Callable
+import textwrap
+from typing import Any
 
 from pydantic_ai import ModelRetry, RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
 from lerim.agents import tools as extract_tools
-from lerim.agents.toolsets import EXTRACT_TOOLS
 from lerim.agents.tools import ContextDeps
-from lerim.agents.tools import TRACE_MAX_LINES_PER_READ, _first_uncovered_offset
 from lerim.context import ContextStore, ProjectIdentity
-
-
-TOOL_NAMES = tuple(tool.__name__ for tool in EXTRACT_TOOLS)
+from lerim.context.spec import (
+    MAX_DURABLE_BODY_CHARS,
+    MAX_EPISODE_BODY_CHARS,
+    MAX_EPISODE_OUTCOMES_CHARS,
+    MAX_EPISODE_USER_INTENT_CHARS,
+    MAX_EPISODE_WHAT_HAPPENED_CHARS,
+    MAX_RECORD_TITLE_CHARS,
+)
 
 
 @dataclass(frozen=True)
 class ToolObservation:
-    """Observed result after dispatching one ReAct action."""
+    """Observed result after dispatching one persistence action."""
 
     action: str
     ok: bool
@@ -37,21 +40,6 @@ class ToolObservation:
 def build_tool_context(deps: ContextDeps) -> RunContext[ContextDeps]:
     """Build the minimal PydanticAI run context required by Lerim tools."""
     return RunContext(deps=deps, model=TestModel(), usage=RunUsage())
-
-
-def tool_manifest() -> str:
-    """Render the live Lerim extraction tool signatures for the BAML prompt."""
-    lines: list[str] = []
-    for name in TOOL_NAMES:
-        func = getattr(extract_tools, name)
-        signature = _public_signature(func)
-        doc = inspect.getdoc(func) or ""
-        first_line = doc.splitlines()[0] if doc else ""
-        lines.append(f"- {name}{signature}: {first_line}")
-    lines.append(
-        "- final_result(completion_summary: str): Finish after exactly one episode exists."
-    )
-    return "\n".join(lines)
 
 
 def count_current_session_episodes(deps: ContextDeps) -> int:
@@ -68,6 +56,70 @@ def count_current_session_episodes(deps: ContextDeps) -> int:
         include_archived=True,
     )
     return int(rows.get("count") or 0)
+
+
+def persist_synthesized_extraction(
+    synthesized: Any,
+    ctx: RunContext[ContextDeps],
+) -> tuple[list[dict[str, Any]], bool, str]:
+    """Persist synthesized episode and durable records through the real tools."""
+    payload = _tool_payload(synthesized)
+    completion_summary = str(payload.get("completion_summary") or "").strip()
+    episode = _prepare_episode(payload.get("episode") or {}, completion_summary)
+    durable_records = [
+        record
+        for record in (_tool_payload(item) for item in payload.get("durable_records") or [])
+        if _is_persistable_durable_record(record)
+    ]
+
+    observations: list[dict[str, Any]] = []
+    for index, record in enumerate([episode, *durable_records]):
+        default_status = "archived" if record.get("kind") == "episode" else "active"
+        args = _with_defaults(record, {"status": default_status})
+        try:
+            content = _save_context(ctx, args)
+            observation = ToolObservation(
+                action="save_context",
+                ok=True,
+                content=content,
+                args=args,
+            )
+        except ModelRetry as exc:
+            observation = ToolObservation(
+                action="save_context",
+                ok=False,
+                content=f"Tool retry needed: {exc}",
+                args=args,
+            )
+        except Exception as exc:
+            observation = ToolObservation(
+                action="save_context",
+                ok=False,
+                content=f"Tool error: {type(exc).__name__}: {exc}",
+                args=args,
+            )
+        observations.append(observation_to_state(observation))
+        if index == 0 and not observation.ok:
+            break
+
+    episode_count = count_current_session_episodes(ctx.deps)
+    done = episode_count == 1
+    if not completion_summary:
+        completion_summary = "Extraction completed."
+    final_observation = ToolObservation(
+        action="final_result",
+        ok=done,
+        content=(
+            completion_summary
+            if done
+            else f"final_result refused: expected exactly one episode record, found {episode_count}."
+        ),
+        args={},
+        done=done,
+        completion_summary=completion_summary if done else "",
+    )
+    observations.append(observation_to_state(final_observation))
+    return observations, done, completion_summary if done else ""
 
 
 def prepare_context_deps(
@@ -105,90 +157,6 @@ def prepare_context_deps(
     )
 
 
-def execute_step(
-    step: Any,
-    ctx: RunContext[ContextDeps],
-) -> ToolObservation:
-    """Dispatch one BAML-selected step to the matching Lerim tool."""
-    action = _action_name(getattr(step, "action", ""))
-    forced_read = _read_next_uncovered_chunk(action, ctx)
-    if forced_read is not None:
-        return forced_read
-
-    if action == "final_result":
-        summary = _final_summary(step)
-        episode_count = count_current_session_episodes(ctx.deps)
-        if episode_count != 1:
-            return ToolObservation(
-                action=action,
-                ok=False,
-                content=(
-                    "final_result refused: expected exactly one episode record "
-                    f"for this session, found {episode_count}."
-                ),
-                args={},
-            )
-        return ToolObservation(
-            action=action,
-            ok=True,
-            content=summary,
-            args={},
-            done=True,
-            completion_summary=summary,
-        )
-
-    args = _args_for_action(step, action)
-    if args is None:
-        return ToolObservation(
-            action=action,
-            ok=False,
-            content=f"Missing argument object for action {action}.",
-            args={},
-        )
-
-    try:
-        content = _dispatch_tool(action, ctx, args)
-    except ModelRetry as exc:
-        content = f"Tool retry needed: {exc}"
-        return ToolObservation(action=action, ok=False, content=content, args=args)
-    except Exception as exc:
-        content = f"Tool error: {type(exc).__name__}: {exc}"
-        return ToolObservation(action=action, ok=False, content=content, args=args)
-    return ToolObservation(action=action, ok=True, content=content, args=args)
-
-
-def _read_next_uncovered_chunk(
-    action: str,
-    ctx: RunContext[ContextDeps],
-) -> ToolObservation | None:
-    """Force full trace coverage before model-directed non-read actions."""
-    if action == "read_trace" or ctx.deps.trace_path is None:
-        return None
-    try:
-        total_lines = sum(
-            1 for _ in ctx.deps.trace_path.open("r", encoding="utf-8")
-        )
-    except OSError:
-        return None
-    next_offset = _first_uncovered_offset(ctx.deps.read_ranges, total_lines)
-    if next_offset is None:
-        return None
-    args = {
-        "start_line": next_offset + 1,
-        "line_count": TRACE_MAX_LINES_PER_READ,
-    }
-    try:
-        content = _read_trace(ctx, args)
-    except Exception as exc:
-        return ToolObservation(
-            action="read_trace",
-            ok=False,
-            content=f"Forced trace read failed: {type(exc).__name__}: {exc}",
-            args=args,
-        )
-    return ToolObservation(action="read_trace", ok=True, content=content, args=args)
-
-
 def observation_to_state(observation: ToolObservation) -> dict[str, Any]:
     """Convert a tool observation into serializable graph state."""
     return {
@@ -201,64 +169,50 @@ def observation_to_state(observation: ToolObservation) -> dict[str, Any]:
     }
 
 
-def format_observation(observation: dict[str, Any], deps: ContextDeps) -> str:
-    """Format a tool result as compact scratchpad text for the next BAML call."""
-    action = str(observation.get("action") or "")
-    status = "ok" if bool(observation.get("ok")) else "error"
-    content = _pruned_content(observation, deps)
-    return f"Action: {action}\nStatus: {status}\nObservation:\n{content}"
-
-
-def _dispatch_tool(
-    action: str,
-    ctx: RunContext[ContextDeps],
-    args: dict[str, Any],
-) -> str:
-    """Call the raw Lerim tool function for one normalized action."""
-    handlers: dict[str, Callable[[RunContext[ContextDeps], dict[str, Any]], str]] = {
-        "read_trace": _read_trace,
-        "search_context": _search_context,
-        "get_context": _get_context,
-        "save_context": _save_context,
-        "revise_context": _revise_context,
-        "note_trace_findings": _note_trace_findings,
-        "prune_trace_reads": _prune_trace_reads,
-    }
-    handler = handlers.get(action)
-    if handler is None:
-        return f"Unknown action: {action}"
-    return handler(ctx, args)
-
-
-def _read_trace(ctx: RunContext[ContextDeps], args: dict[str, Any]) -> str:
-    """Call read_trace with defaulted numeric arguments."""
-    return extract_tools.read_trace(
-        ctx,
-        start_line=int(args.get("start_line") or 1),
-        line_count=int(args.get("line_count") or extract_tools.TRACE_MAX_LINES_PER_READ),
+def _prepare_episode(value: Any, completion_summary: str) -> dict[str, Any]:
+    """Normalize a synthesized episode draft into a valid save_context payload."""
+    episode = _tool_payload(value)
+    episode["kind"] = "episode"
+    if not str(episode.get("title") or "").strip():
+        episode["title"] = _episode_title_from_payload(episode, completion_summary)
+    if not str(episode.get("user_intent") or "").strip():
+        episode["user_intent"] = "Extract context from the source trace."
+    if not str(episode.get("what_happened") or "").strip():
+        fallback = (
+            str(episode.get("body") or "").strip()
+            or completion_summary
+            or "The trace was scanned and summarized for context extraction."
+        )
+        episode["what_happened"] = fallback
+    if not str(episode.get("body") or "").strip():
+        episode["body"] = _episode_body_from_structured_fields(episode)
+    episode["title"] = _compact_text(episode.get("title"), MAX_RECORD_TITLE_CHARS)
+    episode["user_intent"] = _compact_text(
+        episode.get("user_intent"),
+        MAX_EPISODE_USER_INTENT_CHARS,
     )
-
-
-def _search_context(ctx: RunContext[ContextDeps], args: dict[str, Any]) -> str:
-    """Call search_context with only its supported arguments."""
-    return extract_tools.search_context(
-        ctx,
-        query=str(args.get("query") or ""),
-        kind=args.get("kind"),
-        status=args.get("status"),
-        valid_at=args.get("valid_at"),
-        include_archived=bool(args.get("include_archived") or False),
-        limit=int(args.get("limit") or 8),
+    episode["what_happened"] = _compact_text(
+        episode.get("what_happened"),
+        MAX_EPISODE_WHAT_HAPPENED_CHARS,
     )
+    episode["outcomes"] = _compact_optional_text(
+        episode.get("outcomes"),
+        MAX_EPISODE_OUTCOMES_CHARS,
+    )
+    episode["body"] = _compact_text(episode.get("body"), MAX_EPISODE_BODY_CHARS)
+    return episode
 
 
-def _get_context(ctx: RunContext[ContextDeps], args: dict[str, Any]) -> str:
-    """Call get_context with BAML-provided record IDs."""
-    return extract_tools.get_context(
-        ctx,
-        record_ids=list(args.get("record_ids") or []),
-        include_versions=bool(args.get("include_versions") or False),
-        detail=str(args.get("detail") or "detailed"),
+def _is_persistable_durable_record(record: dict[str, Any]) -> bool:
+    """Return whether a synthesized durable record is complete enough to save."""
+    kind = str(record.get("kind") or "").strip().lower()
+    if not kind or kind == "episode":
+        return False
+    record["title"] = _compact_text(record.get("title"), MAX_RECORD_TITLE_CHARS)
+    record["body"] = _compact_text(record.get("body"), MAX_DURABLE_BODY_CHARS)
+    return bool(
+        str(record.get("title") or "").strip()
+        and str(record.get("body") or "").strip()
     )
 
 
@@ -267,101 +221,11 @@ def _save_context(ctx: RunContext[ContextDeps], args: dict[str, Any]) -> str:
     return extract_tools.save_context(ctx, **_with_defaults(args, {"status": "active"}))
 
 
-def _revise_context(ctx: RunContext[ContextDeps], args: dict[str, Any]) -> str:
-    """Call revise_context with a complete replacement payload."""
-    return extract_tools.revise_context(ctx, **args)
-
-
-def _note_trace_findings(ctx: RunContext[ContextDeps], args: dict[str, Any]) -> str:
-    """Call note_trace_findings, allowing the no-findings checkpoint form."""
-    if not any(args.get(name) for name in ("theme", "line", "quote")):
-        return extract_tools.note_trace_findings(ctx)
-    return extract_tools.note_trace_findings(
-        ctx,
-        theme=str(args.get("theme") or ""),
-        line=args.get("line") or 0,
-        quote=str(args.get("quote") or ""),
-        level=str(args.get("level") or "implementation"),
-    )
-
-
-def _prune_trace_reads(ctx: RunContext[ContextDeps], args: dict[str, Any]) -> str:
-    """Call prune_trace_reads with the start-line list."""
-    return extract_tools.prune_trace_reads(
-        ctx,
-        start_lines=[int(value) for value in args.get("start_lines") or []],
-    )
-
-
-def _pruned_content(observation: dict[str, Any], deps: ContextDeps) -> str:
-    """Return a read_trace stub when that chunk has been pruned."""
-    action = str(observation.get("action") or "")
-    if action != "read_trace":
-        return str(observation.get("content") or "")
-    args = observation.get("args") if isinstance(observation.get("args"), dict) else {}
-    offset = max(0, int(args.get("start_line") or 1) - 1)
-    if offset in deps.pruned_offsets:
-        return "[pruned]"
-    return str(observation.get("content") or "")
-
-
-def _args_for_action(step: Any, action: str) -> dict[str, Any] | None:
-    """Return the BAML argument object matching an action."""
-    field_name = action
-    payload = getattr(step, field_name, None)
-    if payload is None:
-        return None
-    if hasattr(payload, "model_dump"):
-        return _coerce_tool_value(payload.model_dump(exclude_none=True))
-    if isinstance(payload, dict):
-        return _coerce_tool_value(
-            {key: value for key, value in payload.items() if value is not None}
-        )
-    return _coerce_tool_value(
-        json.loads(json.dumps(payload, default=lambda value: value.__dict__))
-    )
-
-
-def _action_name(action: Any) -> str:
-    """Normalize a BAML enum value into a Lerim tool name."""
-    raw = str(getattr(action, "value", action) or "").strip()
-    aliases = {
-        "READ_TRACE": "read_trace",
-        "SEARCH_CONTEXT": "search_context",
-        "GET_CONTEXT": "get_context",
-        "SAVE_CONTEXT": "save_context",
-        "REVISE_CONTEXT": "revise_context",
-        "NOTE_TRACE_FINDINGS": "note_trace_findings",
-        "PRUNE_TRACE_READS": "prune_trace_reads",
-        "FINAL_RESULT": "final_result",
-    }
-    return aliases.get(raw, raw.lower())
-
-
-def _final_summary(step: Any) -> str:
-    """Extract final_result.completion_summary from a generated BAML step."""
-    payload = getattr(step, "final_result", None)
-    if payload is None:
-        return ""
-    return str(getattr(payload, "completion_summary", "") or "").strip()
-
-
-def _with_defaults(
-    args: dict[str, Any], defaults: dict[str, Any]
-) -> dict[str, Any]:
+def _with_defaults(args: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any]:
     """Fill omitted optional tool arguments with Lerim's defaults."""
     payload = dict(defaults)
     payload.update(args)
     return payload
-
-
-def _public_signature(func: Callable[..., str]) -> str:
-    """Return a tool signature without the PydanticAI context parameter."""
-    signature = inspect.signature(func)
-    params = list(signature.parameters.values())
-    if params and params[0].name == "ctx":
-        params = params[1:]
-    return "(" + ", ".join(str(param) for param in params) + ")"
 
 
 def _coerce_tool_value(value: Any) -> Any:
@@ -374,3 +238,65 @@ def _coerce_tool_value(value: Any) -> Any:
     if isinstance(value, list):
         return [_coerce_tool_value(item) for item in value]
     return value
+
+
+def _tool_payload(value: Any) -> dict[str, Any]:
+    """Return a plain dict from a generated BAML/Pydantic-ish object."""
+    if hasattr(value, "model_dump"):
+        return _coerce_tool_value(value.model_dump(exclude_none=True))
+    if isinstance(value, dict):
+        return _coerce_tool_value(
+            {key: item for key, item in value.items() if item is not None}
+        )
+    if value is None:
+        return {}
+    return _coerce_tool_value(
+        json.loads(json.dumps(value, default=lambda item: item.__dict__))
+    )
+
+
+def _episode_body_from_structured_fields(episode: dict[str, Any]) -> str:
+    """Build an episode body when synthesis provided structured fields only."""
+    user_intent = str(episode.get("user_intent") or "").strip()
+    what_happened = str(episode.get("what_happened") or "").strip()
+    outcomes = str(episode.get("outcomes") or "").strip()
+    parts = []
+    if user_intent:
+        parts.append(f"User intent: {user_intent}")
+    if what_happened:
+        parts.append(f"What happened: {what_happened}")
+    if outcomes:
+        parts.append(f"Outcome: {outcomes}")
+    return " ".join(parts) or "The session was scanned and summarized for context extraction."
+
+
+def _episode_title_from_payload(episode: dict[str, Any], completion_summary: str) -> str:
+    """Derive a compact episode title from available episode text."""
+    candidates = [
+        episode.get("user_intent"),
+        episode.get("what_happened"),
+        episode.get("outcomes"),
+        completion_summary,
+        episode.get("body"),
+    ]
+    for candidate in candidates:
+        text = str(candidate or "").strip()
+        if text:
+            return text[:80].rstrip(" .") or "Extracted session"
+    return "Extracted session"
+
+
+def _compact_text(value: Any, max_chars: int) -> str:
+    """Return non-empty text that fits the canonical record field budget."""
+    text = " ".join(str(value or "").split())
+    if not text:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    return textwrap.shorten(text, width=max_chars, placeholder="...")
+
+
+def _compact_optional_text(value: Any, max_chars: int) -> str | None:
+    """Return optional compact text, preserving None for empty values."""
+    text = _compact_text(value, max_chars)
+    return text or None

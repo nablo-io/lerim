@@ -23,11 +23,17 @@ class LlmResponseParser:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
-    def DecideNextExtractStep(
+    def ScanTraceWindow(
         self, llm_response: str, baml_options: BamlCallOptions = {},
-    ) -> types.ExtractAgentStep:
-        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="DecideNextExtractStep", llm_response=llm_response, mode="request")
-        return typing.cast(types.ExtractAgentStep, __result__)
+    ) -> types.TraceWindowScan:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ScanTraceWindow", llm_response=llm_response, mode="request")
+        return typing.cast(types.TraceWindowScan, __result__)
+
+    def SynthesizeExtractRecords(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> types.SynthesizedExtraction:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="SynthesizeExtractRecords", llm_response=llm_response, mode="request")
+        return typing.cast(types.SynthesizedExtraction, __result__)
 
     
 
@@ -37,10 +43,16 @@ class LlmStreamParser:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
-    def DecideNextExtractStep(
+    def ScanTraceWindow(
         self, llm_response: str, baml_options: BamlCallOptions = {},
-    ) -> stream_types.ExtractAgentStep:
-        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="DecideNextExtractStep", llm_response=llm_response, mode="stream")
-        return typing.cast(stream_types.ExtractAgentStep, __result__)
+    ) -> stream_types.TraceWindowScan:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ScanTraceWindow", llm_response=llm_response, mode="stream")
+        return typing.cast(stream_types.TraceWindowScan, __result__)
+
+    def SynthesizeExtractRecords(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> stream_types.SynthesizedExtraction:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="SynthesizeExtractRecords", llm_response=llm_response, mode="stream")
+        return typing.cast(stream_types.SynthesizedExtraction, __result__)
 
     

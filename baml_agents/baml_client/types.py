@@ -37,18 +37,8 @@ def get_checks(checks: typing.Dict[CheckName, Check]) -> typing.List[Check]:
 def all_succeeded(checks: typing.Dict[CheckName, Check]) -> bool:
     return all(check.status == "succeeded" for check in get_checks(checks))
 # #########################################################################
-# Generated enums (4)
+# Generated enums (3)
 # #########################################################################
-
-class ExtractAction(str, Enum):
-    READ_TRACE = "READ_TRACE"
-    SEARCH_CONTEXT = "SEARCH_CONTEXT"
-    GET_CONTEXT = "GET_CONTEXT"
-    SAVE_CONTEXT = "SAVE_CONTEXT"
-    REVISE_CONTEXT = "REVISE_CONTEXT"
-    NOTE_TRACE_FINDINGS = "NOTE_TRACE_FINDINGS"
-    PRUNE_TRACE_READS = "PRUNE_TRACE_READS"
-    FINAL_RESULT = "FINAL_RESULT"
 
 class FindingLevel(str, Enum):
     DECISION = "DECISION"
@@ -65,88 +55,52 @@ class RecordKind(str, Enum):
     CONSTRAINT = "CONSTRAINT"
     FACT = "FACT"
     REFERENCE = "REFERENCE"
-    EPISODE = "EPISODE"
 
 class RecordStatus(str, Enum):
     ACTIVE = "ACTIVE"
     ARCHIVED = "ARCHIVED"
 
 # #########################################################################
-# Generated classes (9)
+# Generated classes (5)
 # #########################################################################
 
-class ExtractAgentStep(BaseModel):
-    action: ExtractAction
-    rationale: str = Field(description='One short sentence explaining why this is the next action. Do not include hidden chain-of-thought.')
-    read_trace: typing.Optional["ReadTraceArgs"] = None
-    search_context: typing.Optional["SearchContextArgs"] = None
-    get_context: typing.Optional["GetContextArgs"] = None
-    save_context: typing.Optional["SaveContextArgs"] = None
-    revise_context: typing.Optional["ReviseContextArgs"] = None
-    note_trace_findings: typing.Optional["NoteTraceFindingsArgs"] = None
-    prune_trace_reads: typing.Optional["PruneTraceReadsArgs"] = None
-    final_result: typing.Optional["FinalResultArgs"] = None
-
-class FinalResultArgs(BaseModel):
-    completion_summary: str
-
-class GetContextArgs(BaseModel):
-    record_ids: typing.List[str] = Field(description='Record IDs returned by search_context or list_context. Fetch before any revision.')
-    include_versions: typing.Optional[bool] = Field(default=None, description='Whether to include prior versions.')
-    detail: typing.Optional[typing.Union[typing_extensions.Literal['concise'], typing_extensions.Literal['detailed']]] = Field(default=None, description='Use concise unless full version history is needed.')
-
-class NoteTraceFindingsArgs(BaseModel):
-    theme: typing.Optional[str] = Field(default=None, description='Short theme label for this finding. Leave empty only for the no-findings checkpoint.')
-    line: typing.Optional[int] = Field(default=None, description='1-based trace line with supporting evidence. Leave empty only for the no-findings checkpoint.')
-    quote: typing.Optional[str] = Field(default=None, description='Short evidence quote from the trace. Leave empty only for the no-findings checkpoint.')
-    level: typing.Optional[FindingLevel] = Field(default=None, description='Durable levels only for reusable context; implementation for trace-local evidence.')
-
-class PruneTraceReadsArgs(BaseModel):
-    start_lines: typing.List[int] = Field(description='1-based start_line values from earlier read_trace calls, such as 1, 101, or 201. Never use context token counts.')
-
-class ReadTraceArgs(BaseModel):
-    start_line: typing.Optional[int] = None
-    line_count: typing.Optional[int] = None
-
-class ReviseContextArgs(BaseModel):
-    record_id: str
-    reason: str = Field(description='Short reason for the revision.')
-    kind: RecordKind = Field(description='Must match the fetched record kind; revise_context cannot change kind.')
-    title: str = Field(description='Complete improved title.')
-    body: str = Field(description='Complete improved body.')
-    status: typing.Optional[RecordStatus] = Field(default=None, description='Lifecycle status to keep or set.')
+class DurableRecordDraft(BaseModel):
+    kind: RecordKind = Field(description='Durable record kind.')
+    title: str = Field(description='Short standalone durable title.')
+    body: str = Field(description='Compact standalone durable body.')
+    status: typing.Optional[RecordStatus] = Field(default=None, description='Usually active for reusable durable records.')
     valid_from: typing.Optional[str] = None
     valid_until: typing.Optional[str] = None
     decision: typing.Optional[str] = None
     why: typing.Optional[str] = None
     alternatives: typing.Optional[str] = None
     consequences: typing.Optional[str] = None
-    user_intent: typing.Optional[str] = None
-    what_happened: typing.Optional[str] = None
-    outcomes: typing.Optional[str] = None
 
-class SaveContextArgs(BaseModel):
-    kind: RecordKind = Field(description='Use episode for the mandatory session summary; use durable kinds only for reusable project context.')
-    title: str = Field(description='Short standalone title for the lasting point or episode.')
-    body: str = Field(description='Compact standalone body. Do not include trace-local command logs or copied errors.')
-    status: typing.Optional[RecordStatus] = Field(default=None, description='Use archived for routine episodes with no durable signal; active for reusable durable records.')
-    valid_from: typing.Optional[str] = Field(default=None, description='Optional validity start timestamp.')
-    valid_until: typing.Optional[str] = Field(default=None, description='Optional validity end timestamp.')
-    decision: typing.Optional[str] = Field(default=None, description='Required only for kind=decision; omit for facts, preferences, constraints, references, and episodes.')
-    why: typing.Optional[str] = Field(default=None, description='Required only for kind=decision when rationale exists; omit when the trace says no durable rationale was supplied.')
-    alternatives: typing.Optional[str] = Field(default=None, description='Optional decision alternatives. Omit for non-decisions.')
-    consequences: typing.Optional[str] = Field(default=None, description='Optional direct application guidance for the same durable point.')
-    user_intent: typing.Optional[str] = Field(default=None, description='Required when kind=episode. Concise statement of what the user wanted in this source session.')
-    what_happened: typing.Optional[str] = Field(default=None, description='Required when kind=episode. Concise statement of what the session actually did.')
-    outcomes: typing.Optional[str] = Field(default=None, description='Optional concise episode outcome.')
+class EpisodeDraft(BaseModel):
+    title: typing.Optional[str] = Field(default=None, description='Optional short title for the current-session episode. Runtime derives one if omitted.')
+    body: typing.Optional[str] = Field(default=None, description='Compact episode body. If omitted, runtime builds it from user_intent and what_happened.')
+    status: typing.Optional[RecordStatus] = Field(default=None, description='Use archived for routine/no-durable sessions; active only when the episode itself remains useful.')
+    user_intent: typing.Optional[str] = Field(default=None, description='What the user wanted in this source session. Runtime fills a generic fallback if omitted.')
+    what_happened: typing.Optional[str] = Field(default=None, description='What the session actually did. Runtime fills a generic fallback if omitted.')
+    outcomes: typing.Optional[str] = Field(default=None, description='Optional concise outcome.')
 
-class SearchContextArgs(BaseModel):
-    query: str = Field(description='Natural-language query for the durable meaning, not \'*\' or an empty browse request.')
-    kind: typing.Optional[RecordKind] = Field(default=None, description='Optional filter. Use only when the desired record kind is known.')
-    status: typing.Optional[RecordStatus] = Field(default=None, description='Optional lifecycle filter.')
-    valid_at: typing.Optional[str] = Field(default=None, description='Optional timestamp for historical lookup.')
-    include_archived: typing.Optional[bool] = Field(default=None, description='Whether archived records should be included.')
-    limit: typing.Optional[int] = Field(default=None, description='Maximum hits to return.')
+class SynthesizedExtraction(BaseModel):
+    episode: "EpisodeDraft" = Field(description='Exactly one current-session episode record draft.')
+    durable_records: typing.List["DurableRecordDraft"] = Field(description='Zero or more durable records.')
+    completion_summary: typing.Optional[str] = Field(default=None, description='Brief summary of extraction work for final_result/reporting.')
+
+class TraceWindowFinding(BaseModel):
+    theme: str = Field(description='Short stable theme for this finding.')
+    level: FindingLevel = Field(description='Use durable levels for reusable context, implementation for local/noisy evidence.')
+    line: typing.Optional[int] = Field(default=None, description='1-based supporting line when the window gives one.')
+    quote: typing.Optional[str] = Field(default=None, description='Short supporting quote from the current window.')
+    note: str = Field(description='Compact semantic finding. Avoid command logs and copied errors.')
+
+class TraceWindowScan(BaseModel):
+    episode_update: typing.Optional[str] = Field(default=None, description='Compact update for the final episode summary. May be omitted when this window adds nothing.')
+    durable_findings: typing.List["TraceWindowFinding"] = Field(description='Reusable decisions, preferences, constraints, facts, and references found in this window.')
+    implementation_findings: typing.List["TraceWindowFinding"] = Field(description='Implementation evidence, discarded hypotheses, and local details useful only as support/noise.')
+    discarded_noise: typing.List[str] = Field(description='Short descriptions of noisy categories intentionally not saved.')
 
 # #########################################################################
 # Generated type aliases (0)

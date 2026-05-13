@@ -94,20 +94,34 @@ class BamlSyncClient:
     def parse_stream(self):
       return self.__llm_stream_parser
 
-    def DecideNextExtractStep(self, runtime_dashboard: str,run_instruction: str,tool_manifest: str,scratchpad: str,
+    def ScanTraceWindow(self, run_instruction: str,prior_episode_summary: str,prior_findings_summary: str,trace_window: str,
         baml_options: BamlCallOptions = {},
-    ) -> types.ExtractAgentStep:
+    ) -> types.TraceWindowScan:
         # Check if on_tick is provided
         if 'on_tick' in baml_options:
-            __stream__ = self.stream.DecideNextExtractStep(runtime_dashboard=runtime_dashboard,run_instruction=run_instruction,tool_manifest=tool_manifest,scratchpad=scratchpad,
+            __stream__ = self.stream.ScanTraceWindow(run_instruction=run_instruction,prior_episode_summary=prior_episode_summary,prior_findings_summary=prior_findings_summary,trace_window=trace_window,
                 baml_options=baml_options)
             return __stream__.get_final_response()
         else:
             # Original non-streaming code
-            __result__ = self.__options.merge_options(baml_options).call_function_sync(function_name="DecideNextExtractStep", args={
-                "runtime_dashboard": runtime_dashboard,"run_instruction": run_instruction,"tool_manifest": tool_manifest,"scratchpad": scratchpad,
+            __result__ = self.__options.merge_options(baml_options).call_function_sync(function_name="ScanTraceWindow", args={
+                "run_instruction": run_instruction,"prior_episode_summary": prior_episode_summary,"prior_findings_summary": prior_findings_summary,"trace_window": trace_window,
             })
-            return typing.cast(types.ExtractAgentStep, __result__.cast_to(types, types, stream_types, False, __runtime__))
+            return typing.cast(types.TraceWindowScan, __result__.cast_to(types, types, stream_types, False, __runtime__))
+    def SynthesizeExtractRecords(self, run_instruction: str,episode_summary: str,durable_findings_summary: str,existing_record_manifest: str,
+        baml_options: BamlCallOptions = {},
+    ) -> types.SynthesizedExtraction:
+        # Check if on_tick is provided
+        if 'on_tick' in baml_options:
+            __stream__ = self.stream.SynthesizeExtractRecords(run_instruction=run_instruction,episode_summary=episode_summary,durable_findings_summary=durable_findings_summary,existing_record_manifest=existing_record_manifest,
+                baml_options=baml_options)
+            return __stream__.get_final_response()
+        else:
+            # Original non-streaming code
+            __result__ = self.__options.merge_options(baml_options).call_function_sync(function_name="SynthesizeExtractRecords", args={
+                "run_instruction": run_instruction,"episode_summary": episode_summary,"durable_findings_summary": durable_findings_summary,"existing_record_manifest": existing_record_manifest,
+            })
+            return typing.cast(types.SynthesizedExtraction, __result__.cast_to(types, types, stream_types, False, __runtime__))
     
 
 
@@ -117,16 +131,28 @@ class BamlStreamClient:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
-    def DecideNextExtractStep(self, runtime_dashboard: str,run_instruction: str,tool_manifest: str,scratchpad: str,
+    def ScanTraceWindow(self, run_instruction: str,prior_episode_summary: str,prior_findings_summary: str,trace_window: str,
         baml_options: BamlCallOptions = {},
-    ) -> baml_py.BamlSyncStream[stream_types.ExtractAgentStep, types.ExtractAgentStep]:
-        __ctx__, __result__ = self.__options.merge_options(baml_options).create_sync_stream(function_name="DecideNextExtractStep", args={
-            "runtime_dashboard": runtime_dashboard,"run_instruction": run_instruction,"tool_manifest": tool_manifest,"scratchpad": scratchpad,
+    ) -> baml_py.BamlSyncStream[stream_types.TraceWindowScan, types.TraceWindowScan]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_sync_stream(function_name="ScanTraceWindow", args={
+            "run_instruction": run_instruction,"prior_episode_summary": prior_episode_summary,"prior_findings_summary": prior_findings_summary,"trace_window": trace_window,
         })
-        return baml_py.BamlSyncStream[stream_types.ExtractAgentStep, types.ExtractAgentStep](
+        return baml_py.BamlSyncStream[stream_types.TraceWindowScan, types.TraceWindowScan](
           __result__,
-          lambda x: typing.cast(stream_types.ExtractAgentStep, x.cast_to(types, types, stream_types, True, __runtime__)),
-          lambda x: typing.cast(types.ExtractAgentStep, x.cast_to(types, types, stream_types, False, __runtime__)),
+          lambda x: typing.cast(stream_types.TraceWindowScan, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(types.TraceWindowScan, x.cast_to(types, types, stream_types, False, __runtime__)),
+          __ctx__,
+        )
+    def SynthesizeExtractRecords(self, run_instruction: str,episode_summary: str,durable_findings_summary: str,existing_record_manifest: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.BamlSyncStream[stream_types.SynthesizedExtraction, types.SynthesizedExtraction]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_sync_stream(function_name="SynthesizeExtractRecords", args={
+            "run_instruction": run_instruction,"episode_summary": episode_summary,"durable_findings_summary": durable_findings_summary,"existing_record_manifest": existing_record_manifest,
+        })
+        return baml_py.BamlSyncStream[stream_types.SynthesizedExtraction, types.SynthesizedExtraction](
+          __result__,
+          lambda x: typing.cast(stream_types.SynthesizedExtraction, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(types.SynthesizedExtraction, x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
     
@@ -137,11 +163,18 @@ class BamlHttpRequestClient:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
-    def DecideNextExtractStep(self, runtime_dashboard: str,run_instruction: str,tool_manifest: str,scratchpad: str,
+    def ScanTraceWindow(self, run_instruction: str,prior_episode_summary: str,prior_findings_summary: str,trace_window: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
-        __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="DecideNextExtractStep", args={
-            "runtime_dashboard": runtime_dashboard,"run_instruction": run_instruction,"tool_manifest": tool_manifest,"scratchpad": scratchpad,
+        __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="ScanTraceWindow", args={
+            "run_instruction": run_instruction,"prior_episode_summary": prior_episode_summary,"prior_findings_summary": prior_findings_summary,"trace_window": trace_window,
+        }, mode="request")
+        return __result__
+    def SynthesizeExtractRecords(self, run_instruction: str,episode_summary: str,durable_findings_summary: str,existing_record_manifest: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="SynthesizeExtractRecords", args={
+            "run_instruction": run_instruction,"episode_summary": episode_summary,"durable_findings_summary": durable_findings_summary,"existing_record_manifest": existing_record_manifest,
         }, mode="request")
         return __result__
     
@@ -152,11 +185,18 @@ class BamlHttpStreamRequestClient:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
-    def DecideNextExtractStep(self, runtime_dashboard: str,run_instruction: str,tool_manifest: str,scratchpad: str,
+    def ScanTraceWindow(self, run_instruction: str,prior_episode_summary: str,prior_findings_summary: str,trace_window: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
-        __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="DecideNextExtractStep", args={
-            "runtime_dashboard": runtime_dashboard,"run_instruction": run_instruction,"tool_manifest": tool_manifest,"scratchpad": scratchpad,
+        __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="ScanTraceWindow", args={
+            "run_instruction": run_instruction,"prior_episode_summary": prior_episode_summary,"prior_findings_summary": prior_findings_summary,"trace_window": trace_window,
+        }, mode="stream")
+        return __result__
+    def SynthesizeExtractRecords(self, run_instruction: str,episode_summary: str,durable_findings_summary: str,existing_record_manifest: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="SynthesizeExtractRecords", args={
+            "run_instruction": run_instruction,"episode_summary": episode_summary,"durable_findings_summary": durable_findings_summary,"existing_record_manifest": existing_record_manifest,
         }, mode="stream")
         return __result__
     

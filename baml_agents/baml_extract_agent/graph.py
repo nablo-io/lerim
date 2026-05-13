@@ -1,8 +1,7 @@
-"""LangGraph ReAct loop whose LLM decisions are produced by BAML."""
+"""Windowed LangGraph extraction pipeline whose LLM steps are produced by BAML."""
 
 from __future__ import annotations
 
-from collections import Counter
 from datetime import datetime, timezone
 import math
 import operator
@@ -17,28 +16,25 @@ from baml_client.sync_client import b
 from lerim.agents.extract import _format_existing_record_manifest
 from lerim.config.settings import get_config
 from lerim.agents.tools import (
+    CONTEXT_SOFT_PRESSURE_PCT,
     _TOKENS_PER_CHAR,
     MODEL_CONTEXT_TOKEN_LIMIT,
     ContextDeps,
-    _classify_context_pressure,
-    _first_uncovered_offset,
+    TRACE_MAX_CHUNK_BYTES,
+    TRACE_MAX_LINE_BYTES,
     compute_request_budget,
 )
 from lerim.context import ProjectIdentity, resolve_project_identity
-from lerim.context.spec import DURABLE_FINDING_LEVELS, IMPLEMENTATION_FINDING_LEVELS
 
 from baml_extract_agent.tool_bridge import (
     build_tool_context,
-    execute_step,
-    format_observation,
-    observation_to_state,
+    persist_synthesized_extraction,
     prepare_context_deps,
-    tool_manifest,
 )
 
 
-MODEL_NAME = "gemma4:e4b"
-BAML_PROVIDER = "ollama"
+MODEL_NAME = "MiniMax-M2.7"
+BAML_PROVIDER = "minimax"
 OLLAMA_BASE_URL = "http://127.0.0.1:11434/v1"
 MINIMAX_BASE_URL = "https://api.minimax.io/v1"
 MINIMAX_TEMPERATURE_FLOOR = 0.01
@@ -47,6 +43,9 @@ BAML_HTTP_CONNECT_TIMEOUT_MS = 10_000
 BAML_HTTP_TIME_TO_FIRST_TOKEN_TIMEOUT_MS = 120_000
 BAML_HTTP_IDLE_TIMEOUT_MS = 30_000
 BAML_HTTP_REQUEST_TIMEOUT_MS = 300_000
+WINDOW_RESERVE_TOKENS = 30_000
+MIN_WINDOW_CHARS = 20_000
+MAX_WINDOW_CHARS = TRACE_MAX_CHUNK_BYTES
 BAML_RECOVERABLE_ERROR_NAMES = {
     "BamlClientFinishReasonError",
     "BamlClientHttpError",
@@ -55,12 +54,19 @@ BAML_RECOVERABLE_ERROR_NAMES = {
 }
 
 
-class ExtractGraphState(TypedDict, total=False):
-    """Mutable state carried through the BAML ReAct graph."""
+class WindowExtractGraphState(TypedDict, total=False):
+    """State for the windowed BAML extraction pipeline."""
 
     observations: Annotated[list[dict[str, Any]], operator.add]
     llm_calls: int
-    pending_step: Any
+    next_line: int
+    trace_total_lines: int
+    current_window: dict[str, Any]
+    episode_updates: Annotated[list[str], operator.add]
+    durable_findings: Annotated[list[dict[str, Any]], operator.add]
+    implementation_findings: Annotated[list[dict[str, Any]], operator.add]
+    discarded_noise: Annotated[list[str], operator.add]
+    synthesized: Any
     done: bool
     completion_summary: str
 
@@ -94,14 +100,22 @@ def run_baml_extraction(
         session_started_at=started_at,
         model_name=model_name,
     )
-    graph = build_extract_graph(
+    existing_record_manifest = _format_existing_record_manifest(
+        context_db_path=resolved_context_db_path,
+        project_identity=identity,
+    )
+    run_instruction = _build_run_instruction(
+        context_db_path=resolved_context_db_path,
+        project_identity=identity,
+        trace_path=resolved_trace_path,
+        session_started_at=started_at,
+        existing_record_manifest=existing_record_manifest,
+    )
+    graph = build_windowed_extract_graph(
         deps=deps,
-        run_instruction=_build_run_instruction(
-            context_db_path=resolved_context_db_path,
-            project_identity=identity,
-            trace_path=resolved_trace_path,
-            session_started_at=started_at,
-        ),
+        trace_path=resolved_trace_path,
+        run_instruction=run_instruction,
+        existing_record_manifest=existing_record_manifest,
         model_name=model_name,
         baml_provider=baml_provider,
         api_base_url=api_base_url,
@@ -112,14 +126,20 @@ def run_baml_extraction(
         progress=progress,
     )
     final_state = graph.invoke(
-        {"observations": [], "llm_calls": 0, "done": False, "completion_summary": ""}
+        {
+            "observations": [],
+            "llm_calls": 0,
+            "next_line": 1,
+            "trace_total_lines": _trace_line_count(resolved_trace_path),
+            "done": False,
+            "completion_summary": "",
+        }
     )
-    if not final_state.get("done"):
-        raise RuntimeError("BAML extraction graph stopped before final_result.")
     return {
         "completion_summary": final_state.get("completion_summary", ""),
         "llm_calls": final_state.get("llm_calls", 0),
         "observations": final_state.get("observations", []),
+        "done": bool(final_state.get("done")),
         "context_db_path": str(resolved_context_db_path),
         "project_id": identity.project_id,
         "session_id": session_id,
@@ -128,10 +148,12 @@ def run_baml_extraction(
     }
 
 
-def build_extract_graph(
+def build_windowed_extract_graph(
     *,
     deps: ContextDeps,
+    trace_path: Path,
     run_instruction: str,
+    existing_record_manifest: str,
     model_name: str,
     baml_provider: str,
     api_base_url: str | None,
@@ -141,9 +163,8 @@ def build_extract_graph(
     max_llm_calls: int,
     progress: bool = False,
 ):
-    """Compile the LangGraph state machine for one extraction run."""
+    """Compile the windowed scan -> synthesize -> persist extraction graph."""
     runtime_context = build_tool_context(deps)
-    live_tool_manifest = tool_manifest()
     baml_runtime = _baml_client_for_model(
         model_name=model_name,
         baml_provider=baml_provider,
@@ -153,82 +174,366 @@ def build_extract_graph(
         ollama_base_url=ollama_base_url,
     )
 
-    def llm_call(state: ExtractGraphState) -> dict[str, Any]:
-        """Ask BAML to choose the next ReAct action."""
+    def read_window(state: WindowExtractGraphState) -> dict[str, Any]:
+        """Read the next budgeted trace window into transient state."""
+        total_lines = int(state.get("trace_total_lines") or 0)
+        start_line = int(state.get("next_line") or 1)
+        if start_line > total_lines:
+            return {"current_window": {}}
+        char_budget = _window_char_budget(
+            state=state,
+            run_instruction=run_instruction,
+            existing_record_manifest=existing_record_manifest,
+        )
+        window = _read_trace_window(
+            trace_path=trace_path,
+            start_line=start_line,
+            total_lines=total_lines,
+            char_budget=char_budget,
+        )
+        deps.trace_total_lines = total_lines
+        deps.read_ranges.append((window["start_line"] - 1, window["end_line"]))
+        if progress:
+            print(
+                f"  baml window {window['start_line']}-{window['end_line']} "
+                f"chars={len(window['text'])}",
+                flush=True,
+            )
+        return {
+            "current_window": window,
+            "next_line": int(window["end_line"]) + 1,
+            "observations": [
+                {
+                    "action": "read_window",
+                    "ok": True,
+                    "content": window["header"],
+                    "args": {
+                        "start_line": window["start_line"],
+                        "end_line": window["end_line"],
+                        "char_budget": char_budget,
+                    },
+                    "done": False,
+                    "completion_summary": "",
+                }
+            ],
+        }
+
+    def scan_window(state: WindowExtractGraphState) -> dict[str, Any]:
+        """Scan the current window into compact episode/findings state."""
         llm_calls = int(state.get("llm_calls") or 0)
         if llm_calls >= max_llm_calls:
             raise RuntimeError(
                 f"BAML extraction exceeded max_llm_calls={max_llm_calls}."
             )
-        observations = state.get("observations", [])
-        scratchpad = _scratchpad(observations, deps)
+        window = state.get("current_window") or {}
+        if not window.get("text"):
+            return {}
         if progress:
-            print(f"  baml llm {llm_calls + 1}/{max_llm_calls}", flush=True)
-        try:
-            step = baml_runtime.DecideNextExtractStep(
-                runtime_dashboard=_runtime_dashboard(deps, observations),
+            print(f"  baml scan {llm_calls + 1}/{max_llm_calls}", flush=True)
+        result, retry_observations, attempts = _call_baml_with_retries(
+            lambda: baml_runtime.ScanTraceWindow(
                 run_instruction=run_instruction,
-                tool_manifest=live_tool_manifest,
-                scratchpad=scratchpad,
-            )
-        except Exception as exc:
-            if not _is_recoverable_baml_error(exc):
-                raise
-            model_retry_count = sum(
-                1 for observation in observations if observation.get("action") == "model_retry"
-            )
-            if model_retry_count >= MAX_BAML_MODEL_RETRIES:
-                raise RuntimeError(
-                    f"BAML extraction exceeded model_retry_limit={MAX_BAML_MODEL_RETRIES}."
-                ) from exc
-            step = {
-                "action": "model_retry",
-                "content": _model_retry_observation(exc),
-            }
-        return {"pending_step": step, "llm_calls": llm_calls + 1}
-
-    def tool_node(state: ExtractGraphState) -> dict[str, Any]:
-        """Execute the BAML-selected action with Lerim's real tools."""
-        pending_step = state["pending_step"]
-        if isinstance(pending_step, dict) and pending_step.get("action") == "model_retry":
-            if progress:
-                print("  baml tool model_retry", flush=True)
-            return {
-                "observations": [
-                    {
-                        "action": "model_retry",
-                        "ok": False,
-                        "content": pending_step["content"],
-                        "args": {},
-                        "done": False,
-                        "completion_summary": "",
-                    }
-                ],
-                "done": False,
-                "completion_summary": "",
-            }
-        observation = execute_step(pending_step, runtime_context)
-        if progress:
-            print(f"  baml tool {observation.action} ok={observation.ok}", flush=True)
+                prior_episode_summary=_episode_summary(state),
+                prior_findings_summary=_findings_summary(state),
+                trace_window=str(window["text"]),
+            ),
+            stage="scan_window",
+            progress=progress,
+        )
+        payload = _model_payload(result)
+        episode_update = str(payload.get("episode_update") or "").strip()
+        durable = [_model_payload(item) for item in payload.get("durable_findings") or []]
+        implementation = [
+            _model_payload(item)
+            for item in payload.get("implementation_findings") or []
+        ]
+        noise = [
+            str(item).strip()
+            for item in payload.get("discarded_noise") or []
+            if str(item).strip()
+        ]
         return {
-            "observations": [observation_to_state(observation)],
-            "done": observation.done,
-            "completion_summary": observation.completion_summary,
+            "llm_calls": llm_calls + attempts,
+            "episode_updates": [episode_update] if episode_update else [],
+            "durable_findings": durable,
+            "implementation_findings": implementation,
+            "discarded_noise": noise,
+            "observations": [
+                *retry_observations,
+                {
+                    "action": "scan_window",
+                    "ok": True,
+                    "content": (
+                        f"window={window.get('start_line')}-{window.get('end_line')} "
+                        f"durable={len(durable)} implementation={len(implementation)}"
+                    ),
+                    "args": {
+                        "start_line": window.get("start_line"),
+                        "end_line": window.get("end_line"),
+                    },
+                    "done": False,
+                    "completion_summary": "",
+                },
+            ],
         }
 
-    def should_continue(state: ExtractGraphState) -> str:
-        """Route back to the LLM until final_result validates."""
-        if bool(state.get("done")):
-            return END
-        return "llm_call"
+    def synthesize_records(state: WindowExtractGraphState) -> dict[str, Any]:
+        """Synthesize final episode and durable record candidates."""
+        llm_calls = int(state.get("llm_calls") or 0)
+        if llm_calls >= max_llm_calls:
+            raise RuntimeError(
+                f"BAML extraction exceeded max_llm_calls={max_llm_calls}."
+            )
+        if progress:
+            print(f"  baml synth {llm_calls + 1}/{max_llm_calls}", flush=True)
+        result, retry_observations, attempts = _call_baml_with_retries(
+            lambda: baml_runtime.SynthesizeExtractRecords(
+                run_instruction=run_instruction,
+                episode_summary=_episode_summary(state),
+                durable_findings_summary=_durable_findings_summary(state),
+                existing_record_manifest=existing_record_manifest or "(none)",
+            ),
+            stage="synthesize_records",
+            progress=progress,
+        )
+        payload = _model_payload(result)
+        durable_count = len(payload.get("durable_records") or [])
+        return {
+            "llm_calls": llm_calls + attempts,
+            "synthesized": result,
+            "observations": [
+                *retry_observations,
+                {
+                    "action": "synthesize_records",
+                    "ok": True,
+                    "content": f"durable_records={durable_count}",
+                    "args": {},
+                    "done": False,
+                    "completion_summary": "",
+                },
+            ],
+        }
 
-    graph = StateGraph(ExtractGraphState)
-    graph.add_node("llm_call", llm_call)
-    graph.add_node("tool_node", tool_node)
-    graph.add_edge(START, "llm_call")
-    graph.add_edge("llm_call", "tool_node")
-    graph.add_conditional_edges("tool_node", should_continue, ["llm_call", END])
+    def persist_records(state: WindowExtractGraphState) -> dict[str, Any]:
+        """Persist synthesized records and finish the graph."""
+        runtime_context.deps.findings_checked = True
+        observations, done, completion_summary = persist_synthesized_extraction(
+            state.get("synthesized"),
+            runtime_context,
+        )
+        if progress:
+            print(f"  baml persist done={done}", flush=True)
+        return {
+            "observations": observations,
+            "done": done,
+            "completion_summary": completion_summary,
+        }
+
+    def after_scan(state: WindowExtractGraphState) -> str:
+        """Continue scanning until all trace lines are covered."""
+        next_line = int(state.get("next_line") or 1)
+        total_lines = int(state.get("trace_total_lines") or 0)
+        if next_line <= total_lines:
+            return "read_window"
+        return "synthesize_records"
+
+    graph = StateGraph(WindowExtractGraphState)
+    graph.add_node("read_window", read_window)
+    graph.add_node("scan_window", scan_window)
+    graph.add_node("synthesize_records", synthesize_records)
+    graph.add_node("persist_records", persist_records)
+    graph.add_edge(START, "read_window")
+    graph.add_edge("read_window", "scan_window")
+    graph.add_conditional_edges(
+        "scan_window",
+        after_scan,
+        ["read_window", "synthesize_records"],
+    )
+    graph.add_edge("synthesize_records", "persist_records")
+    graph.add_edge("persist_records", END)
     return graph.compile()
+
+
+def _trace_line_count(trace_path: Path) -> int:
+    """Return the number of lines in a trace file."""
+    try:
+        return sum(1 for _ in trace_path.open("r", encoding="utf-8"))
+    except OSError:
+        return 0
+
+
+def _window_char_budget(
+    *,
+    state: WindowExtractGraphState,
+    run_instruction: str,
+    existing_record_manifest: str,
+) -> int:
+    """Compute how much raw trace text can fit in the next scan window."""
+    soft_tokens = int(MODEL_CONTEXT_TOKEN_LIMIT * CONTEXT_SOFT_PRESSURE_PCT)
+    state_text = "\n".join(
+        [
+            run_instruction,
+            existing_record_manifest,
+            _episode_summary(state),
+            _durable_findings_summary(state),
+            _implementation_summary(state),
+        ]
+    )
+    state_tokens = math.ceil(len(state_text) * _TOKENS_PER_CHAR)
+    available_tokens = max(
+        MIN_WINDOW_CHARS * _TOKENS_PER_CHAR,
+        soft_tokens - WINDOW_RESERVE_TOKENS - state_tokens,
+    )
+    return min(
+        MAX_WINDOW_CHARS,
+        max(MIN_WINDOW_CHARS, int(available_tokens / _TOKENS_PER_CHAR)),
+    )
+
+
+def _read_trace_window(
+    *,
+    trace_path: Path,
+    start_line: int,
+    total_lines: int,
+    char_budget: int,
+) -> dict[str, Any]:
+    """Read as many complete trace lines as fit in the character budget."""
+    numbered: list[str] = []
+    current_chars = 0
+    end_line = start_line - 1
+    with trace_path.open("r", encoding="utf-8") as handle:
+        for line_number, raw_line in enumerate(handle, start=1):
+            if line_number < start_line:
+                continue
+            line = raw_line.rstrip("\n")
+            if len(line) > TRACE_MAX_LINE_BYTES:
+                dropped = len(line) - TRACE_MAX_LINE_BYTES
+                line = (
+                    line[:TRACE_MAX_LINE_BYTES]
+                    + f" ... [truncated {dropped} chars from this line]"
+                )
+            rendered = f"{line_number}\t{line}"
+            if numbered and current_chars + len(rendered) + 1 > char_budget:
+                break
+            numbered.append(rendered)
+            current_chars += len(rendered) + 1
+            end_line = line_number
+            if current_chars >= char_budget:
+                break
+    if not numbered and start_line <= total_lines:
+        numbered.append(f"{start_line}\t")
+        end_line = start_line
+    header = f"[{total_lines} lines, window {start_line}-{end_line}]"
+    if end_line < total_lines:
+        header += f" — next window starts at line {end_line + 1}"
+    return {
+        "start_line": start_line,
+        "end_line": end_line,
+        "header": header,
+        "text": header + "\n" + "\n".join(numbered),
+    }
+
+
+def _call_baml_with_retries(call, *, stage: str, progress: bool) -> tuple[Any, list[dict[str, Any]], int]:
+    """Run one BAML call with graph-visible recoverable retries."""
+    observations: list[dict[str, Any]] = []
+    attempts = 0
+    while True:
+        attempts += 1
+        try:
+            return call(), observations, attempts
+        except Exception as exc:
+            if not _is_recoverable_baml_error(exc) or attempts > MAX_BAML_MODEL_RETRIES:
+                raise
+            if progress:
+                print(f"  baml retry {stage} attempt={attempts}", flush=True)
+            observations.append(
+                {
+                    "action": "model_retry",
+                    "ok": False,
+                    "content": _model_retry_observation(exc),
+                    "args": {"stage": stage, "attempt": attempts},
+                    "done": False,
+                    "completion_summary": "",
+                }
+            )
+
+
+def _model_payload(value: Any) -> dict[str, Any]:
+    """Convert generated BAML objects into plain dictionaries."""
+    if hasattr(value, "model_dump"):
+        return _plain_value(value.model_dump(exclude_none=True))
+    if isinstance(value, dict):
+        return _plain_value(
+            {key: item for key, item in value.items() if item is not None}
+        )
+    if value is None:
+        return {}
+    return _plain_value(getattr(value, "__dict__", {}))
+
+
+def _plain_value(value: Any) -> Any:
+    """Convert enum-ish values recursively into JSON-like values."""
+    enum_value = getattr(value, "value", None)
+    if enum_value is not None:
+        return enum_value
+    if isinstance(value, dict):
+        return {key: _plain_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_plain_value(item) for item in value]
+    return value
+
+
+def _episode_summary(state: WindowExtractGraphState) -> str:
+    """Render compact rolling episode summary."""
+    updates = [item for item in state.get("episode_updates", []) if item]
+    return "\n".join(f"- {item}" for item in updates) or "(none yet)"
+
+
+def _findings_summary(state: WindowExtractGraphState) -> str:
+    """Render all prior findings for the next scan window."""
+    return "\n\n".join(
+        [
+            "Durable findings:\n" + _durable_findings_summary(state),
+            "Implementation/noise findings:\n" + _implementation_summary(state),
+        ]
+    )
+
+
+def _durable_findings_summary(state: WindowExtractGraphState) -> str:
+    """Render durable findings compactly for BAML prompts."""
+    findings = state.get("durable_findings", [])
+    if not findings:
+        return "(none)"
+    return "\n".join(_format_finding(finding) for finding in findings)
+
+
+def _implementation_summary(state: WindowExtractGraphState) -> str:
+    """Render implementation findings and discarded noise compactly."""
+    parts: list[str] = []
+    findings = state.get("implementation_findings", [])
+    if findings:
+        parts.append("\n".join(_format_finding(finding) for finding in findings))
+    noise = state.get("discarded_noise", [])
+    if noise:
+        parts.append("Discarded noise:\n" + "\n".join(f"- {item}" for item in noise))
+    return "\n".join(parts) if parts else "(none)"
+
+
+def _format_finding(finding: dict[str, Any]) -> str:
+    """Render one scan finding as one compact bullet."""
+    level = str(finding.get("level") or "").strip()
+    theme = str(finding.get("theme") or "").strip()
+    note = str(finding.get("note") or "").strip()
+    line = finding.get("line")
+    quote = str(finding.get("quote") or "").strip()
+    prefix = f"- {level}: {theme}" if level or theme else "-"
+    details = note
+    if line:
+        details += f" (line {line})"
+    if quote:
+        details += f" Evidence: {quote}"
+    return f"{prefix}: {details}".strip()
 
 
 def _baml_client_for_model(
@@ -315,16 +620,18 @@ def _build_run_instruction(
     project_identity: ProjectIdentity,
     trace_path: Path,
     session_started_at: str,
+    existing_record_manifest: str | None = None,
 ) -> str:
     """Build the same extraction task framing used by Lerim's current agent."""
     try:
         trace_line_count = sum(1 for _ in trace_path.open("r", encoding="utf-8"))
     except OSError:
         trace_line_count = 0
-    existing_record_manifest = _format_existing_record_manifest(
-        context_db_path=context_db_path,
-        project_identity=project_identity,
-    )
+    if existing_record_manifest is None:
+        existing_record_manifest = _format_existing_record_manifest(
+            context_db_path=context_db_path,
+            project_identity=project_identity,
+        )
     source_time_text = str(session_started_at or "").strip() or "unknown"
     prompt = (
         "Read the trace, write exactly one episode record, and write only the strongest "
@@ -342,69 +649,3 @@ def _build_run_instruction(
         + (f"\n\n{existing_record_manifest}" if existing_record_manifest else "")
     )
     return prompt
-
-
-def _scratchpad(observations: list[dict[str, Any]], deps: ContextDeps) -> str:
-    """Render prior actions for the next BAML decision."""
-    if not observations:
-        return "No prior actions."
-    return "\n\n".join(
-        format_observation(observation, deps) for observation in observations[-20:]
-    )
-
-
-def _runtime_dashboard(deps: ContextDeps, observations: list[dict[str, Any]]) -> str:
-    """Render the same context-pressure and notes dashboards as the extract agent."""
-    scratchpad_chars = sum(
-        len(format_observation(observation, deps)) for observation in observations
-    )
-    approx_tokens = math.ceil(scratchpad_chars * _TOKENS_PER_CHAR)
-    pct = approx_tokens / MODEL_CONTEXT_TOKEN_LIMIT
-    pressure = _classify_context_pressure(pct)
-    deps.last_context_tokens = approx_tokens
-    deps.last_context_fill_ratio = pct
-    context_summary = (
-        f"CONTEXT: {approx_tokens}/{MODEL_CONTEXT_TOKEN_LIMIT} ({pct:.0%}) [{pressure}]"
-    )
-    return context_summary + "\n" + _notes_dashboard(deps)
-
-
-def _notes_dashboard(deps: ContextDeps) -> str:
-    """Render the notes and trace-coverage dashboard used between model turns."""
-    findings = deps.notes
-    if not findings:
-        summary = "NOTES: 0 findings"
-        if deps.findings_checked:
-            summary += " (checkpoint recorded)"
-    else:
-        counts = Counter(finding.level for finding in findings)
-        durable_findings = [
-            finding for finding in findings if finding.level in DURABLE_FINDING_LEVELS
-        ]
-        theme_source = durable_findings or findings
-        themes = Counter(finding.theme for finding in theme_source)
-        durable = sum(counts.get(level, 0) for level in DURABLE_FINDING_LEVELS)
-        implementation = sum(
-            counts.get(level, 0) for level in IMPLEMENTATION_FINDING_LEVELS
-        )
-        top_themes = ", ".join(
-            f"{theme}({count})" for theme, count in themes.most_common(5)
-        )
-        summary = (
-            f"NOTES: {len(findings)} findings ({durable} durable, {implementation} implementation) "
-            f"across {len(themes)} theme(s)"
-        )
-        if top_themes:
-            summary += f"\nTop themes: {top_themes}"
-    if deps.read_ranges:
-        next_uncovered = _first_uncovered_offset(
-            deps.read_ranges,
-            int(deps.trace_total_lines),
-        )
-        covered_chunks = len({(int(start), int(end)) for start, end in deps.read_ranges})
-        summary += (
-            f"\nTrace reads: {covered_chunks} chunk(s)"
-            f"\nNext unread offset: {next_uncovered if next_uncovered is not None else 'none'}"
-            f"\nPruned offsets: {sorted(deps.pruned_offsets) if deps.pruned_offsets else 'none'}"
-        )
-    return summary

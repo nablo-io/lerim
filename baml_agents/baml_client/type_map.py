@@ -16,35 +16,21 @@ from . import stream_types
 
 type_map = {
 
-    "types.ExtractAgentStep": types.ExtractAgentStep,
-    "stream_types.ExtractAgentStep": stream_types.ExtractAgentStep,
+    "types.DurableRecordDraft": types.DurableRecordDraft,
+    "stream_types.DurableRecordDraft": stream_types.DurableRecordDraft,
 
-    "types.FinalResultArgs": types.FinalResultArgs,
-    "stream_types.FinalResultArgs": stream_types.FinalResultArgs,
+    "types.EpisodeDraft": types.EpisodeDraft,
+    "stream_types.EpisodeDraft": stream_types.EpisodeDraft,
 
-    "types.GetContextArgs": types.GetContextArgs,
-    "stream_types.GetContextArgs": stream_types.GetContextArgs,
+    "types.SynthesizedExtraction": types.SynthesizedExtraction,
+    "stream_types.SynthesizedExtraction": stream_types.SynthesizedExtraction,
 
-    "types.NoteTraceFindingsArgs": types.NoteTraceFindingsArgs,
-    "stream_types.NoteTraceFindingsArgs": stream_types.NoteTraceFindingsArgs,
+    "types.TraceWindowFinding": types.TraceWindowFinding,
+    "stream_types.TraceWindowFinding": stream_types.TraceWindowFinding,
 
-    "types.PruneTraceReadsArgs": types.PruneTraceReadsArgs,
-    "stream_types.PruneTraceReadsArgs": stream_types.PruneTraceReadsArgs,
+    "types.TraceWindowScan": types.TraceWindowScan,
+    "stream_types.TraceWindowScan": stream_types.TraceWindowScan,
 
-    "types.ReadTraceArgs": types.ReadTraceArgs,
-    "stream_types.ReadTraceArgs": stream_types.ReadTraceArgs,
-
-    "types.ReviseContextArgs": types.ReviseContextArgs,
-    "stream_types.ReviseContextArgs": stream_types.ReviseContextArgs,
-
-    "types.SaveContextArgs": types.SaveContextArgs,
-    "stream_types.SaveContextArgs": stream_types.SaveContextArgs,
-
-    "types.SearchContextArgs": types.SearchContextArgs,
-    "stream_types.SearchContextArgs": stream_types.SearchContextArgs,
-
-
-    "types.ExtractAction": types.ExtractAction,
 
     "types.FindingLevel": types.FindingLevel,
 
