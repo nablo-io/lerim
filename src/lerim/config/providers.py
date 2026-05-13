@@ -276,6 +276,8 @@ def parse_fallback_spec(
 def _make_retrying_http_client(
     max_attempts: int = 5,
     max_wait_seconds: int = 120,
+    timeout_seconds: float = MODEL_HTTP_TIMEOUT_SECONDS,
+    connect_timeout_seconds: float = MODEL_HTTP_CONNECT_TIMEOUT_SECONDS,
 ) -> AsyncClient:
     """Build an httpx AsyncClient with tenacity retries for transient errors.
 
@@ -311,8 +313,8 @@ def _make_retrying_http_client(
     return AsyncClient(
         transport=transport,
         timeout=Timeout(
-            MODEL_HTTP_TIMEOUT_SECONDS,
-            connect=MODEL_HTTP_CONNECT_TIMEOUT_SECONDS,
+            timeout_seconds,
+            connect=connect_timeout_seconds,
         ),
     )
 
@@ -349,6 +351,9 @@ def _build_minimax_anthropic_model(
     model: str,
     api_key: str,
     cfg: Config,
+    timeout_seconds: float | None = None,
+    connect_timeout_seconds: float | None = None,
+    max_retries: int = 5,
 ) -> AnthropicModel:
     """Build MiniMax model via its Anthropic-compatible endpoint.
 
@@ -373,18 +378,29 @@ def _build_minimax_anthropic_model(
             else "https://api.minimax.io/anthropic"
         )
 
+    resolved_timeout = timeout_seconds or MODEL_HTTP_TIMEOUT_SECONDS
+    resolved_connect_timeout = connect_timeout_seconds or MODEL_HTTP_CONNECT_TIMEOUT_SECONDS
+    client_cache_key = "minimax-anthropic"
+    if (
+        resolved_timeout != MODEL_HTTP_TIMEOUT_SECONDS
+        or resolved_connect_timeout != MODEL_HTTP_CONNECT_TIMEOUT_SECONDS
+    ):
+        client_cache_key = (
+            f"minimax-anthropic-{resolved_timeout:g}-{resolved_connect_timeout:g}"
+        )
+
     client = AsyncAnthropic(
         api_key=api_key,
         base_url=base_url,
         timeout=Timeout(
-            MODEL_HTTP_TIMEOUT_SECONDS,
-            connect=MODEL_HTTP_CONNECT_TIMEOUT_SECONDS,
+            resolved_timeout,
+            connect=resolved_connect_timeout,
         ),
-        max_retries=5,
+        max_retries=max_retries,
         http_client=cached_async_http_client(
-            provider="minimax-anthropic",
-            timeout=MODEL_HTTP_TIMEOUT_SECONDS,
-            connect=MODEL_HTTP_CONNECT_TIMEOUT_SECONDS,
+            provider=client_cache_key,
+            timeout=resolved_timeout,
+            connect=resolved_connect_timeout,
         ),
     )
     anthropic_provider = AnthropicProvider(anthropic_client=client)
@@ -408,6 +424,9 @@ def _build_pydantic_model_for_provider(
     api_base: str,
     cfg: Config,
     role_label: str,
+    http_timeout_seconds: float | None = None,
+    http_connect_timeout_seconds: float | None = None,
+    http_max_attempts: int | None = None,
 ) -> Model:
     """Build a single PydanticAI model with HTTP retry.
 
@@ -428,7 +447,14 @@ def _build_pydantic_model_for_provider(
 
     # MiniMax: Anthropic-compat endpoint for proper tool calling
     if provider == "minimax":
-        return _build_minimax_anthropic_model(model=model, api_key=api_key, cfg=cfg)
+        return _build_minimax_anthropic_model(
+            model=model,
+            api_key=api_key,
+            cfg=cfg,
+            timeout_seconds=http_timeout_seconds,
+            connect_timeout_seconds=http_connect_timeout_seconds,
+            max_retries=http_max_attempts or 5,
+        )
 
     # All other providers: OpenAI-compat path
     base_url = api_base or _default_api_base(provider, cfg)
@@ -439,7 +465,13 @@ def _build_pydantic_model_for_provider(
             f"provider={provider} (set [providers].{provider} in default.toml)"
         )
 
-    http_client = _make_retrying_http_client()
+    http_client = _make_retrying_http_client(
+        max_attempts=http_max_attempts or 5,
+        timeout_seconds=http_timeout_seconds or MODEL_HTTP_TIMEOUT_SECONDS,
+        connect_timeout_seconds=(
+            http_connect_timeout_seconds or MODEL_HTTP_CONNECT_TIMEOUT_SECONDS
+        ),
+    )
     openai_provider = OpenAIProvider(
         base_url=base_url,
         api_key=api_key,
@@ -473,6 +505,9 @@ def _build_model_chain(
     fallback_models: tuple[str, ...] | list[str],
     primary_role_label: str,
     fallback_role_label_prefix: str,
+    http_timeout_seconds: float | None = None,
+    http_connect_timeout_seconds: float | None = None,
+    http_max_attempts: int | None = None,
 ) -> Model:
     """Build a primary model and optional configured fallback chain."""
     primary = _build_pydantic_model_for_provider(
@@ -481,6 +516,9 @@ def _build_model_chain(
         api_base=api_base,
         cfg=cfg,
         role_label=primary_role_label,
+        http_timeout_seconds=http_timeout_seconds,
+        http_connect_timeout_seconds=http_connect_timeout_seconds,
+        http_max_attempts=http_max_attempts,
     )
 
     fallbacks = [
@@ -490,6 +528,9 @@ def _build_model_chain(
             api_base="",
             cfg=cfg,
             role_label=f"{fallback_role_label_prefix}{spec.provider}:{spec.model}",
+            http_timeout_seconds=http_timeout_seconds,
+            http_connect_timeout_seconds=http_connect_timeout_seconds,
+            http_max_attempts=http_max_attempts,
         )
         for raw in fallback_models
         for spec in (parse_fallback_spec(raw, default_provider=provider),)
@@ -542,6 +583,9 @@ def build_pydantic_model_from_provider(
     *,
     fallback_models: tuple[str, ...] | list[str] | None = None,
     config: Config | None = None,
+    http_timeout_seconds: float | None = None,
+    http_connect_timeout_seconds: float | None = None,
+    http_max_attempts: int | None = None,
 ) -> Model:
     """Build a robust PydanticAI model from explicit provider/model args.
 
@@ -561,6 +605,9 @@ def build_pydantic_model_from_provider(
                     (same format as `default.toml` `fallback_models`). None means
                     no fallback — just the primary with HTTP-level retry.
             config: Optional Config override (defaults to `get_config()`).
+            http_timeout_seconds: Optional request timeout override for evals.
+            http_connect_timeout_seconds: Optional connect timeout override for evals.
+            http_max_attempts: Optional HTTP retry attempt override for evals.
 
     Returns:
             FallbackModel if fallbacks are configured and their API keys
@@ -576,6 +623,9 @@ def build_pydantic_model_from_provider(
         fallback_models=fallback_models or (),
         primary_role_label=f"explicit_provider={provider}",
         fallback_role_label_prefix="explicit_fallback=",
+        http_timeout_seconds=http_timeout_seconds,
+        http_connect_timeout_seconds=http_connect_timeout_seconds,
+        http_max_attempts=http_max_attempts,
     )
 
 
