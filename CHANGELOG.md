@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.83] - 2026-05-14
+
+### Added
+- Packaged the BAML source and generated client under `src/lerim/agents/` so future agents can share the same BAML/LangGraph layout.
+- Added the production BAML/LangGraph extract package with deterministic trace windowing, typed BAML scans, record synthesis, context-store persistence, and structured graph events.
+
+### Changed
+- Replaced sync extraction with the BAML/LangGraph harness while keeping maintain, ask, and working-memory on PydanticAI.
+- Updated extraction evals, integration tests, docs, and run artifacts to use graph events instead of PydanticAI extract messages.
+
+### Removed
+- Removed the legacy PydanticAI extract agent, extract-only trace tools, history processors, and the experimental `baml_agents/` sidecar.
+
 ## [0.1.81] - 2026-04-29
 
 ### Fixed

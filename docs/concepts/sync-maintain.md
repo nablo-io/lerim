@@ -7,7 +7,8 @@ clean:
 - **Maintain** (cold path) -- refines existing records offline
 
 Both run automatically in the daemon loop and can also be triggered manually.
-Both use the same PydanticAI runtime and the `[roles.agent]` role model.
+Sync extraction uses the BAML plus LangGraph runtime and the `[roles.agent]`
+role model. Maintain uses the PydanticAI runtime with the same role model.
 
 ---
 
@@ -20,7 +21,7 @@ records:
 2. **Index** -- new sessions are cataloged in `sessions.sqlite3`
 3. **Match to project** -- sessions matching a registered project are enqueued; unmatched sessions are indexed but not extracted
 4. **Compact** -- traces are compacted (tool outputs stripped) and cached
-5. **Extract flow** -- the PydanticAI extraction agent (`[roles.agent]`) reads the trace and uses `read_trace`, `note_trace_findings`, `prune_trace_reads`, `search_context`, `get_context`, `save_context`, and `revise_context` to write one episode record plus a small number of durable records into `~/.lerim/context.sqlite3`
+5. **Extract flow** -- the BAML plus LangGraph extractor (`[roles.agent]`) reads deterministic trace windows, scans typed findings, synthesizes the final payload, and writes one episode record plus a small number of durable records into `~/.lerim/context.sqlite3`
 
 ### Record quality contract
 

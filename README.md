@@ -222,23 +222,26 @@ Project separation happens inside the database by `project_id`.
 
 There is no per-project durable store on disk.
 
-## Agent Tools
+## Agent Runtime
 
-The agent-facing tool contract is intentionally small:
+The sync extractor uses a BAML plus LangGraph graph under
+`src/lerim/agents/`. The graph reads deterministic trace windows, asks BAML
+for typed window scans, synthesizes one final record payload, and persists the
+result to SQLite.
 
-- `read_trace`
+The maintain, ask, and working-memory flows still use PydanticAI with a small
+semantic DB-era tool surface:
+
 - `list_context`
 - `search_context`
 - `get_context`
-- `save_context`
 - `revise_context`
 - `archive_context`
 - `supersede_context`
 - `count_context`
-- `note_trace_findings`
-- `prune_trace_reads`
 
-These are the authoritative runtime tool names. Keeping the surface DB-era and semantic makes the runtime easier to reason about and gives smaller future models a cleaner action space for training.
+Keeping the surface DB-era and semantic makes the runtime easier to reason
+about and gives smaller future models a cleaner action space for training.
 
 ## Common Commands
 

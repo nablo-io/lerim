@@ -4,13 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lerim"
-version = "0.1.82"
+version = "0.1.83"
 description = "Continual learning layer for coding agents and software projects."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "BUSL-1.1"
 dependencies = [
     "pydantic==2.12.5",
+    "baml-py==0.222.0",
+    "langgraph==1.2.0",
     "pydantic-ai==1.70.0",
     "pydantic-evals==1.70.0",
     "eval_type_backport==0.3.1; python_version < '3.13'",
@@ -62,7 +64,12 @@ where = ["src"]
 include = ["lerim*"]
 
 [tool.setuptools.package-data]
-lerim = ["config/default.toml", "skills/*.md", "server/lerim-seccomp.json"]
+lerim = [
+    "agents/baml_src/*.baml",
+    "config/default.toml",
+    "skills/*.md",
+    "server/lerim-seccomp.json",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
@@ -84,8 +91,12 @@ select = ["E4", "E7", "E9", "F"]
 extend-select = ["B006"]
 ignore = ["E501"]
 
+[tool.ruff]
+extend-exclude = ["src/lerim/agents/baml_client"]
+
 [tool.vulture]
 paths = ["src/lerim/", "vulture_whitelist.py"]
+exclude = ["src/lerim/agents/baml_client/*"]
 min_confidence = 60
 
 [dependency-groups]

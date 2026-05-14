@@ -29,26 +29,24 @@ Canonical storage is global:
 
 Projects are scoped by `project_id` inside the database.
 
-## Agent tool surface
+## Agent runtime surface
 
-Lerim does not expose raw SQL or file CRUD to the agent.
+Lerim does not expose raw SQL or file CRUD to agents.
 
-The durable context tools are:
+The sync extractor is a BAML plus LangGraph graph. It reads deterministic trace
+windows, scans each window into typed findings, synthesizes records once, and
+persists them through the context store.
 
-- `read_trace`
+The maintain, ask, and working-memory flows use PydanticAI. Their semantic
+context tools are:
+
 - `list_context`
 - `search_context`
 - `get_context`
-- `save_context`
 - `revise_context`
 - `archive_context`
 - `supersede_context`
 - `count_context`
-
-The extract flow also uses:
-
-- `note_trace_findings`
-- `prune_trace_reads`
 
 Retrieval is hybrid:
 
