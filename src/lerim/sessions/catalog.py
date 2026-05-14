@@ -30,6 +30,8 @@ SESSION_JOB_CLAIM_OLDEST = "oldest"
 SESSION_JOB_CLAIM_ORDERS = {SESSION_JOB_CLAIM_NEWEST, SESSION_JOB_CLAIM_OLDEST}
 _DB_INIT_LOCK = threading.Lock()
 _DB_INITIALIZED_PATH: Path | None = None
+_LOCAL_RUNNING_LEASES_LOCK = threading.Lock()
+_LOCAL_RUNNING_LEASES: dict[str, datetime] = {}
 DEFAULT_RUNNING_JOB_LEASE_SECONDS = 2 * 60
 
 
@@ -53,6 +55,41 @@ def _utc_now() -> datetime:
 def _iso_now() -> str:
     """Return current UTC datetime as ISO8601 text."""
     return _utc_now().isoformat()
+
+
+def note_local_running_job(run_id: str) -> None:
+    """Record that this process is actively processing *run_id*."""
+    if not run_id:
+        return
+    with _LOCAL_RUNNING_LEASES_LOCK:
+        _LOCAL_RUNNING_LEASES[run_id] = _utc_now()
+
+
+def clear_local_running_job(run_id: str) -> None:
+    """Forget this process's active lease for *run_id*."""
+    if not run_id:
+        return
+    with _LOCAL_RUNNING_LEASES_LOCK:
+        _LOCAL_RUNNING_LEASES.pop(run_id, None)
+
+
+def _recent_local_running_lease_at(
+    run_id: str,
+    *,
+    now: datetime,
+    lease_seconds: int,
+) -> datetime | None:
+    """Return this process's fresh lease timestamp for *run_id*, if any."""
+    if not run_id:
+        return None
+    with _LOCAL_RUNNING_LEASES_LOCK:
+        lease_at = _LOCAL_RUNNING_LEASES.get(run_id)
+        if not lease_at:
+            return None
+        if now - lease_at <= timedelta(seconds=max(1, int(lease_seconds))):
+            return lease_at
+        _LOCAL_RUNNING_LEASES.pop(run_id, None)
+    return None
 
 
 def _to_iso(value: datetime | None) -> str | None:
@@ -94,7 +131,8 @@ def _connect() -> sqlite3.Connection:
     """Open catalog SQLite connection with dictionary row factory."""
     path = _db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=60.0)
+    conn.execute("PRAGMA busy_timeout = 60000;")
     conn.row_factory = _dict_row
     return conn
 
@@ -1061,7 +1099,17 @@ def list_stale_running_jobs(
             """,
             (JOB_STATUS_RUNNING, job_type, cutoff, max(1, int(limit))),
         ).fetchall()
-    return rows
+    now = _utc_now()
+    return [
+        row
+        for row in rows
+        if _recent_local_running_lease_at(
+            str(row.get("run_id") or ""),
+            now=now,
+            lease_seconds=effective_lease,
+        )
+        is None
+    ]
 
 
 def reap_stale_running_jobs(
@@ -1114,26 +1162,25 @@ def queue_health_snapshot(
     dead_letter_count = int(counts.get(JOB_STATUS_DEAD_LETTER, 0))
 
     with _connect() as conn:
-        stale_row = conn.execute(
+        stale_rows = conn.execute(
             """
-            SELECT COUNT(1) AS total
+            SELECT run_id, COALESCE(heartbeat_at, claimed_at) AS lease_at
             FROM session_jobs
             WHERE status = ?
               AND COALESCE(heartbeat_at, claimed_at) IS NOT NULL
               AND COALESCE(heartbeat_at, claimed_at) <= ?
             """,
             (JOB_STATUS_RUNNING, cutoff),
-        ).fetchone()
-        oldest_running_row = conn.execute(
+        ).fetchall()
+        running_rows = conn.execute(
             """
-            SELECT COALESCE(heartbeat_at, claimed_at) AS lease_at
+            SELECT run_id, COALESCE(heartbeat_at, claimed_at) AS lease_at
             FROM session_jobs
             WHERE status = ? AND COALESCE(heartbeat_at, claimed_at) IS NOT NULL
             ORDER BY COALESCE(heartbeat_at, claimed_at) ASC, id ASC
-            LIMIT 1
             """,
             (JOB_STATUS_RUNNING,),
-        ).fetchone()
+        ).fetchall()
         oldest_dead_row = conn.execute(
             """
             SELECT updated_at
@@ -1145,13 +1192,33 @@ def queue_health_snapshot(
             (JOB_STATUS_DEAD_LETTER,),
         ).fetchone()
 
-    stale_running_count = int((stale_row or {}).get("total") or 0)
-    oldest_running_at = _parse_iso((oldest_running_row or {}).get("lease_at"))
+    visible_stale_rows = [
+        row
+        for row in stale_rows
+        if _recent_local_running_lease_at(
+            str(row.get("run_id") or ""),
+            now=now,
+            lease_seconds=effective_lease,
+        )
+        is None
+    ]
+    stale_running_count = len(visible_stale_rows)
+    running_lease_times: list[datetime] = []
+    for row in running_rows:
+        run_id = str(row.get("run_id") or "")
+        local_lease_at = _recent_local_running_lease_at(
+            run_id,
+            now=now,
+            lease_seconds=effective_lease,
+        )
+        lease_at = local_lease_at or _parse_iso(row.get("lease_at"))
+        if lease_at:
+            running_lease_times.append(lease_at)
     oldest_dead_at = _parse_iso((oldest_dead_row or {}).get("updated_at"))
 
     oldest_running_age_seconds = (
-        max(0, int((now - oldest_running_at).total_seconds()))
-        if oldest_running_at
+        max(max(0, int((now - lease_at).total_seconds())) for lease_at in running_lease_times)
+        if running_lease_times
         else None
     )
     oldest_dead_letter_age_seconds = (

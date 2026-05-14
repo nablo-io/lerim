@@ -50,6 +50,23 @@ test ScanTraceWindowAllowsNoDurableSignal {
   @@assert({{ this.durable_findings|length == 0 }})
 }
 
+test ScanTraceWindowAvoidsIncidentalPersonalName {
+  functions [ScanTraceWindow]
+  args {
+    run_instruction "Extract durable context without preserving incidental personal names."
+    prior_episode_summary "(none yet)"
+    prior_findings_summary "(none yet)"
+    trace_window #"
+      [5 lines, window 1-5]
+      1	user: Morgan asked for extraction prompts to avoid storing names unless identity is the point.
+      2	assistant: I will update the prompt generally.
+      3	user: The durable rule is role-neutral memory text, not the person's name.
+    "#
+  }
+  @@assert({{ "Morgan" not in (this.episode_update or "") }})
+  @@assert({{ "Morgan" not in (this.durable_findings|map(attribute="note")|join(" ")) }})
+}
+
 test SynthesizeExtractRecordsCreatesEpisodeAndDurableRecord {
   functions [SynthesizeExtractRecords]
   args {
@@ -84,4 +101,19 @@ test SynthesizeExtractRecordsDeduplicatesCoreClaim {
     existing_record_manifest "(none)"
   }
   @@assert({{ this.durable_records|length == 1 }})
+}
+
+test SynthesizeExtractRecordsAvoidsIncidentalPersonalName {
+  functions [SynthesizeExtractRecords]
+  args {
+    run_instruction "Create role-neutral episode and durable records."
+    episode_summary "Morgan asked the assistant to make future extraction records avoid incidental personal names."
+    durable_findings_summary "- preference: role-neutral memory text: Avoid personal names in memory text unless identity itself is the durable context."
+    existing_record_manifest "(none)"
+  }
+  @@assert({{ "Morgan" not in (this.episode.title or "") }})
+  @@assert({{ "Morgan" not in (this.episode.body or "") }})
+  @@assert({{ "Morgan" not in (this.episode.user_intent or "") }})
+  @@assert({{ "Morgan" not in (this.episode.what_happened or "") }})
+  @@assert({{ "Morgan" not in (this.durable_records|map(attribute="body")|join(" ")) }})
 }

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
+import threading
 import time
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -760,6 +762,29 @@ def test_empty_sync_summary() -> None:
     assert s.cost_usd == 0.0
 
 
+def test_start_job_heartbeat_retries_after_sqlite_error(monkeypatch) -> None:
+    """A transient heartbeat write error does not kill the heartbeat thread."""
+    seen_retry = threading.Event()
+    calls = {"count": 0}
+
+    def flaky_heartbeat(_run_id: str) -> bool:
+        """Raise once, then prove the background loop kept running."""
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise sqlite3.OperationalError("disk I/O error")
+        seen_retry.set()
+        return False
+
+    monkeypatch.setattr(daemon, "heartbeat_session_job", flaky_heartbeat)
+
+    stop = daemon._start_job_heartbeat("run-heartbeat", interval_seconds=1)
+    try:
+        assert seen_retry.wait(timeout=2)
+    finally:
+        stop.set()
+    assert calls["count"] >= 2
+
+
 # ---------------------------------------------------------------------------
 # _record_service_event
 # ---------------------------------------------------------------------------
@@ -790,6 +815,47 @@ def test_record_service_event_calls_fn() -> None:
     assert captured[0]["trigger"] == "manual"
     assert captured[0]["completed_at"]  # should be set by _now_iso
     assert captured[0]["details"]["extracted_sessions"] == 3
+
+
+def test_record_service_event_suppresses_sqlite_error() -> None:
+    """Service-run audit failures do not fail the daemon operation."""
+    from lerim.server.daemon import _record_service_event
+
+    def broken_record(**_kwargs):
+        """Raise like a malformed catalog write."""
+        raise sqlite3.DatabaseError("database disk image is malformed")
+
+    _record_service_event(
+        broken_record,
+        job_type="sync",
+        status="failed",
+        started_at="2026-01-01T00:00:00+00:00",
+        trigger="manual",
+        details={"error": "catalog unavailable"},
+    )
+
+
+def test_record_service_start_calls_fn() -> None:
+    """_record_service_start writes a started row with no completion time."""
+    from lerim.server.daemon import _record_service_start
+
+    captured: list[dict] = []
+
+    def fake_record(**kwargs):
+        """Capture service run recording call."""
+        captured.append(kwargs)
+
+    _record_service_start(
+        fake_record,
+        job_type="sync",
+        started_at="2026-01-01T00:00:00+00:00",
+        trigger="api",
+    )
+
+    assert captured[0]["job_type"] == "sync"
+    assert captured[0]["status"] == "started"
+    assert captured[0]["completed_at"] is None
+    assert captured[0]["details"] is None
 
 
 # ---------------------------------------------------------------------------

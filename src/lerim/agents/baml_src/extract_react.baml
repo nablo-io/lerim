@@ -103,6 +103,7 @@ function ScanTraceWindow(
     For technical blockers, keep durable_findings at the capability, status, and implication level only. Put patch recipes, flags, functions, commands, exact metrics, and local debug steps in implementation_findings.
     When a window mixes a durable point with local evidence, put only the reusable point in durable_findings and put the supporting local evidence in implementation_findings.
     Use semantic meaning, not exact wording. Do not copy long code, logs, stack traces, or command transcripts.
+    Do not carry incidental personal names, direct address labels, or conversational identity markers into episode updates or findings unless the identity itself is the durable context. Prefer role-neutral wording such as "the user" and "the assistant".
     If the window has no durable signal, return an empty durable_findings list.
     If the window adds nothing meaningful to the episode, episode_update may be an empty string.
 
@@ -210,6 +211,7 @@ function SynthesizeExtractRecords(
     - Prefer this shape for durable records: the durable point, why it matters, and how to apply it later.
     - Do not write durable records as meeting minutes, patch logs, or cleanup commentary.
     - Do not preserve trace-local commands, negotiation phrasing, or "this is not about X" sentences in final record text.
+    - Do not include personal names, direct address labels, or conversational identity markers in episode or durable record text unless the identity itself is the durable context. Prefer role-neutral wording such as "the user" and "the assistant".
     - Do not mention discarded implementation noise in durable record fields, including consequences.
     - Do not include patch recipes, flags, function names, exact metrics, or local debug steps in durable record text.
     - Do not write a durable record whose body is mainly a warning that certain local details, cleanups, or implementation noise should be ignored.

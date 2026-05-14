@@ -84,7 +84,12 @@ Rules:
 - agent tool tests enforce fetch-before-mutate: `revise_context`, `archive_context`, and `supersede_context` only accept records returned by `get_context` in the same run
 - agent build tests guard the runtime tool contract against documentation and helper drift
 - adapter tests cover compact-trace visibility for canonical message fields and structured event messages without keyword heuristics
+- extract persistence tests cover idempotent replay when a session episode already exists
 - session catalog tests cover queue claim availability, content-hash refresh/change detection, and stable pagination ordering
+- API/daemon tests cover degraded status reporting when the session catalog is unavailable
+- daemon tests cover transient session-job heartbeat write failures
+- session catalog tests cover process-local active-job leases that avoid false stale queue health during transient heartbeat write failures
+- daemon sync tests cover one-at-a-time job claiming to avoid false stale-running queue state
 - config tests cover provider client lifecycle, provider-specific model settings, fallback-model parsing, strict config parsing, and SDK log-noise filters
 - Working Memory tests cover cwd project resolution, freshness counts, markdown citations, CLI local reads, and artifact writes without live LLM calls
 

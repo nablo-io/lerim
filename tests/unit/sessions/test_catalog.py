@@ -13,6 +13,7 @@ from lerim.adapters.base import SessionRecord
 from lerim.sessions.catalog import (
     _connect,
     claim_session_jobs,
+    clear_local_running_job,
     complete_session_job,
     count_fts_indexed,
     count_session_jobs_by_status,
@@ -28,6 +29,7 @@ from lerim.sessions.catalog import (
     list_service_runs,
     list_sessions_window,
     list_unscoped_sessions,
+    note_local_running_job,
     queue_health_snapshot,
     reap_stale_running_jobs,
     record_service_run,
@@ -45,6 +47,7 @@ from lerim.sessions.catalog import (
 @pytest.fixture(autouse=True)
 def _reset_init_flag(monkeypatch):
     monkeypatch.setattr("lerim.sessions.catalog._DB_INITIALIZED_PATH", None)
+    monkeypatch.setattr("lerim.sessions.catalog._LOCAL_RUNNING_LEASES", {})
 
 
 def _db(sessions_db: Path) -> sqlite3.Connection:
@@ -125,6 +128,13 @@ class TestInitAndSchema:
         assert "session_jobs" in tables
         assert "service_runs" in tables
         conn.close()
+
+    def test_connect_sets_busy_timeout(self, sessions_db):
+        """Catalog connections wait for busy writers before failing."""
+        with _connect() as conn:
+            row = conn.execute("PRAGMA busy_timeout").fetchone()
+
+        assert int(row.get("timeout") or 0) == 60000
 
     def test_fts_virtual_table_created(self, sessions_db):
         conn = _db(sessions_db)
@@ -1372,6 +1382,45 @@ class TestJobQueueAdvanced:
             row = conn.execute(
                 "SELECT status FROM session_jobs WHERE run_id = ?",
                 ("alive-1",),
+            ).fetchone()
+        assert row["status"] == "running"
+
+    def test_local_running_lease_masks_transient_heartbeat_write_failure(
+        self, sessions_db
+    ):
+        """A live in-process job is not stale just because DB heartbeat writes fail."""
+        _seed_and_enqueue(
+            "alive-local",
+            repo_path="/tmp/proj-alive-local",
+            start_time="2026-03-01T10:00:00Z",
+        )
+        claimed = claim_session_jobs(limit=1, run_ids=["alive-local"])
+        assert len(claimed) == 1
+        old = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        with _connect() as conn:
+            conn.execute(
+                """
+                UPDATE session_jobs
+                SET claimed_at = ?, heartbeat_at = ?, updated_at = ?
+                WHERE run_id = ?
+                """,
+                (old, old, old, "alive-local"),
+            )
+            conn.commit()
+
+        note_local_running_job("alive-local")
+        try:
+            health = queue_health_snapshot(lease_seconds=60)
+            assert health["degraded"] is False
+            assert health["stale_running_count"] == 0
+            assert reap_stale_running_jobs(lease_seconds=60) == 0
+        finally:
+            clear_local_running_job("alive-local")
+
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT status FROM session_jobs WHERE run_id = ?",
+                ("alive-local",),
             ).fetchone()
         assert row["status"] == "running"
 

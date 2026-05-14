@@ -143,6 +143,7 @@ def persist_synthesized_extraction(
     store.initialize()
     store.register_project(ctx.project_identity)
     for index, record in enumerate([episode, *durable_records]):
+        skip_remaining_records = False
         try:
             result = store.create_record(
                 project_id=ctx.project_identity.project_id,
@@ -161,6 +162,17 @@ def persist_synthesized_extraction(
                 ),
                 args=record,
             )
+        except ValueError as exc:
+            if index == 0 and str(exc) == "duplicate_episode_for_session":
+                observation = _duplicate_episode_observation(store, ctx, record)
+                skip_remaining_records = True
+            else:
+                observation = PersistenceObservation(
+                    action="save_context",
+                    ok=False,
+                    content=f"Record write failed: {type(exc).__name__}: {exc}",
+                    args=record,
+                )
         except Exception as exc:
             observation = PersistenceObservation(
                 action="save_context",
@@ -169,6 +181,8 @@ def persist_synthesized_extraction(
                 args=record,
             )
         observations.append(observation_to_state(observation))
+        if skip_remaining_records:
+            break
         if index == 0 and not observation.ok:
             break
 
@@ -190,6 +204,38 @@ def persist_synthesized_extraction(
     )
     observations.append(observation_to_state(final_observation))
     return observations, done, completion_summary if done else ""
+
+
+def _duplicate_episode_observation(
+    store: ContextStore,
+    ctx: PersistenceContext,
+    record: dict[str, Any],
+) -> PersistenceObservation:
+    """Return an idempotent observation for an already-extracted session."""
+    rows = store.query(
+        entity="records",
+        mode="list",
+        project_ids=[ctx.project_identity.project_id],
+        kind="episode",
+        source_session_id=ctx.session_id,
+        limit=1,
+        include_archived=True,
+    ).get("rows")
+    existing = rows[0] if isinstance(rows, list) and rows else {}
+    return PersistenceObservation(
+        action="save_context",
+        ok=True,
+        content=json.dumps(
+            {
+                "ok": True,
+                "skipped": "duplicate_episode_for_session",
+                "existing_record_id": str(existing.get("record_id") or ""),
+            },
+            ensure_ascii=True,
+            indent=2,
+        ),
+        args=record,
+    )
 
 
 def observation_to_state(observation: PersistenceObservation) -> dict[str, Any]:

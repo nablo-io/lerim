@@ -671,7 +671,7 @@ def api_sync(
             window_start=window_start,
             window_end=window_end,
         )
-    queue_health = queue_health_snapshot()
+    queue_health = _safe_queue_health_snapshot()
     payload: dict[str, Any] = {
         "code": code,
         **asdict(summary),
@@ -689,7 +689,7 @@ def api_maintain(dry_run: bool = False) -> dict[str, Any]:
     config = get_config()
     with ollama_lifecycle(config):
         code, payload = run_maintain_once(dry_run=dry_run)
-    queue_health = queue_health_snapshot()
+    queue_health = _safe_queue_health_snapshot()
     result: dict[str, Any] = {"code": code, **payload, "queue_health": queue_health}
     if queue_health.get("degraded"):
         result["warning"] = "Queue degraded. " + str(
@@ -759,6 +759,41 @@ def _sync_metrics_from_details(details: dict[str, Any]) -> dict[str, Any]:
 def _public_error_message(raw: Any) -> str:
     """Return a public-safe error marker without internal paths or provider details."""
     return "Error details hidden" if str(raw or "").strip() else ""
+
+
+def _empty_queue_counts() -> dict[str, int]:
+    """Return zero-filled queue counts for unavailable catalog reads."""
+    return {
+        "pending": 0,
+        "running": 0,
+        "done": 0,
+        "failed": 0,
+        "dead_letter": 0,
+    }
+
+
+def _catalog_unavailable_health(_exc: sqlite3.Error) -> dict[str, Any]:
+    """Return degraded queue health when the session catalog cannot be read."""
+    return {
+        "degraded": True,
+        "stale_running_count": 0,
+        "dead_letter_count": 0,
+        "oldest_running_age_seconds": None,
+        "oldest_dead_letter_age_seconds": None,
+        "advice": (
+            "Session catalog is unavailable; stop Lerim and rebuild "
+            "the session index."
+        ),
+        "error": "Session catalog storage is unavailable.",
+    }
+
+
+def _safe_queue_health_snapshot() -> dict[str, Any]:
+    """Return queue health without letting catalog storage abort API responses."""
+    try:
+        return queue_health_snapshot()
+    except sqlite3.Error as exc:
+        return _catalog_unavailable_health(exc)
 
 
 def _normalize_activity_item(run: dict[str, Any]) -> dict[str, Any]:
@@ -1059,30 +1094,50 @@ def api_status(
         total_records = 0
 
     now = datetime.now(timezone.utc)
-    latest_sync_raw = latest_service_run("sync")
-    latest_maintain_raw = latest_service_run("maintain")
-    queue = count_session_jobs_by_status()
-    queue_health = queue_health_snapshot()
+    catalog_error: sqlite3.Error | None = None
+    try:
+        latest_sync_raw = latest_service_run("sync")
+        latest_maintain_raw = latest_service_run("maintain")
+        queue = count_session_jobs_by_status()
+        queue_health = queue_health_snapshot()
+        sessions_indexed_count = count_fts_indexed()
+        unscoped_by_agent = count_unscoped_sessions_by_agent(projects=config.projects)
+    except sqlite3.Error as exc:
+        catalog_error = exc
+        latest_sync_raw = None
+        latest_maintain_raw = None
+        queue = _empty_queue_counts()
+        queue_health = _catalog_unavailable_health(exc)
+        sessions_indexed_count = 0
+        unscoped_by_agent = {}
+
     latest_sync_details = (latest_sync_raw or {}).get("details") or {}
     latest_sync_metrics = (
         _sync_metrics_from_details(latest_sync_details)
         if isinstance(latest_sync_details, dict)
         else {}
     )
-    unscoped_by_agent = count_unscoped_sessions_by_agent(projects=config.projects)
 
     selected_project_names = {name for name, _ in selected_projects}
 
     platforms = _public_platforms(list_platforms(config.platforms_path))
-    recent_activity = (
-        _running_activity_rows(selected_projects=selected_projects)
-        + _recent_activity(
-            limit=12,
-            allowed_projects=selected_project_names
-            if normalized_scope == "project"
-            else None,
-        )
-    )[:12]
+    if catalog_error is None:
+        try:
+            recent_activity = (
+                _running_activity_rows(selected_projects=selected_projects)
+                + _recent_activity(
+                    limit=12,
+                    allowed_projects=selected_project_names
+                    if normalized_scope == "project"
+                    else None,
+                )
+            )[:12]
+        except sqlite3.Error as exc:
+            catalog_error = exc
+            queue_health = _catalog_unavailable_health(exc)
+            recent_activity = []
+    else:
+        recent_activity = []
 
     latest_sync = _normalize_latest_run(latest_sync_raw)
 
@@ -1094,9 +1149,15 @@ def api_status(
         ],
         "platforms": platforms,
         "record_count": total_records,
-        "sessions_indexed_count": count_fts_indexed(),
+        "sessions_indexed_count": sessions_indexed_count,
         "queue": queue,
         "queue_health": queue_health,
+        "session_catalog": {
+            "status": "unavailable" if catalog_error else "available",
+            "error": "Session catalog storage is unavailable."
+            if catalog_error
+            else "",
+        },
         "projects": projects_payload,
         "sync_window_days": config.sync_window_days,
         "schedule": {

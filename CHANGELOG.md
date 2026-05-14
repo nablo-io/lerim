@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Replaced sync extraction with the BAML/LangGraph harness while keeping maintain, ask, and working-memory on PydanticAI.
 - Updated extraction evals, integration tests, docs, and run artifacts to use graph events instead of PydanticAI extract messages.
+- Tuned extraction prompts to avoid storing incidental personal names unless identity itself is the durable context.
+
+### Fixed
+- Hardened session catalog/API status paths so catalog storage issues degrade status responses instead of crashing status or maintain.
+- Made extraction persistence idempotent when a rebuilt session catalog replays a session whose episode already exists.
+- Improved long-running extraction queue handling so transient SQLite heartbeat write failures and sequential processing do not create false stale-running jobs.
 
 ### Removed
 - Removed the legacy PydanticAI extract agent, extract-only trace tools, history processors, and the experimental `baml_agents/` sidecar.
