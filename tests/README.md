@@ -110,7 +110,7 @@ The current system is:
 - canonical run artifacts in `~/.lerim/workspace/`
 - generated Working Memory artifacts in `~/.lerim/workspace/current/<project_id>/WORKING_MEMORY.md`
 - local semantic retrieval via ONNX embeddings + `sqlite-vec` + FTS5 + RRF
-- extract tools: `read_trace`, `search_context`, `get_context`, `save_context`, `revise_context`, `note_trace_findings`, `prune_trace_reads`
+- extract graph: deterministic window reads, BAML window scan, BAML record synthesis, context-store persistence
 - maintain tools: `list_context`, `search_context`, `get_context`, `revise_context`, `archive_context`, `supersede_context`
 - ask tools: `list_context`, `search_context`, `get_context`, `count_context`
 

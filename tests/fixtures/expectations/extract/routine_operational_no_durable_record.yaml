@@ -5,12 +5,11 @@ expected:
   episode_count: 1
   durable_count: 0
   must_use_tools:
-    - read_trace
+    - read_window
     - save_context
   must_not_use_tools:
     - revise_context
     - get_context
-    - prune_trace_reads
   episode_text_must_include_any:
     - routine
     - cleanup

@@ -6,7 +6,7 @@ import pytest
 
 from tests.integration.extract.helpers import load_extract_expectation, run_extract_case
 from tests.live_helpers import (
-    EXTRACT_TOOL_NAMES,
+    EXTRACT_EVENT_NAMES,
     FRAMEWORK_TOOL_NAMES,
     assert_clean_context_schema,
     assert_quality_metrics,
@@ -22,7 +22,7 @@ def test_extract_long_trace_requires_note_before_writing(
     live_config,
     live_repo_root,
 ) -> None:
-    """Long traces should trigger multi-read extraction with note_trace_findings compression."""
+    """Long traces should trigger multi-read extraction with scan_window compression."""
     expectation = load_extract_expectation("long_trace_requires_note")["expected"]
     outcome = run_extract_case(
         case_name="long_trace_requires_note",
@@ -31,15 +31,15 @@ def test_extract_long_trace_requires_note_before_writing(
     )
 
     tool_names = outcome.tool_names
-    assert set(tool_names).issubset(EXTRACT_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
+    assert set(tool_names).issubset(EXTRACT_EVENT_NAMES | FRAMEWORK_TOOL_NAMES)
     for tool_name in expectation["must_use_tools"]:
         assert tool_name in tool_names
     for tool_name in expectation["must_not_use_tools"]:
         assert tool_name not in tool_names
-    assert tool_names.count("read_trace") >= expectation["read_trace_count_at_least"]
+    assert tool_names.count("read_window") >= expectation["read_window_count_at_least"]
     assert (
-        tool_names.count("note_trace_findings")
-        >= expectation["note_trace_findings_count_at_least"]
+        tool_names.count("scan_window")
+        >= expectation["scan_window_count_at_least"]
     )
 
     rows = outcome.rows
@@ -100,34 +100,29 @@ def test_extract_long_trace_requires_note_before_writing(
 @pytest.mark.integration
 @pytest.mark.llm
 @pytest.mark.agent
-def test_extract_very_long_trace_requires_prune(
+def test_extract_very_long_trace_uses_windows(
     live_config,
     live_repo_root,
 ) -> None:
     """Very long traces should stay compressed while preserving the extracted signal."""
-    expectation = load_extract_expectation("very_long_trace_requires_prune")["expected"]
+    expectation = load_extract_expectation("very_long_trace_uses_windows")["expected"]
     outcome = run_extract_case(
-        case_name="very_long_trace_requires_prune",
+        case_name="very_long_trace_uses_windows",
         live_config=live_config,
         live_repo_root=live_repo_root,
     )
 
     tool_names = outcome.tool_names
-    assert set(tool_names).issubset(EXTRACT_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
+    assert set(tool_names).issubset(EXTRACT_EVENT_NAMES | FRAMEWORK_TOOL_NAMES)
     for tool_name in expectation["must_use_tools"]:
         assert tool_name in tool_names
     for tool_name in expectation["must_not_use_tools"]:
         assert tool_name not in tool_names
-    assert tool_names.count("read_trace") >= expectation["read_trace_count_at_least"]
+    assert tool_names.count("read_window") >= expectation["read_window_count_at_least"]
     assert (
-        tool_names.count("note_trace_findings")
-        >= expectation["note_trace_findings_count_at_least"]
+        tool_names.count("scan_window")
+        >= expectation["scan_window_count_at_least"]
     )
-    assert (
-        tool_names.count("prune_trace_reads")
-        >= expectation["prune_trace_reads_count_at_least"]
-    )
-
     rows = outcome.rows
     episode_rows = [row for row in rows if row["kind"] == "episode"]
     durable_rows = [row for row in rows if row["kind"] != "episode"]
@@ -181,10 +176,10 @@ def test_extract_late_disambiguation_at_end_of_trace(
     )
 
     tool_names = outcome.tool_names
-    assert set(tool_names).issubset(EXTRACT_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
+    assert set(tool_names).issubset(EXTRACT_EVENT_NAMES | FRAMEWORK_TOOL_NAMES)
     for tool_name in expectation["must_use_tools"]:
         assert tool_name in tool_names
-    assert tool_names.count("read_trace") >= expectation["min_read_trace_calls"]
+    assert tool_names.count("read_window") >= expectation["min_read_window_calls"]
 
     rows = outcome.rows
     episode_rows = [row for row in rows if row["kind"] == "episode"]

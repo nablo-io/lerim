@@ -32,11 +32,6 @@ def deps(tmp_path, project_identity):
         project_identity=project_identity,
         session_id="sess_test",
         project_ids=[project_identity.project_id],
-        trace_path=None,
-        trace_total_lines=0,
-        read_ranges=[],
-        notes=[],
-        pruned_offsets=set(),
     )
 
 
@@ -58,11 +53,6 @@ def deps_with_trace(tmp_path, project_identity):
         project_identity=project_identity,
         session_id="sess_test",
         project_ids=[project_identity.project_id],
-        trace_path=trace_path,
-        trace_total_lines=10,
-        read_ranges=[],
-        notes=[],
-        pruned_offsets=set(),
     )
 
 

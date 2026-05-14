@@ -1,4 +1,4 @@
-"""Unit tests for LerimRuntime orchestration (PydanticAI-only)."""
+"""Unit tests for LerimRuntime orchestration."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from pydantic_ai.messages import (
 )
 
 from lerim.agents.ask import AskResult
-from lerim.agents.extract import ExtractionResult
+from lerim.agents.extract import ExtractionEvent, ExtractionResult, ExtractionRunDetails
 from lerim.server.runtime import (
     LerimRuntime,
     _resolve_runtime_roots,
@@ -55,6 +55,27 @@ def _build_runtime(tmp_path, monkeypatch):
         lambda *args, **kwargs: None,
     )
     return LerimRuntime(default_cwd=str(tmp_path), config=cfg)
+
+
+def _extract_details(tmp_path) -> ExtractionRunDetails:
+    """Return minimal fake extract details for sync unit tests."""
+    return ExtractionRunDetails(
+        events=[
+            ExtractionEvent(
+                action="read_window",
+                ok=True,
+                content="read",
+                args={},
+            )
+        ],
+        llm_calls=1,
+        done=True,
+        context_db_path=str(tmp_path / "context.sqlite3"),
+        project_id="proj_test",
+        session_id="trace",
+        model_name="test/model",
+        trace_total_lines=1,
+    )
 
 
 class TestHelpers:
@@ -238,14 +259,10 @@ class TestSyncFlow:
         trace.write_text('{"role":"user","content":"hello"}\n', encoding="utf-8")
 
         monkeypatch.setattr(
-            "lerim.server.runtime.build_pydantic_model",
-            lambda *args, **kwargs: "fake-model",
-        )
-        monkeypatch.setattr(
             "lerim.server.runtime.run_extraction",
             lambda **kwargs: (
                 ExtractionResult(completion_summary="extracted"),
-                [ModelRequest(parts=[SystemPromptPart(content="extract")])],
+                _extract_details(tmp_path),
             ),
         )
 
@@ -285,10 +302,6 @@ class TestSyncFlow:
         trace.write_text('{"role":"user","content":"hello"}\n', encoding="utf-8")
         monkeypatch.setattr(time, "sleep", lambda *_: None)
         monkeypatch.setattr(
-            "lerim.server.runtime.build_pydantic_model",
-            lambda *args, **kwargs: "fake-model",
-        )
-        monkeypatch.setattr(
             "lerim.server.runtime.run_extraction",
             lambda **kwargs: (_ for _ in ()).throw(RuntimeError("broken extract")),
         )
@@ -313,14 +326,10 @@ class TestSyncFlow:
         trace = tmp_path / "trace.jsonl"
         trace.write_text('{"role":"user","content":"hello"}\n', encoding="utf-8")
         monkeypatch.setattr(
-            "lerim.server.runtime.build_pydantic_model",
-            lambda *args, **kwargs: "fake-model",
-        )
-        monkeypatch.setattr(
             "lerim.server.runtime.run_extraction",
             lambda **kwargs: (
                 ExtractionResult(completion_summary="extracted"),
-                [ModelRequest(parts=[SystemPromptPart(content="extract")])],
+                _extract_details(tmp_path),
             ),
         )
         monkeypatch.setattr(

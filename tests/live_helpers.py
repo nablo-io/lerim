@@ -15,7 +15,6 @@ from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 from lerim.agents.toolsets import (
     ASK_TOOL_NAMES as ASK_TOOL_NAMES,
     CURRENT_AGENT_TOOL_NAMES as CURRENT_AGENT_TOOL_NAMES,
-    EXTRACT_TOOL_NAMES as EXTRACT_TOOL_NAMES,
     MAINTAIN_TOOL_NAMES as MAINTAIN_TOOL_NAMES,
 )
 from lerim.config.settings import Config, get_config, reload_config
@@ -48,6 +47,15 @@ FORBIDDEN_CONTEXT_TABLES = {
 FRAMEWORK_TOOL_NAMES = {
     "final_result",
 }
+EXTRACT_EVENT_NAMES = frozenset(
+    {
+        "read_window",
+        "scan_window",
+        "synthesize_records",
+        "save_context",
+        "model_retry",
+    }
+)
 _API_KEY_ATTRS = {
     "minimax": "minimax_api_key",
     "openai": "openai_api_key",
@@ -133,6 +141,9 @@ def extract_tool_names(payload: list[dict[str, Any]]) -> list[str]:
 
     def walk(value: Any) -> None:
         if isinstance(value, dict):
+            action = str(value.get("action") or "").strip()
+            if action:
+                names.append(action)
             if value.get("part_kind") == "tool-call":
                 tool_name = str(value.get("tool_name") or "").strip()
                 if tool_name:

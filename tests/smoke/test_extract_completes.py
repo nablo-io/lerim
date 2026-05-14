@@ -3,7 +3,6 @@
 import pytest
 
 from lerim.agents.extract import run_extraction
-from lerim.config.providers import build_pydantic_model
 from lerim.context import ContextStore, resolve_project_identity
 from tests.conftest import EXTRACT_TRACES_DIR
 
@@ -23,8 +22,6 @@ def test_extract_completes(live_config, live_repo_root):
 	store.register_project(identity)
 
 	session_id = "smoke-extract"
-	run_folder = live_config.global_data_dir / "workspace" / "sync" / session_id
-	run_folder.mkdir(parents=True, exist_ok=True)
 	trace_path = EXTRACT_TRACES_DIR / "routine_operational_no_durable_record.jsonl"
 
 	store.upsert_session(
@@ -41,14 +38,12 @@ def test_extract_completes(live_config, live_repo_root):
 		metadata={},
 	)
 
-	model = build_pydantic_model("agent", config=live_config)
 	result = run_extraction(
 		context_db_path=live_config.context_db_path,
 		project_identity=identity,
 		session_id=session_id,
 		trace_path=trace_path,
-		model=model,
-		run_folder=run_folder,
+		config=live_config,
 	)
 
 	assert result is not None, "Extraction returned no result"

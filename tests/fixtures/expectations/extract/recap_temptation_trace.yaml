@@ -6,11 +6,10 @@ expected:
   durable_count: 1
   decision_count: 1
   must_use_tools:
-    - read_trace
+    - read_window
     - save_context
   must_not_use_tools:
     - revise_context
-    - prune_trace_reads
   decision_text_must_include_all:
     - append-only
     - event
