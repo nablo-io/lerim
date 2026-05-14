@@ -1,6 +1,7 @@
-"""Runtime orchestrator for Lerim sync, maintain, and ask (PydanticAI only).
+"""Runtime orchestrator for Lerim sync, maintain, and ask.
 
-All three flows run through PydanticAI models and shared retry/fallback logic.
+Sync uses the BAML/LangGraph extract harness. Maintain, ask, and working-memory
+synthesis still use PydanticAI until those flows are migrated.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from lerim.agents.contracts import (
     SyncResultContract,
     WorkingMemoryResultContract,
 )
-from lerim.agents.extract import ExtractionResult, run_extraction
+from lerim.agents.extract import ExtractionRunDetails, run_extraction
 from lerim.agents.maintain import run_maintain
 from lerim.agents.mlflow_observability import finish_mlflow_run, lerim_mlflow_run
 from lerim.agents.working_memory import run_working_memory_synthesis
@@ -148,6 +149,12 @@ def _write_agent_trace(path: Path, messages: list[ModelMessage]) -> None:
     """Serialize PydanticAI message history to a stable JSON artifact."""
     trace_data = ModelMessagesTypeAdapter.dump_python(messages, mode="json")
     path.write_text(json.dumps(trace_data, indent=2), encoding="utf-8")
+
+
+def _write_extract_agent_trace(path: Path, details: ExtractionRunDetails) -> None:
+    """Serialize BAML/LangGraph extract events to a stable JSON artifact."""
+    payload = [event.model_dump(mode="json") for event in details.events]
+    path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
 
 
 def _write_error_artifact(path: Path, exc: Exception) -> None:
@@ -397,7 +404,7 @@ def _is_quota_error_pydantic(exc: Exception) -> bool:
 
 
 class LerimRuntime:
-    """Runtime orchestrator — PydanticAI sync, maintain, and ask."""
+    """Runtime orchestrator for sync, maintain, ask, and working memory."""
 
     def __init__(
         self,
@@ -565,21 +572,6 @@ class LerimRuntime:
             {"ts": manifest["started_at"], "event": "started", "run_id": run_id},
         )
 
-        def _primary_builder() -> Any:
-            return build_pydantic_model("agent", config=self.config)
-
-        def _call(model: Any) -> tuple[ExtractionResult, list[ModelMessage]]:
-            return run_extraction(
-                context_db_path=self.config.context_db_path,
-                project_identity=project_identity,
-                session_id=resolved_session_id,
-                trace_path=trace_file,
-                model=model,
-                run_folder=run_folder,
-                session_started_at=str(session_meta.get("started_at") or ""),
-                return_messages=True,
-            )
-
         try:
             with lerim_mlflow_run(
                 enabled=self.config.mlflow_enabled,
@@ -591,17 +583,21 @@ class LerimRuntime:
                 run_folder=run_folder,
                 request_preview=f"sync:{resolved_session_id}",
             ) as mlflow_run:
-                result, messages = self._run_with_fallback(
-                    flow="sync",
-                    callable_fn=_call,
-                    model_builders=[_primary_builder],
+                result, details = run_extraction(
+                    context_db_path=self.config.context_db_path,
+                    project_identity=project_identity,
+                    session_id=resolved_session_id,
+                    trace_path=trace_file,
+                    config=self.config,
+                    session_started_at=str(session_meta.get("started_at") or ""),
+                    return_details=True,
                 )
 
                 response_text = (result.completion_summary or "").strip() or "(no response)"
                 _write_text_with_newline(artifact_paths["agent_log"], response_text)
 
                 try:
-                    _write_agent_trace(artifact_paths["agent_trace"], messages)
+                    _write_extract_agent_trace(artifact_paths["agent_trace"], details)
                 except Exception as exc:
                     logger.warning(f"[sync] Failed to write agent trace: {exc}")
                     artifact_paths["agent_trace"].write_text("[]", encoding="utf-8")
@@ -634,6 +630,7 @@ class LerimRuntime:
                     response_preview=response_text,
                     outputs={
                         "completion_summary": response_text,
+                        "llm_calls": details.llm_calls,
                         "records_created": manifest["records_created"],
                         "records_updated": manifest["records_updated"],
                         "records_archived": manifest["records_archived"],

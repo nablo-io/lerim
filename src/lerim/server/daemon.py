@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from lerim.config.project_scope import match_session_project
-from lerim.config.logging import log_file_path
+from lerim.config.logging import log_file_path, logger
 from lerim.config.settings import get_config, reload_config
 from lerim.server.runtime import LerimRuntime
 from lerim.sessions.catalog import (
@@ -25,8 +25,10 @@ from lerim.sessions.catalog import (
     enqueue_session_job,
     fail_session_job,
     fetch_session_doc,
+    clear_local_running_job,
     heartbeat_session_job,
     index_new_sessions,
+    note_local_running_job,
     reap_stale_running_jobs,
     record_service_run,
 )
@@ -186,11 +188,27 @@ def _retry_backoff_seconds(attempts: int) -> int:
 def _start_job_heartbeat(run_id: str, interval_seconds: int = 30) -> threading.Event:
     """Refresh a running queue job lease until the returned event is set."""
     stop = threading.Event()
-    heartbeat_session_job(run_id)
+
+    def _heartbeat_once() -> bool:
+        try:
+            ok = heartbeat_session_job(run_id)
+            if ok:
+                note_local_running_job(run_id)
+            return ok
+        except sqlite3.Error as exc:
+            note_local_running_job(run_id)
+            logger.warning(
+                "session job heartbeat failed | run_id={} error={}",
+                run_id,
+                exc,
+            )
+            return True
+
+    _heartbeat_once()
 
     def _beat() -> None:
         while not stop.wait(max(1, int(interval_seconds))):
-            if not heartbeat_session_job(run_id):
+            if not _heartbeat_once():
                 return
 
     threading.Thread(
@@ -228,14 +246,47 @@ def _record_service_event(
     details: dict[str, Any],
 ) -> None:
     """Record a service run with canonical completed timestamp."""
-    record_fn(
-        job_type=job_type,
-        status=status,
-        started_at=started_at,
-        completed_at=_now_iso(),
-        trigger=trigger,
-        details=details,
-    )
+    try:
+        record_fn(
+            job_type=job_type,
+            status=status,
+            started_at=started_at,
+            completed_at=_now_iso(),
+            trigger=trigger,
+            details=details,
+        )
+    except sqlite3.Error as exc:
+        logger.warning(
+            "failed to record {} service event | status={} error={}",
+            job_type,
+            status,
+            exc,
+        )
+
+
+def _record_service_start(
+    record_fn: Callable[..., Any],
+    *,
+    job_type: str,
+    started_at: str,
+    trigger: str,
+) -> None:
+    """Record the start of a service run without failing the operation."""
+    try:
+        record_fn(
+            job_type=job_type,
+            status="started",
+            started_at=started_at,
+            completed_at=None,
+            trigger=trigger,
+            details=None,
+        )
+    except sqlite3.Error as exc:
+        logger.warning(
+            "failed to record {} service start | error={}",
+            job_type,
+            exc,
+        )
 
 
 def _pid_alive(pid: int | None) -> bool:
@@ -798,7 +849,12 @@ def _process_claimed_jobs(
     projects_metrics: dict[str, dict[str, Any]] = {}
     events: list[dict[str, Any]] = []
     for job in claimed:
-        result = _process_one_job(job)
+        run_id = str(job.get("run_id") or "")
+        note_local_running_job(run_id)
+        try:
+            result = _process_one_job(job)
+        finally:
+            clear_local_running_job(run_id)
         project_name = str(result.get("project_name") or "unknown")
         metric_row = projects_metrics.setdefault(project_name, _new_project_metric())
         metric_row["sessions_analyzed"] = (
@@ -905,13 +961,11 @@ def run_sync_once(
             return EXIT_LOCK_BUSY, _empty_sync_summary()
 
     try:
-        record_service_run(
+        _record_service_start(
+            record_service_run,
             job_type="sync",
-            status="started",
             started_at=started,
-            completed_at=None,
             trigger=trigger,
-            details=None,
         )
 
         config = get_config()
@@ -993,10 +1047,9 @@ def run_sync_once(
             skipped = len(target_run_ids)
         elif not dry_run:
             # Process up to max_sessions by claiming in a loop.
-            # Each claim returns at most 1 job per project.  Normal backlog
-            # extraction is newest-first; explicit replay can request
-            # chronological order directly from the catalog API.
-            # After processing, claim again to get the next session.
+            # Claim only one job at a time because extraction is sequential.
+            # Marking a batch as running before each job has its own heartbeat
+            # makes waiting jobs look stale during long LLM calls.
             total_processed = 0
             while total_processed < claim_limit:
                 reap_stale_running_jobs(
@@ -1004,7 +1057,7 @@ def run_sync_once(
                     retry_backoff_fn=_retry_backoff_seconds,
                 )
                 claimed = claim_session_jobs(
-                    limit=claim_limit - total_processed,
+                    limit=1,
                     run_ids=[run_id] if run_id else None,
                     claim_order="newest",
                 )

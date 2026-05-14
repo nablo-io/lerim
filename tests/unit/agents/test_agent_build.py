@@ -16,7 +16,7 @@ from lerim.agents.ask import (
     ASK_SYSTEM_PROMPT,
     AskResult,
 )
-from lerim.agents.extract import SYSTEM_PROMPT, ExtractionResult
+from lerim.agents.extract import ExtractionResult
 from lerim.agents.maintain import (
     MAINTAIN_SYSTEM_PROMPT,
     MaintainResult,
@@ -53,9 +53,10 @@ def test_authoritative_docs_match_current_agent_tool_contract():
 class TestBuildExtractAgent:
     """Tests for extract-agent public contract."""
 
-    def test_system_prompt_non_empty(self):
-        assert isinstance(SYSTEM_PROMPT, str)
-        assert len(SYSTEM_PROMPT.strip()) > 0
+    def test_baml_source_exists(self):
+        path = REPO_ROOT / "src" / "lerim" / "agents" / "baml_src" / "extract_react.baml"
+        assert path.exists()
+        assert "function ScanTraceWindow" in path.read_text(encoding="utf-8")
 
 
 class TestBuildMaintainAgent:

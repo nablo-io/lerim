@@ -1,4 +1,4 @@
-case: very_long_trace_requires_prune
+case: very_long_trace_uses_windows
 summary: A very long trace should stay compressed before the final writes.
 
 expected:
@@ -8,12 +8,11 @@ expected:
     - constraint
     - decision
     - fact
-  read_trace_count_at_least: 4
-  note_trace_findings_count_at_least: 1
-  prune_trace_reads_count_at_least: 0
+  read_window_count_at_least: 4
+  scan_window_count_at_least: 1
   must_use_tools:
-    - read_trace
-    - note_trace_findings
+    - read_window
+    - scan_window
     - save_context
   must_not_use_tools:
     - revise_context

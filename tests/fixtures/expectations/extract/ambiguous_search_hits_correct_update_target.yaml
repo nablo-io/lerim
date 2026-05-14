@@ -10,7 +10,7 @@ expected:
   unchanged_record_ids:
     - rec_storage_routing
   must_use_tools:
-    - read_trace
+    - read_window
     - get_context
     - revise_context
   must_not_use_tools: []

@@ -1,6 +1,6 @@
 # Tracing
 
-Lerim uses [MLflow](https://mlflow.org) for PydanticAI agent observability.
+Lerim uses [MLflow](https://mlflow.org) for agent observability.
 Tracing is opt-in and controlled by `[observability].mlflow_enabled` in
 `~/.lerim/config.toml`. The `LERIM_MLFLOW` environment variable can override it
 for one-off runs.
@@ -9,10 +9,12 @@ for one-off runs.
 
 When tracing is enabled, MLflow records:
 
-- **PydanticAI model calls** -- via `mlflow.pydantic_ai.autolog()`, every language model invocation
-  across sync/maintain/ask flows is captured automatically, including
-  input prompts, outputs, token counts, and latency.
-- **Agent/tool executions** -- tool calls and agent steps are traced as nested spans within each run.
+- **Sync extraction graph** -- the BAML plus LangGraph extractor emits a
+  top-level `lerim.agent.extract` span with trace metadata and model label.
+- **PydanticAI model calls** -- via `mlflow.pydantic_ai.autolog()`, maintain,
+  ask, and working-memory model invocations are captured automatically,
+  including input prompts, outputs, token counts, and latency.
+- **Agent/tool executions** -- tool calls and agent steps are traced as nested spans within each run when the runtime exposes them.
 - **agent_trace.json** -- each sync/maintain run also writes a local
   `agent_trace.json` under the run workspace for a full tool/message history
   (not MLflow-specific).
@@ -104,17 +106,18 @@ Lerim continues writing traces as long as the server is running with
 In the UI, look for:
 
 - **Experiments** -- select the `lerim` experiment.
-- **Traces** -- the primary view for PydanticAI autologging. Expand a trace to
-  see the model/tool span tree.
+- **Traces** -- the primary view for Lerim agent spans. Expand a trace to see
+  the sync graph span or PydanticAI model/tool span tree.
 - **Run id** -- match a local run folder to MLflow by searching for the
   `manifest.json` `run_id` value. It is also stored as `client_request_id` and
   the `lerim.run_id` tag.
-- **Model calls** -- every PydanticAI model request is logged with input prompts,
-  outputs, token counts, and latency.
+- **Model calls** -- PydanticAI model requests are logged with input prompts,
+  outputs, token counts, and latency. Sync extraction model metadata is attached
+  to the BAML/LangGraph extract span.
 - **Spans** -- nested spans show the call hierarchy from the top-level
   orchestration down to individual LM calls and tool invocations.
 
-Classic MLflow **Runs** may be empty for PydanticAI traces. That does not mean
+Classic MLflow **Runs** may be empty for agent traces. That does not mean
 tracing is broken; check the Traces view or verify the SQLite counts below.
 
 !!! tip "Filtering"
@@ -146,7 +149,7 @@ Important files:
 - `manifest.json` -- run id, operation, project, session id, artifact paths, and
   status. `mlflow_client_request_id` matches the MLflow trace request id.
 - `events.jsonl` -- compact started/succeeded/failed events for that run.
-- `agent_trace.json` -- serialized PydanticAI messages when available.
+- `agent_trace.json` -- serialized graph events or PydanticAI messages when available.
 - `agent.log` -- short human-readable agent summary on success.
 - `error.json` -- structured error details on failure.
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from lerim.agents.extract import ExtractionResult
+from lerim.agents.extract import ExtractionEvent, ExtractionResult, ExtractionRunDetails
 from lerim.agents.maintain import run_maintain
 from lerim.config.providers import build_pydantic_model
 from lerim.server.api import api_query
@@ -17,6 +17,29 @@ from tests.integration.scope.helpers import (
     seed_scope_record,
     seed_scope_session,
 )
+
+
+def _extract_details(kwargs, *, summary: str) -> ExtractionRunDetails:
+    """Build graph-style extraction details for sync runtime test doubles."""
+    return ExtractionRunDetails(
+        events=[
+            ExtractionEvent(
+                action="final_result",
+                ok=True,
+                content=summary,
+                args={},
+                done=True,
+                completion_summary=summary,
+            )
+        ],
+        llm_calls=1,
+        done=True,
+        context_db_path=str(kwargs["context_db_path"]),
+        project_id=kwargs["project_identity"].project_id,
+        session_id=kwargs["session_id"],
+        model_name="test-model",
+        trace_total_lines=1,
+    )
 
 
 def _seed_ask_scope_records(env: ScopeCaseEnv) -> None:
@@ -317,7 +340,10 @@ def test_scope_extract_project_a_does_not_touch_project_b(
             why="Project-scoped extraction should not mutate beta records.",
             change_reason="scope_extract_update",
         )
-        return (ExtractionResult(completion_summary="scope extract complete"), [])
+        return (
+            ExtractionResult(completion_summary="scope extract complete"),
+            _extract_details(kwargs, summary="scope extract complete"),
+        )
 
     monkeypatch.setattr("lerim.server.runtime.run_extraction", _fake_run_extraction)
 

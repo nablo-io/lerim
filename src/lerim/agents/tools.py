@@ -3,66 +3,23 @@
 from __future__ import annotations
 
 import json
-import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
-from pydantic import ValidationError
 from pydantic_ai import ModelRetry, RunContext
 
 from lerim.context import ContextStore, ProjectIdentity
 from lerim.context.spec import (
-    ALLOWED_FINDING_LEVELS,
     ALLOWED_KINDS,
     ALLOWED_STATUSES,
     RECORD_TYPED_FIELDS,
-    format_allowed_finding_levels,
-    normalize_finding_level,
     normalize_record_kind,
     normalize_record_status,
     record_validation_message,
 )
 
-TRACE_MAX_LINES_PER_READ = 100
-TRACE_MAX_LINE_BYTES = 5_000
-TRACE_MAX_CHUNK_BYTES = 50_000
-MODEL_CONTEXT_TOKEN_LIMIT = 200_000
-CONTEXT_SOFT_PRESSURE_PCT = 0.60
-CONTEXT_HARD_PRESSURE_PCT = 0.80
-_TOKENS_PER_CHAR = 0.25
-
 DetailLevel = Literal["concise", "detailed"]
-
-
-class TraceFinding(BaseModel):
-    """Structured extract finding captured during trace scanning."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    theme: str = Field(description="Short theme label for the finding.")
-    line: int = Field(ge=1, description="1-based trace line with supporting evidence.")
-    quote: str = Field(description="Short verbatim evidence snippet from the trace.")
-    level: str = Field(
-        description=(
-            "Signal level: use durable levels only for reusable project context. "
-            "Use `implementation` for dead ends, discarded hypotheses, trace-local noise, "
-            "and supporting evidence that should not become its own durable theme. "
-            "Allowed levels: "
-            f"{format_allowed_finding_levels()}."
-        )
-    )
-
-    @field_validator("level")
-    @classmethod
-    def validate_level(cls, value: str) -> str:
-        """Validate finding levels against the shared canonical spec."""
-        normalized = normalize_finding_level(value)
-        if normalized not in ALLOWED_FINDING_LEVELS:
-            allowed = ", ".join(ALLOWED_FINDING_LEVELS)
-            raise ValueError(f"level must be one of: {allowed}")
-        return normalized
 
 
 @dataclass
@@ -73,16 +30,7 @@ class ContextDeps:
     project_identity: ProjectIdentity
     session_id: str
     project_ids: list[str] | None = None
-    trace_path: Path | None = None
-    session_started_at: str = ""
-    trace_total_lines: int = 0
-    read_ranges: list[tuple[int, int]] = field(default_factory=list)
-    notes: list[TraceFinding] = field(default_factory=list)
-    findings_checked: bool = False
-    pruned_offsets: set[int] = field(default_factory=set)
     fetched_context_record_ids: set[str] = field(default_factory=set)
-    last_context_tokens: int = 0
-    last_context_fill_ratio: float = 0.0
 
 
 def _store(ctx: RunContext[ContextDeps]) -> ContextStore:
@@ -91,143 +39,6 @@ def _store(ctx: RunContext[ContextDeps]) -> ContextStore:
     store.initialize()
     store.register_project(ctx.deps.project_identity)
     return store
-
-
-def _source_session_started_at(
-    ctx: RunContext[ContextDeps], store: ContextStore
-) -> str:
-    """Return the source session start timestamp for record provenance."""
-    explicit = str(ctx.deps.session_started_at or "").strip()
-    if explicit:
-        return explicit
-    session_id = str(ctx.deps.session_id or "").strip()
-    if not session_id:
-        return ""
-    with store.connect() as conn:
-        row = conn.execute(
-            """
-            SELECT started_at
-            FROM sessions
-            WHERE session_id = ? AND project_id = ?
-            """,
-            (session_id, ctx.deps.project_identity.project_id),
-        ).fetchone()
-    if row is None:
-        return ""
-    return str(row["started_at"] or "").strip()
-
-
-def _trace_lines(trace_path: Path) -> list[str]:
-    """Read the current trace file into a list of lines."""
-    return trace_path.read_text(encoding="utf-8").splitlines()
-
-
-def _read_offsets(ctx: RunContext[ContextDeps]) -> list[int]:
-    """Return unique trace-read offsets in order."""
-    return sorted({int(start) for start, _end in ctx.deps.read_ranges})
-
-
-def _older_read_offsets(ctx: RunContext[ContextDeps]) -> list[int]:
-    """Return older read offsets, keeping the newest chunk in context."""
-    offsets = _read_offsets(ctx)
-    if len(offsets) <= 1:
-        return []
-    return offsets[:-1]
-
-
-def _classify_context_pressure(fill_ratio: float) -> str:
-    """Convert current fill ratio into a user-facing pressure label."""
-    if fill_ratio >= CONTEXT_HARD_PRESSURE_PCT:
-        return "hard"
-    if fill_ratio >= CONTEXT_SOFT_PRESSURE_PCT:
-        return "soft"
-    return "normal"
-
-
-def _auto_prune_before_trace_read(
-    ctx: RunContext[ContextDeps], offset: int
-) -> list[int]:
-    """Prune old trace reads under context pressure before returning more trace."""
-    if offset <= 0:
-        return []
-    fill_ratio = float(ctx.deps.last_context_fill_ratio or 0.0)
-    if fill_ratio < CONTEXT_SOFT_PRESSURE_PCT:
-        return []
-    older_offsets = _older_read_offsets(ctx)
-    if not older_offsets:
-        return []
-    before = set(ctx.deps.pruned_offsets)
-    ctx.deps.pruned_offsets.update(older_offsets)
-    return sorted(ctx.deps.pruned_offsets - before)
-
-
-def read_trace(
-    ctx: RunContext[ContextDeps], start_line: int = 1, line_count: int = 100
-) -> str:
-    """Read the next numbered trace chunk from the source session.
-
-    Args:
-        start_line: 1-based first line to read. After scanning starts,
-            overlapping or out-of-order values advance to the first unread line.
-        line_count: Maximum lines to return, capped by Lerim.
-    """
-    trace_path = ctx.deps.trace_path
-    if trace_path is None:
-        return "Error: no trace path configured"
-    lines = _trace_lines(trace_path)
-    total = len(lines)
-    ctx.deps.trace_total_lines = total
-    offset = max(0, int(start_line) - 1)
-    adjusted_from: int | None = None
-    next_unread = _first_uncovered_offset(ctx.deps.read_ranges, total)
-    if next_unread is None and ctx.deps.read_ranges:
-        return (
-            f"[{total} lines, trace coverage complete] "
-            "All trace lines have already been read. Save the episode and any durable records now."
-        )
-    if next_unread is not None and ctx.deps.read_ranges and offset != next_unread:
-        adjusted_from = offset
-        offset = next_unread
-    if offset >= total and total > 0:
-        raise ModelRetry(
-            f"read_trace start_line {start_line} is past the end of the trace. "
-            f"Use a start_line from 1 to {max(1, total)}."
-        )
-    if line_count <= 0 or line_count > TRACE_MAX_LINES_PER_READ:
-        line_count = TRACE_MAX_LINES_PER_READ
-    auto_pruned = _auto_prune_before_trace_read(ctx, offset)
-    chunk = lines[offset : offset + line_count]
-    safe_chunk: list[str] = []
-    running_bytes = 0
-    for line in chunk:
-        if len(line) > TRACE_MAX_LINE_BYTES:
-            dropped = len(line) - TRACE_MAX_LINE_BYTES
-            line = (
-                line[:TRACE_MAX_LINE_BYTES]
-                + f" ... [truncated {dropped} chars from this line]"
-            )
-        line_bytes = len(line.encode("utf-8"))
-        if running_bytes + line_bytes > TRACE_MAX_CHUNK_BYTES:
-            break
-        safe_chunk.append(line)
-        running_bytes += line_bytes
-    numbered = [
-        f"{offset + index + 1}\t{line}" for index, line in enumerate(safe_chunk)
-    ]
-    last_line = offset + len(safe_chunk)
-    ctx.deps.read_ranges.append((int(offset), int(last_line)))
-    header = f"[{total} lines, showing {offset + 1}-{last_line}]"
-    if adjusted_from is not None:
-        header += f" [advanced from requested line {adjusted_from + 1} to first unread line {offset + 1}]"
-    if auto_pruned:
-        pruned_lines = ", ".join(str(item + 1) for item in auto_pruned)
-        header += f" [auto-pruned older read_trace start lines: {pruned_lines}]"
-    if last_line < total:
-        header += (
-            f" — {total - last_line} more lines, call "
-            f"read_trace(start_line={last_line + 1}, line_count={TRACE_MAX_LINES_PER_READ}) for the next chunk"
-        )
-    return header + "\n" + "\n".join(numbered)
 
 
 def search_context(
@@ -675,155 +486,6 @@ def _maybe_raise_record_retry(exc: ValueError) -> None:
         ) from exc
 
 
-def _trace_line_count(ctx: RunContext[ContextDeps]) -> int:
-    """Return and cache the current trace line count."""
-    trace_path = ctx.deps.trace_path
-    if trace_path is None:
-        return 0
-    total_lines = int(ctx.deps.trace_total_lines)
-    if total_lines > 0:
-        return total_lines
-    try:
-        total_lines = sum(1 for _ in trace_path.open("r", encoding="utf-8"))
-    except OSError:
-        return 0
-    ctx.deps.trace_total_lines = total_lines
-    return total_lines
-
-
-def _require_trace_ready_for_write(
-    ctx: RunContext[ContextDeps], changes: dict[str, Any] | None = None
-) -> None:
-    """Require trace coverage and note discipline before extract writes."""
-    trace_path = ctx.deps.trace_path
-    if trace_path is None:
-        return
-    total_lines = _trace_line_count(ctx)
-    if total_lines <= 0:
-        return
-    if not ctx.deps.read_ranges:
-        raise ModelRetry(
-            "No trace lines have been read yet. "
-            f"Call read_trace(start_line=1, line_count={TRACE_MAX_LINES_PER_READ}) "
-            "before you create or update records."
-        )
-    next_offset = _first_uncovered_offset(ctx.deps.read_ranges, total_lines)
-    if next_offset is not None:
-        raise ModelRetry(
-            "Unread trace lines remain. "
-            f"Continue reading with read_trace(start_line={next_offset + 1}, line_count={TRACE_MAX_LINES_PER_READ}) "
-            "before you create or update records."
-        )
-    is_archived_episode = (
-        changes is not None
-        and changes.get("kind") == "episode"
-        and changes.get("status") == "archived"
-    )
-    if (
-        total_lines > TRACE_MAX_LINES_PER_READ
-        and not ctx.deps.notes
-        and not ctx.deps.findings_checked
-        and not is_archived_episode
-    ):
-        raise ModelRetry(
-            "This trace is longer than one read_trace chunk. "
-            "Call note_trace_findings once for each strongest durable or implementation finding, "
-            "or call it with no arguments if the full trace has no reusable signal, then create or update records."
-        )
-
-
-def _first_uncovered_offset(
-    read_ranges: list[tuple[int, int]], total_lines: int
-) -> int | None:
-    """Return the first unread trace offset, or None when coverage is complete."""
-    if total_lines <= 0:
-        return None
-    merged: list[tuple[int, int]] = []
-    for start, end in sorted(read_ranges):
-        start = max(0, int(start))
-        end = max(start, int(end))
-        if not merged or start > merged[-1][1]:
-            merged.append((start, end))
-            continue
-        merged[-1] = (merged[-1][0], max(merged[-1][1], end))
-    expected = 0
-    for start, end in merged:
-        if start > expected:
-            return expected
-        expected = max(expected, end)
-        if expected >= total_lines:
-            return None
-    if expected < total_lines:
-        return expected
-    return None
-
-
-def save_context(
-    ctx: RunContext[ContextDeps],
-    kind: str,
-    title: str,
-    body: str,
-    status: str = "active",
-    valid_from: str | None = None,
-    valid_until: str | None = None,
-    decision: str | None = None,
-    why: str | None = None,
-    alternatives: str | None = None,
-    consequences: str | None = None,
-    user_intent: str | None = None,
-    what_happened: str | None = None,
-    outcomes: str | None = None,
-) -> str:
-    """Save one context record.
-
-    For kind="episode", provide both user_intent and what_happened.
-    For kind="decision", provide both decision and why.
-    """
-    changes = _context_changes(
-        kind=kind,
-        title=title,
-        body=body,
-        status=status,
-        valid_from=valid_from,
-        valid_until=valid_until,
-        decision=decision,
-        why=why,
-        alternatives=alternatives,
-        consequences=consequences,
-        user_intent=user_intent,
-        what_happened=what_happened,
-        outcomes=outcomes,
-    )
-    _require_trace_ready_for_write(ctx, changes)
-    store = _store(ctx)
-    project_id = ctx.deps.project_identity.project_id
-    session_id = ctx.deps.session_id
-    source_started_at = _source_session_started_at(ctx, store)
-    try:
-        result = store.create_record(
-            project_id=project_id,
-            session_id=session_id,
-            kind=changes["kind"],
-            title=changes["title"],
-            body=changes["body"],
-            status=changes["status"],
-            created_at=source_started_at or None,
-            valid_from=changes["valid_from"],
-            valid_until=changes["valid_until"],
-            decision=changes["decision"],
-            why=changes["why"],
-            alternatives=changes["alternatives"],
-            consequences=changes["consequences"],
-            user_intent=changes["user_intent"],
-            what_happened=changes["what_happened"],
-            outcomes=changes["outcomes"],
-        )
-    except ValueError as exc:
-        _maybe_raise_record_retry(exc)
-        raise
-    return json.dumps({"ok": True, "result": result}, ensure_ascii=True, indent=2)
-
-
 def revise_context(
     ctx: RunContext[ContextDeps],
     record_id: str,
@@ -887,7 +549,6 @@ def revise_context(
         what_happened=what_happened,
         outcomes=outcomes,
     )
-    _require_trace_ready_for_write(ctx, changes)
     if changes["kind"] != existing["kind"]:
         raise ModelRetry(
             "revise_context cannot change a record's kind. "
@@ -986,102 +647,7 @@ def supersede_context(
     return json.dumps({"ok": True, "result": result}, ensure_ascii=True, indent=2)
 
 
-def note_trace_findings(
-    ctx: RunContext[ContextDeps],
-    theme: str = "",
-    line: int | str = 0,
-    quote: str = "",
-    level: str = "implementation",
-) -> str:
-    """Record one trace finding with line evidence, or call with no args for none."""
-    if not str(theme or "").strip() and not str(quote or "").strip() and not line:
-        ctx.deps.findings_checked = True
-        return "No findings recorded; trace findings checkpoint saved."
-    try:
-        line_number = int(_clean_scalar(line) or 0)
-    except (TypeError, ValueError) as exc:
-        raise ModelRetry("Finding line must be a 1-based trace line number.") from exc
-    try:
-        finding = TraceFinding(
-            theme=str(theme or "").strip(),
-            line=line_number,
-            quote=str(quote or "").strip(),
-            level=str(_clean_scalar(level) or "").strip(),
-        )
-    except ValidationError as exc:
-        raise ModelRetry(
-            "Finding must include a valid 1-based line and level. "
-            f"Allowed levels: {format_allowed_finding_levels()}."
-        ) from exc
-    ctx.deps.notes.append(finding)
-    ctx.deps.findings_checked = True
-    total = len(ctx.deps.notes)
-    return f"Noted 1 finding (total {total} so far)."
-
-
-def prune_trace_reads(ctx: RunContext[ContextDeps], start_lines: list[int]) -> str:
-    """Prune earlier read_trace results after findings are noted.
-
-    Args:
-        start_lines: 1-based start lines from earlier read_trace calls.
-    """
-    if not start_lines:
-        return "No trace reads to prune."
-    read_offsets = set(_read_offsets(ctx))
-    requested = {max(0, int(line) - 1) for line in start_lines}
-    unknown_offsets = sorted(requested - read_offsets)
-    if unknown_offsets:
-        known = ", ".join(str(offset + 1) for offset in sorted(read_offsets)) or "none"
-        bad = ", ".join(str(offset + 1) for offset in unknown_offsets)
-        raise ModelRetry(
-            f"Cannot prune unread trace start line(s): {bad}. "
-            f"Only previously read start lines can be pruned; read start lines: {known}."
-        )
-    before = len(ctx.deps.pruned_offsets)
-    ctx.deps.pruned_offsets.update(requested)
-    added = len(ctx.deps.pruned_offsets) - before
-    return f"Pruned {added} new trace read(s); total pruned: {len(ctx.deps.pruned_offsets)}."
-
-
-def compute_request_budget(trace_path: Path) -> int:
-    """Scale extract request budget from trace size.
-
-    Budget from the actual number of trace reads plus room for notes, pruning,
-    writes, final validation, and retries. Long traces are expensive in tool
-    calls; under-budgeting them turns otherwise recoverable sessions into
-    request-limit failures.
-    """
-    try:
-        line_count = 0
-        estimated_bytes = 0
-        with trace_path.open("r", encoding="utf-8") as fh:
-            for line in fh:
-                line_count += 1
-                estimated_bytes += min(
-                    len(line.rstrip("\n").encode("utf-8")),
-                    TRACE_MAX_LINE_BYTES,
-                )
-    except OSError:
-        return 50
-    read_calls = max(1, math.ceil(line_count / TRACE_MAX_LINES_PER_READ))
-    byte_limited_calls = max(1, math.ceil(estimated_bytes / TRACE_MAX_CHUNK_BYTES))
-    read_calls = max(read_calls, byte_limited_calls)
-    if read_calls == 1:
-        return 50
-    prune_cycles = max(0, read_calls - 1)
-    overhead = 80
-    return max(50, read_calls + prune_cycles + overhead)
-
-
 if __name__ == "__main__":
-    """Run a small smoke check for request budget logic."""
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as tmp:
-        trace_path = Path(tmp) / "trace.jsonl"
-        trace_path.write_text(
-            "\n".join(f"line {i}" for i in range(240)), encoding="utf-8"
-        )
-        budget = compute_request_budget(trace_path)
-        assert budget >= 20
-        print("agent tools: self-test passed")
+    """Run a small smoke check for context-tool helpers."""
+    assert _normalize_kind("FACT") == "fact"
+    print("agent tools: self-test passed")

@@ -6,7 +6,7 @@ import pytest
 
 from tests.integration.extract.helpers import load_extract_expectation, run_extract_case
 from tests.live_helpers import (
-    EXTRACT_TOOL_NAMES,
+    EXTRACT_EVENT_NAMES,
     FRAMEWORK_TOOL_NAMES,
     assert_clean_context_schema,
     assert_quality_metrics,
@@ -44,7 +44,7 @@ def test_extract_updates_existing_record_instead_of_creating_duplicate(
     )
 
     tool_names = outcome.tool_names
-    assert set(tool_names).issubset(EXTRACT_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
+    assert set(tool_names).issubset(EXTRACT_EVENT_NAMES | FRAMEWORK_TOOL_NAMES)
     for tool_name in expectation["must_use_tools"]:
         assert tool_name in tool_names
     for tool_name in expectation["must_not_use_tools"]:
@@ -112,7 +112,7 @@ def test_extract_routine_operational_trace_creates_no_durable_record(
     )
 
     tool_names = outcome.tool_names
-    assert set(tool_names).issubset(EXTRACT_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
+    assert set(tool_names).issubset(EXTRACT_EVENT_NAMES | FRAMEWORK_TOOL_NAMES)
     for tool_name in expectation["must_use_tools"]:
         assert tool_name in tool_names
     for tool_name in expectation["must_not_use_tools"]:
@@ -182,7 +182,7 @@ def test_extract_borderline_non_durable_incident_abstains_from_record(
     )
 
     tool_names = outcome.tool_names
-    assert set(tool_names).issubset(EXTRACT_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
+    assert set(tool_names).issubset(EXTRACT_EVENT_NAMES | FRAMEWORK_TOOL_NAMES)
     for tool_name in expectation["must_use_tools"]:
         assert tool_name in tool_names
     for tool_name in expectation["must_not_use_tools"]:
@@ -262,7 +262,7 @@ def test_extract_similar_but_new_decision_creates_new_record(
     )
 
     tool_names = outcome.tool_names
-    assert set(tool_names).issubset(EXTRACT_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
+    assert set(tool_names).issubset(EXTRACT_EVENT_NAMES | FRAMEWORK_TOOL_NAMES)
     for tool_name in expectation["must_use_tools"]:
         assert tool_name in tool_names
     for tool_name in expectation["must_not_use_tools"]:
@@ -322,7 +322,7 @@ def test_extract_ambiguous_search_hits_update_only_true_target(
     )
 
     tool_names = outcome.tool_names
-    assert set(tool_names).issubset(EXTRACT_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
+    assert set(tool_names).issubset(EXTRACT_EVENT_NAMES | FRAMEWORK_TOOL_NAMES)
     for tool_name in expectation["must_use_tools"]:
         assert tool_name in tool_names
     for tool_name in expectation["must_not_use_tools"]:

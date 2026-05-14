@@ -521,6 +521,55 @@ def test_api_status_no_records(monkeypatch, tmp_path) -> None:
     assert result["record_count"] == 0
 
 
+def test_api_status_degrades_when_session_catalog_unavailable(
+    monkeypatch, tmp_path
+) -> None:
+    """api_status reports catalog storage failure without raising."""
+    cfg = make_config(tmp_path)
+    monkeypatch.setattr(api_mod, "get_config", lambda: cfg)
+    monkeypatch.setattr(api_mod, "list_platforms", lambda path: [])
+
+    def broken_latest_service_run(_job_type: str) -> None:
+        """Simulate a malformed session catalog."""
+        raise sqlite3.DatabaseError("database disk image is malformed")
+
+    monkeypatch.setattr(api_mod, "latest_service_run", broken_latest_service_run)
+
+    result = api_status()
+
+    assert result["session_catalog"]["status"] == "unavailable"
+    assert result["session_catalog"]["error"]
+    assert result["queue"] == api_mod._empty_queue_counts()
+    assert result["queue_health"]["degraded"] is True
+    assert result["recent_activity"] == []
+
+
+def test_api_maintain_degrades_when_queue_health_unavailable(
+    monkeypatch, tmp_path
+) -> None:
+    """api_maintain still returns its payload when queue health cannot read."""
+    cfg = make_config(tmp_path)
+    monkeypatch.setattr(api_mod, "get_config", lambda: cfg)
+    monkeypatch.setattr(
+        api_mod,
+        "run_maintain_once",
+        lambda dry_run: (0, {"dry_run": dry_run}),
+    )
+
+    def broken_queue_health() -> None:
+        """Simulate a malformed session catalog."""
+        raise sqlite3.DatabaseError("database disk image is malformed")
+
+    monkeypatch.setattr(api_mod, "queue_health_snapshot", broken_queue_health)
+
+    result = api_maintain(dry_run=True)
+
+    assert result["code"] == 0
+    assert result["dry_run"] is True
+    assert result["queue_health"]["degraded"] is True
+    assert result["queue_health"]["error"]
+
+
 def test_api_status_scope_skipped_unscoped_from_latest_sync(
     monkeypatch, tmp_path
 ) -> None:

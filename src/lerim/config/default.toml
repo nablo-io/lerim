@@ -27,11 +27,8 @@ model = "MiniMax-M2.7"                 # package default model for minimax provi
 api_base = ""
 # Model names are auto-normalized per provider (e.g. minimax-m2.5 → MiniMax-M2.5 for minimax provider).
 fallback_models = []  # disabled for now — ensure exact model is used, no silent fallback
-# PydanticAI single-pass sync auto-scales its request budget from trace
-# size via lerim.agents.tools.compute_request_budget(trace_path). Small
-# traces get a 40-turn floor; 2000-line traces get a modest increase;
-# pathological inputs clamp at 100. The formula lives in tools.py and is the single
-# source of truth — no per-pass limits in config.
+# BAML/LangGraph sync reads deterministic trace windows and derives its
+# extraction budget from the trace size in lerim.agents.extract.windowing.
 max_iters_maintain = 50                # max request turns for maintain flow
 max_iters_ask = 20                     # max request turns for ask flow
 # MiniMax-M2 official sampling preset (from HuggingFace model card):

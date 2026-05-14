@@ -1635,7 +1635,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=_F,
         help="Index new sessions and extract context records (hot path)",
         description=(
-            "Index new sessions and extract context records via PydanticAI.\n\n"
+            "Index new sessions and extract context records via BAML/LangGraph.\n\n"
             "Examples:\n"
             "  lerim sync                      # default 7d window\n"
             "  lerim sync --window 30d         # last 30 days\n"

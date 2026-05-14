@@ -6,7 +6,7 @@ expected:
   durable_count: 1
   reference_count: 1
   must_use_tools:
-    - read_trace
+    - read_window
     - save_context
   must_not_use_tools:
     - revise_context

@@ -24,29 +24,23 @@ lerim sync --agent claude,codex
 ```mermaid
 flowchart TD
     A["Trigger: lerim sync or daemon"] --> B["Discover and queue changed sessions"]
-    B --> C["Extract agent receives one session trace"]
+    B --> C["Extractor receives one session trace"]
 
-    C --> D["Prompt goal: turn this session into durable project memory"]
-    D --> E["Agent reads trace chunks with read_trace"]
-    E --> F{"Has the agent read enough of the trace?"}
-    F -- "no" --> E
-    F -- "yes" --> G["Agent identifies candidate memories: episode, decisions, preferences, constraints, facts, references"]
+    C --> D["Deterministic graph reads the next trace window"]
+    D --> E["BAML ScanTraceWindow returns typed findings"]
+    E --> F{"More trace windows?"}
+    F -- "yes" --> D
+    F -- "no" --> G["BAML SynthesizeExtractRecords creates one episode and durable candidates"]
 
-    G --> H{"Could this update or duplicate existing memory?"}
-    H -- "yes" --> I["Use search_context/get_context to inspect existing records"]
-    H -- "no" --> J["Prepare new records"]
+    G --> H["Persistence normalizes and validates record drafts"]
+    H --> I{"Durable records present?"}
+    I -- "yes" --> J["Write active durable records"]
+    I -- "no" --> K["Write archived episode only"]
 
-    I --> K{"Existing record should change?"}
-    K -- "revise" --> L["Use revise_context on fetched record"]
-    K -- "new memory" --> J
-    K -- "no durable value" --> M["Do not write"]
-
-    J --> N["Use save_context for supported durable records"]
-    L --> O["SQLite context DB + record_versions"]
-    N --> O
-    M --> P["Completion summary"]
-    O --> P
-    P --> Q["Sync artifacts: manifest, agent log, trace"]
+    J --> L["SQLite context DB + record_versions"]
+    K --> L
+    L --> M["Completion summary"]
+    M --> N["Sync artifacts: manifest, graph events, trace"]
 ```
 
 ## Notes

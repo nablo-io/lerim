@@ -165,7 +165,7 @@ lerim connect remove claude               # disconnect Claude
 ### `lerim sync`
 
 Hot-path: discover new agent sessions from connected platforms, enqueue them,
-and run PydanticAI extraction to create context records.
+and run BAML plus LangGraph extraction to create context records.
 Requires a running server (`lerim up` or `lerim serve`).
 
 **Time window** controls which sessions to scan:
@@ -200,7 +200,7 @@ lerim sync --max-sessions 100       # process up to 100 sessions
 | `--dry-run` | off | Preview mode, no writes |
 
 Notes:
-- `sync` is the hot path (queue + PydanticAI extraction + lead write).
+- `sync` is the hot path (queue + BAML/LangGraph extraction + context write).
 - Normal backlog sync claims the newest available session per project first.
 - `--ignore-lock` exists only as a CLI-local debug flag and is intentionally not supported by `/api/sync`; skipping the writer lock risks corruption.
 - Cold maintenance work is not executed in `sync`.

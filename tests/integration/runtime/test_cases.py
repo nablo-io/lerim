@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from lerim.agents.ask import AskResult
-from lerim.agents.extract import ExtractionResult
+from lerim.agents.extract import ExtractionEvent, ExtractionResult, ExtractionRunDetails
 from lerim.context import ContextStore
 from lerim.working_memory import (
     MemoryLine,
@@ -40,6 +40,29 @@ def _assert_run_folder_layout(
     assert len(day.name) == 2 and day.name.isdigit()
 
 
+def _extract_details(kwargs, *, summary: str) -> ExtractionRunDetails:
+    """Build graph-style extraction details for sync runtime test doubles."""
+    return ExtractionRunDetails(
+        events=[
+            ExtractionEvent(
+                action="final_result",
+                ok=True,
+                content=summary,
+                args={},
+                done=True,
+                completion_summary=summary,
+            )
+        ],
+        llm_calls=1,
+        done=True,
+        context_db_path=str(kwargs["context_db_path"]),
+        project_id=kwargs["project_identity"].project_id,
+        session_id=kwargs["session_id"],
+        model_name="test-model",
+        trace_total_lines=1,
+    )
+
+
 def test_sync_artifact_paths_are_stable_per_flow(
     monkeypatch, live_config, live_repo_root
 ):
@@ -61,7 +84,7 @@ def test_sync_artifact_paths_are_stable_per_flow(
         "lerim.server.runtime.run_extraction",
         lambda **kwargs: (
             ExtractionResult(completion_summary="sync complete"),
-            build_ordered_ask_messages()[:1],
+            _extract_details(kwargs, summary="sync complete"),
         ),
     )
 
@@ -280,7 +303,7 @@ def test_sync_retries_transient_error_and_then_writes_artifacts(
             raise RuntimeError("temporary upstream failure")
         return (
             ExtractionResult(completion_summary="sync recovered"),
-            build_ordered_ask_messages()[:1],
+            _extract_details(kwargs, summary="sync recovered"),
         )
 
     monkeypatch.setattr("lerim.server.runtime.run_extraction", _flaky_run_extraction)
@@ -331,7 +354,7 @@ def test_runtime_sync_then_maintain_then_ask_with_real_artifacts(
         )
         return (
             ExtractionResult(completion_summary="sync wrote initial fact"),
-            build_ordered_ask_messages()[:1],
+            _extract_details(kwargs, summary="sync wrote initial fact"),
         )
 
     def _fake_run_maintain(**kwargs):

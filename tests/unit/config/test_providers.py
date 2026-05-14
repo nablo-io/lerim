@@ -1,4 +1,4 @@
-"""Unit tests for provider builders (PydanticAI-only)."""
+"""Unit tests for provider builders used by PydanticAI flows."""
 
 from __future__ import annotations
 

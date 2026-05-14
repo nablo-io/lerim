@@ -1,7 +1,7 @@
-"""MLflow tracing for PydanticAI agent observability.
+"""MLflow tracing for Lerim agent observability.
 
-Activates MLflow autologging for PydanticAI when ``LERIM_MLFLOW=true`` is set.
-All PydanticAI agent/model/tool spans are captured automatically.
+Activates MLflow when ``LERIM_MLFLOW=true`` is set. PydanticAI flows are
+captured by autologging; the BAML/LangGraph extract flow emits explicit spans.
 
 Traces are stored under ``~/.lerim/observability/`` so observability files do
 not clutter the root of the Lerim home directory.
@@ -113,7 +113,7 @@ def _ensure_mlflow_schema(tracking_uri: str, db_path: str) -> None:
 
 
 def configure_tracing(config: Config, experiment_name: str = "lerim") -> None:
-	"""Activate MLflow PydanticAI autologging if enabled via env/config.
+	"""Activate MLflow tracing if enabled via env/config.
 
 	Must be called once at startup before any agent is constructed.
 
@@ -145,7 +145,7 @@ def configure_tracing(config: Config, experiment_name: str = "lerim") -> None:
 		_ensure_mlflow_schema(tracking_uri, str(db_path))
 		_activate_mlflow()
 		logger.info(
-			"MLflow tracing enabled (PydanticAI autolog) → sqlite:///{} experiment={}",
+			"MLflow tracing enabled → sqlite:///{} experiment={}",
 			db_path,
 			experiment_name,
 		)
@@ -161,7 +161,7 @@ def configure_tracing(config: Config, experiment_name: str = "lerim") -> None:
 				_ensure_mlflow_schema(tracking_uri, str(db_path))
 				_activate_mlflow()
 				logger.info(
-					"MLflow tracing enabled (PydanticAI autolog) → sqlite:///{} experiment={}",
+					"MLflow tracing enabled → sqlite:///{} experiment={}",
 					db_path,
 					experiment_name,
 				)

@@ -46,6 +46,12 @@ git_branch  # noqa
 model_config  # noqa
 last_context_tokens  # noqa
 metrics_version  # noqa
+trace_total_lines  # noqa
+current_window  # noqa
+episode_updates  # noqa
+durable_findings  # noqa
+implementation_findings  # noqa
+discarded_noise  # noqa
 records_changed_since_generation  # noqa
 latest_run_folder  # noqa
 suggested_action  # noqa

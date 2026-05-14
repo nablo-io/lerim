@@ -84,7 +84,12 @@ Rules:
 - agent tool tests enforce fetch-before-mutate: `revise_context`, `archive_context`, and `supersede_context` only accept records returned by `get_context` in the same run
 - agent build tests guard the runtime tool contract against documentation and helper drift
 - adapter tests cover compact-trace visibility for canonical message fields and structured event messages without keyword heuristics
+- extract persistence tests cover idempotent replay when a session episode already exists
 - session catalog tests cover queue claim availability, content-hash refresh/change detection, and stable pagination ordering
+- API/daemon tests cover degraded status reporting when the session catalog is unavailable
+- daemon tests cover transient session-job heartbeat write failures
+- session catalog tests cover process-local active-job leases that avoid false stale queue health during transient heartbeat write failures
+- daemon sync tests cover one-at-a-time job claiming to avoid false stale-running queue state
 - config tests cover provider client lifecycle, provider-specific model settings, fallback-model parsing, strict config parsing, and SDK log-noise filters
 - Working Memory tests cover cwd project resolution, freshness counts, markdown citations, CLI local reads, and artifact writes without live LLM calls
 
@@ -110,7 +115,7 @@ The current system is:
 - canonical run artifacts in `~/.lerim/workspace/`
 - generated Working Memory artifacts in `~/.lerim/workspace/current/<project_id>/WORKING_MEMORY.md`
 - local semantic retrieval via ONNX embeddings + `sqlite-vec` + FTS5 + RRF
-- extract tools: `read_trace`, `search_context`, `get_context`, `save_context`, `revise_context`, `note_trace_findings`, `prune_trace_reads`
+- extract graph: deterministic window reads, BAML window scan, BAML record synthesis, context-store persistence
 - maintain tools: `list_context`, `search_context`, `get_context`, `revise_context`, `archive_context`, `supersede_context`
 - ask tools: `list_context`, `search_context`, `get_context`, `count_context`
 

@@ -113,6 +113,43 @@ def test_sync_zero_success_extraction_is_failed(monkeypatch, tmp_path) -> None:
     assert latest["status"] == "failed"
 
 
+def test_sync_claims_one_job_at_a_time(monkeypatch, tmp_path) -> None:
+    """Sync does not mark a batch running before jobs can receive heartbeats."""
+    config_path = write_test_config(tmp_path, projects={"testproj": str(tmp_path)})
+    monkeypatch.setenv("LERIM_CONFIG", str(config_path))
+    reload_config()
+
+    captured_limits: list[int] = []
+
+    monkeypatch.setattr(daemon, "record_service_run", lambda **_kwargs: 1)
+    monkeypatch.setattr(daemon, "index_new_sessions", lambda **_kwargs: [])
+    monkeypatch.setattr(daemon, "reap_stale_running_jobs", lambda **_kwargs: 0)
+
+    def fake_claim_session_jobs(**kwargs):
+        """Capture claim size and stop the processing loop."""
+        captured_limits.append(int(kwargs["limit"]))
+        return []
+
+    monkeypatch.setattr(daemon, "claim_session_jobs", fake_claim_session_jobs)
+
+    code, summary = daemon.run_sync_once(
+        run_id=None,
+        agent_filter=None,
+        no_extract=False,
+        force=False,
+        max_sessions=5,
+        dry_run=False,
+        ignore_lock=True,
+        trigger="test",
+        window_start=None,
+        window_end=None,
+    )
+
+    assert code == daemon.EXIT_OK
+    assert summary.extracted_sessions == 0
+    assert captured_limits == [1]
+
+
 def test_sync_force_enqueues_changed_sessions(monkeypatch, tmp_path) -> None:
     """Changed sessions (hash differs) are force-enqueued so they get re-extracted."""
     _setup(tmp_path, monkeypatch)

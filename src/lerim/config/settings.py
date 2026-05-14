@@ -46,10 +46,9 @@ class RoleConfig:
 	top_k: int = 40
 	max_tokens: int = 32000
 	parallel_tool_calls: bool = True
-	# PydanticAI single-pass sync now auto-scales its request_limit from
-	# trace size via lerim.agents.tools.compute_request_budget(trace_path).
-	# No static extract-budget field on RoleConfig — the budget is derived
-	# at run start from the actual trace's line count, clamped [40, 100].
+	# BAML/LangGraph sync derives its windowing budget from trace size in
+	# lerim.agents.extract.windowing. There is no static extract-budget field
+	# on RoleConfig.
 	# PydanticAI request-turn limits for maintain/ask flows.
 	max_iters_maintain: int = 30
 	max_iters_ask: int = 30

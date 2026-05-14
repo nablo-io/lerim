@@ -8,16 +8,13 @@ from pathlib import Path
 from typing import Any
 
 from lerim.agents.extract import ExtractionResult, run_extraction
-from lerim.config.providers import build_pydantic_model
 from lerim.context import ContextStore, resolve_project_identity
 from tests.conftest import EXTRACT_EXPECTATIONS_DIR, EXTRACT_TRACES_DIR
 from tests.integration.common_helpers import (
-    extract_tool_calls,
     load_yaml_expectation,
     retry_on_overload,
     seed_session,
 )
-from tests.live_helpers import dump_messages, extract_tool_names
 
 
 @dataclass
@@ -39,7 +36,7 @@ def load_extract_expectation(case_name: str) -> dict[str, Any]:
     return load_yaml_expectation(EXTRACT_EXPECTATIONS_DIR, case_name)
 
 
-def _build_very_long_prune_trace(trace_path: Path) -> None:
+def _build_very_long_window_trace(trace_path: Path) -> None:
     """Materialize one very long trace that can create real context pressure."""
     messages: list[dict[str, str]] = [
         {
@@ -203,9 +200,9 @@ def _resolve_trace_path(case_name: str, run_folder: Path) -> Path:
     static_path = EXTRACT_TRACES_DIR / f"{case_name}.jsonl"
     if static_path.exists():
         return static_path
-    if case_name == "very_long_trace_requires_prune":
+    if case_name == "very_long_trace_uses_windows":
         generated = run_folder / f"{case_name}.jsonl"
-        _build_very_long_prune_trace(generated)
+        _build_very_long_window_trace(generated)
         return generated
     if case_name == "late_disambiguation_at_end_of_trace":
         generated = run_folder / f"{case_name}.jsonl"
@@ -257,16 +254,15 @@ def run_extract_case(
         source_trace_ref=str(trace_path),
     )
 
-    model = build_pydantic_model("agent", config=live_config)
-    result, messages = retry_on_overload(
+    result, details = retry_on_overload(
         lambda: run_extraction(
             context_db_path=live_config.context_db_path,
             project_identity=identity,
             session_id=session_id,
             trace_path=trace_path,
-            model=model,
-            run_folder=run_folder,
-            return_messages=True,
+            config=live_config,
+            session_started_at="2026-01-01T00:00:00Z",
+            return_details=True,
         )
     )
 
@@ -303,11 +299,11 @@ def run_extract_case(
         for record_id in changed_record_ids
     ]
 
-    payload = dump_messages(messages)
+    payload = [event.model_dump(mode="json") for event in details.events]
     return ExtractCaseOutcome(
         result=result,
-        tool_names=extract_tool_names(payload),
-        tool_calls=extract_tool_calls(payload),
+        tool_names=[str(event.get("action") or "") for event in payload],
+        tool_calls=payload,
         rows=rows,
         records=[record for record in records if record is not None],
         changed_version_rows=version_rows,

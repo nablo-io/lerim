@@ -1,4 +1,4 @@
-"""Agent modules: extract, maintain, ask + shared tools (all PydanticAI)."""
+"""Agent modules for extract, maintain, ask, and working-memory flows."""
 
 from __future__ import annotations
 
