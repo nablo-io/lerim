@@ -24,6 +24,7 @@ from pydantic_ai.messages import (
 
 from lerim.agents.ask import AskResult
 from lerim.agents.extract import ExtractionEvent, ExtractionResult, ExtractionRunDetails
+from lerim.agents.maintain import MaintainEvent, MaintainRunDetails
 from lerim.server.runtime import (
     LerimRuntime,
     _resolve_runtime_roots,
@@ -294,6 +295,53 @@ class TestSyncFlow:
         assert result["context_db_path"] == str(rt.config.context_db_path)
         assert result["project_id"].startswith("proj_")
 
+    def test_sync_retries_failure_before_record_changes(self, tmp_path, monkeypatch):
+        rt = _build_runtime(tmp_path, monkeypatch)
+        trace = tmp_path / "trace.jsonl"
+        trace.write_text('{"role":"user","content":"hello"}\n', encoding="utf-8")
+        attempts = {"count": 0}
+        monkeypatch.setattr(time, "sleep", lambda *_: None)
+
+        def _flaky_extraction(**kwargs):
+            attempts["count"] += 1
+            if attempts["count"] == 1:
+                raise RuntimeError("temporary extract")
+            return (
+                ExtractionResult(completion_summary="recovered"),
+                _extract_details(tmp_path),
+            )
+
+        monkeypatch.setattr("lerim.server.runtime.run_extraction", _flaky_extraction)
+
+        result = rt.sync(trace_path=trace)
+
+        assert attempts["count"] == 2
+        assert Path(result["run_folder"], "agent.log").read_text(
+            encoding="utf-8"
+        ).strip() == "recovered"
+
+    def test_sync_does_not_retry_after_record_changes(self, tmp_path, monkeypatch):
+        rt = _build_runtime(tmp_path, monkeypatch)
+        trace = tmp_path / "trace.jsonl"
+        trace.write_text('{"role":"user","content":"hello"}\n', encoding="utf-8")
+        attempts = {"count": 0}
+        monkeypatch.setattr(time, "sleep", lambda *_: None)
+        monkeypatch.setattr(
+            "lerim.server.runtime._record_change_counts",
+            lambda *args, **kwargs: {"create": 1},
+        )
+
+        def _partial_failure(**kwargs):
+            attempts["count"] += 1
+            raise RuntimeError("failed after write")
+
+        monkeypatch.setattr("lerim.server.runtime.run_extraction", _partial_failure)
+
+        with pytest.raises(RuntimeError, match="failed after write"):
+            rt.sync(trace_path=trace)
+
+        assert attempts["count"] == 1
+
     def test_sync_failure_writes_structured_error_artifacts(
         self, tmp_path, monkeypatch
     ):
@@ -357,16 +405,27 @@ class TestMaintainFlow:
 
         captured: dict[str, object] = {}
 
-        monkeypatch.setattr(
-            "lerim.server.runtime.build_pydantic_model",
-            lambda *args, **kwargs: "fake-model",
-        )
-
         def _fake_run_maintain(**kwargs):
-            captured["request_limit"] = kwargs["request_limit"]
+            captured["max_llm_calls"] = kwargs["max_llm_calls"]
             return (
                 SimpleNamespace(completion_summary="maintenance complete"),
-                [ModelRequest(parts=[SystemPromptPart(content="maintain")])],
+                MaintainRunDetails(
+                    events=[
+                        MaintainEvent(
+                            action="final_result",
+                            ok=True,
+                            content="maintenance complete",
+                            done=True,
+                            completion_summary="maintenance complete",
+                        )
+                    ],
+                    llm_calls=1,
+                    done=True,
+                    context_db_path=str(kwargs["context_db_path"]),
+                    project_id=kwargs["project_identity"].project_id,
+                    session_id=kwargs["session_id"],
+                    model_name="test-model",
+                ),
             )
 
         monkeypatch.setattr("lerim.server.runtime.run_maintain", _fake_run_maintain)
@@ -388,7 +447,7 @@ class TestMaintainFlow:
         assert manifest["run_id"] == run_folder.name
         assert manifest["mlflow_client_request_id"] == run_folder.name
         assert manifest["status"] == "succeeded"
-        assert captured["request_limit"] == rt.config.agent_role.max_iters_maintain
+        assert captured["max_llm_calls"] == rt.config.agent_role.max_iters_maintain
         assert result["context_db_path"] == str(rt.config.context_db_path)
 
 

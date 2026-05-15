@@ -15,7 +15,6 @@ from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 from lerim.agents.toolsets import (
     ASK_TOOL_NAMES as ASK_TOOL_NAMES,
     CURRENT_AGENT_TOOL_NAMES as CURRENT_AGENT_TOOL_NAMES,
-    MAINTAIN_TOOL_NAMES as MAINTAIN_TOOL_NAMES,
 )
 from lerim.config.settings import Config, get_config, reload_config
 from lerim.context.spec import RECORD_KIND_SPECS
@@ -54,6 +53,17 @@ EXTRACT_EVENT_NAMES = frozenset(
         "synthesize_records",
         "save_context",
         "model_retry",
+    }
+)
+MAINTAIN_EVENT_NAMES = frozenset(
+    {
+        "load_inventory",
+        "build_similarity_clusters",
+        "review_cluster",
+        "review_health_batch",
+        "apply_maintain_action",
+        "model_retry",
+        "final_result",
     }
 )
 _API_KEY_ATTRS = {

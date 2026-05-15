@@ -9,7 +9,7 @@ import pytest
 from tests.integration.maintain.helpers import load_maintain_expectation, run_maintain_case
 from tests.live_helpers import (
     FRAMEWORK_TOOL_NAMES,
-    MAINTAIN_TOOL_NAMES,
+    MAINTAIN_EVENT_NAMES,
     assert_clean_context_schema,
     assert_quality_metrics,
     audit_context_db,
@@ -52,12 +52,12 @@ def test_maintain_routine_episode_archived(
         ],
     )
 
-    tool_names = outcome.tool_names
-    assert set(tool_names).issubset(MAINTAIN_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    for tool_name in expectation["must_use_tools"]:
-        assert tool_name in tool_names
-    for tool_name in expectation["must_not_use_tools"]:
-        assert tool_name not in tool_names
+    event_names = outcome.event_names
+    assert set(event_names).issubset(MAINTAIN_EVENT_NAMES | FRAMEWORK_TOOL_NAMES)
+    for event_name in expectation["must_use_events"]:
+        assert event_name in event_names
+    for event_name in expectation["must_not_use_events"]:
+        assert event_name not in event_names
 
     episode = next(record for record in outcome.records if record["record_id"] == "rec_routine_episode")
     assert outcome.result.completion_summary.strip()
@@ -103,12 +103,12 @@ def test_maintain_verbose_episode_compressed(
         ],
     )
 
-    tool_names = outcome.tool_names
-    assert set(tool_names).issubset(MAINTAIN_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    for tool_name in expectation["must_use_tools"]:
-        assert tool_name in tool_names
-    for tool_name in expectation["must_not_use_tools"]:
-        assert tool_name not in tool_names
+    event_names = outcome.event_names
+    assert set(event_names).issubset(MAINTAIN_EVENT_NAMES | FRAMEWORK_TOOL_NAMES)
+    for event_name in expectation["must_use_events"]:
+        assert event_name in event_names
+    for event_name in expectation["must_not_use_events"]:
+        assert event_name not in event_names
 
     episode = next(record for record in outcome.records if record["record_id"] == "rec_verbose_episode")
     assert outcome.result.completion_summary.strip()
@@ -169,12 +169,12 @@ def test_maintain_durable_record_rewritten_from_session_report_style(
         ],
     )
 
-    tool_names = outcome.tool_names
-    assert set(tool_names).issubset(MAINTAIN_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    for tool_name in expectation["must_use_tools"]:
-        assert tool_name in tool_names
-    for tool_name in expectation["must_not_use_tools"]:
-        assert tool_name not in tool_names
+    event_names = outcome.event_names
+    assert set(event_names).issubset(MAINTAIN_EVENT_NAMES | FRAMEWORK_TOOL_NAMES)
+    for event_name in expectation["must_use_events"]:
+        assert event_name in event_names
+    for event_name in expectation["must_not_use_events"]:
+        assert event_name not in event_names
 
     record = next(record for record in outcome.records if record["record_id"] == "rec_provider_review")
     assert outcome.result.completion_summary.strip()
@@ -221,12 +221,12 @@ def test_maintain_valuable_recent_record_preserved(
         ],
     )
 
-    tool_names = outcome.tool_names
-    assert set(tool_names).issubset(MAINTAIN_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    for tool_name in expectation["must_use_tools"]:
-        assert tool_name in tool_names
-    for tool_name in expectation["must_not_use_tools"]:
-        assert tool_name not in tool_names
+    event_names = outcome.event_names
+    assert set(event_names).issubset(MAINTAIN_EVENT_NAMES | FRAMEWORK_TOOL_NAMES)
+    for event_name in expectation["must_use_events"]:
+        assert event_name in event_names
+    for event_name in expectation["must_not_use_events"]:
+        assert event_name not in event_names
 
     record = next(record for record in outcome.records if record["record_id"] == "rec_recent_provider_record")
     assert outcome.result.completion_summary.strip()
@@ -299,10 +299,10 @@ def test_maintain_mixed_store_cleanup(
         ],
     )
 
-    tool_names = outcome.tool_names
-    assert set(tool_names).issubset(MAINTAIN_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    for tool_name in expectation["must_use_tools"]:
-        assert tool_name in tool_names
+    event_names = outcome.event_names
+    assert set(event_names).issubset(MAINTAIN_EVENT_NAMES | FRAMEWORK_TOOL_NAMES)
+    for event_name in expectation["must_use_events"]:
+        assert event_name in event_names
 
     routine_episode = next(record for record in outcome.records if record["record_id"] == "rec_mixed_routine_episode")
     weak_duplicate = next(record for record in outcome.records if record["record_id"] == "rec_mixed_duplicate_weak")
@@ -372,12 +372,12 @@ def test_maintain_meaningful_episode_preserved_with_durable_neighbor(
         ],
     )
 
-    tool_names = outcome.tool_names
-    assert set(tool_names).issubset(MAINTAIN_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    for tool_name in expectation["must_use_tools"]:
-        assert tool_name in tool_names
-    for tool_name in expectation["must_not_use_tools"]:
-        assert tool_name not in tool_names
+    event_names = outcome.event_names
+    assert set(event_names).issubset(MAINTAIN_EVENT_NAMES | FRAMEWORK_TOOL_NAMES)
+    for event_name in expectation["must_use_events"]:
+        assert event_name in event_names
+    for event_name in expectation["must_not_use_events"]:
+        assert event_name not in event_names
 
     episode = next(record for record in outcome.records if record["record_id"] == "rec_meaningful_episode")
     assert episode["status"] == "active"
@@ -413,12 +413,12 @@ def test_maintain_concise_report_style_durable_rewritten(
         ],
     )
 
-    tool_names = outcome.tool_names
-    assert set(tool_names).issubset(MAINTAIN_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    for tool_name in expectation["must_use_tools"]:
-        assert tool_name in tool_names
-    for tool_name in expectation["must_not_use_tools"]:
-        assert tool_name not in tool_names
+    event_names = outcome.event_names
+    assert set(event_names).issubset(MAINTAIN_EVENT_NAMES | FRAMEWORK_TOOL_NAMES)
+    for event_name in expectation["must_use_events"]:
+        assert event_name in event_names
+    for event_name in expectation["must_not_use_events"]:
+        assert event_name not in event_names
 
     record = next(record for record in outcome.records if record["record_id"] == "rec_concise_report_decision")
     assert outcome.result.completion_summary.strip()

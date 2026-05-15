@@ -548,10 +548,9 @@ def _new_project_metric() -> dict[str, Any]:
         "duration_ms": 0,
         "last_error": None,
         "maintain_counts": {
-            "merged": 0,
+            "created": 0,
+            "updated": 0,
             "archived": 0,
-            "consolidated": 0,
-            "unchanged": 0,
         },
     }
 
@@ -581,7 +580,7 @@ def _merge_project_metric(target: dict[str, Any], source: dict[str, Any]) -> Non
         if isinstance(source.get("maintain_counts"), dict)
         else {}
     )
-    for key in ("merged", "archived", "consolidated", "unchanged"):
+    for key in ("created", "updated", "archived"):
         t_counts[key] = int(t_counts.get(key) or 0) + int(s_counts.get(key) or 0)
     target["maintain_counts"] = t_counts
 
@@ -618,7 +617,7 @@ def _aggregate_maintain_totals(
     projects_metrics: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     """Build maintain totals across projects for details_json."""
-    counts = {"merged": 0, "archived": 0, "consolidated": 0, "unchanged": 0}
+    counts = {"created": 0, "updated": 0, "archived": 0}
     totals = {
         "projects_count": len(projects_metrics),
         "records_created": 0,
@@ -634,7 +633,7 @@ def _aggregate_maintain_totals(
             if isinstance(metrics.get("maintain_counts"), dict)
             else {}
         )
-        for key in ("merged", "archived", "consolidated", "unchanged"):
+        for key in ("created", "updated", "archived"):
             counts[key] += int(m_counts.get(key) or 0)
     return totals
 
@@ -1274,16 +1273,10 @@ def run_maintain_once(
                 metric_row["duration_ms"] = int(
                     (time.monotonic() - started_project) * 1000
                 )
-                raw_counts = (
-                    result.get("counts")
-                    if isinstance(result.get("counts"), dict)
-                    else {}
-                )
                 metric_row["maintain_counts"] = {
-                    "merged": int(raw_counts.get("merged") or 0),
-                    "archived": int(raw_counts.get("archived") or 0),
-                    "consolidated": int(raw_counts.get("consolidated") or 0),
-                    "unchanged": int(raw_counts.get("unchanged") or 0),
+                    "created": int(result.get("records_created") or 0),
+                    "updated": int(result.get("records_updated") or 0),
+                    "archived": int(result.get("records_archived") or 0),
                 }
                 if _record_count_delta(metric_row) > 0:
                     wm_result = run_working_memory_for_project(

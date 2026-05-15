@@ -10,29 +10,16 @@ import pytest
 
 from pydantic_ai import ModelRetry
 from lerim.agents.tools import (
-    _maybe_raise_record_retry,
     _normalize_kind,
     _normalize_status,
     _store,
-    archive_context,
     count_context,
     get_context,
     list_context,
     search_context,
-    supersede_context,
-    revise_context,
 )
 from lerim.context import ContextStore
 from tests.unit.agents.conftest import make_run_context
-
-
-@pytest.fixture
-def deps_with_session(deps):
-    store = ContextStore(deps.context_db_path)
-    store.initialize()
-    store.register_project(deps.project_identity)
-    _seed_session(store, deps.project_identity.project_id)
-    return deps
 
 
 @pytest.fixture
@@ -67,52 +54,6 @@ def _seed_session(store, project_id: str, session_id: str = "sess_test") -> None
         instructions_text=None,
         prompt_text=None,
     )
-
-
-def _fact(title: str = "Fact", body: str = "Reusable fact.", **kwargs) -> dict:
-    """Return fact tool args for direct tool tests."""
-    return {"kind": "fact", "title": title, "body": body, **kwargs}
-
-
-def _fetch_records(ctx, *record_ids: str) -> None:
-    """Fetch records through the public tool before mutating them."""
-    get_context(ctx, record_ids=list(record_ids), detail="detailed")
-
-
-def _decision(
-    title: str = "Decision",
-    body: str = "Reusable decision.",
-    decision: str = "Use the selected approach.",
-    why: str = "It is the supported path.",
-    **kwargs,
-) -> dict:
-    """Return decision tool args for direct tool tests."""
-    return {
-        "kind": "decision",
-        "title": title,
-        "body": body,
-        "decision": decision,
-        "why": why,
-        **kwargs,
-    }
-
-
-def _episode(
-    title: str = "Episode",
-    body: str = "Short session recap.",
-    user_intent: str = "Do the requested work.",
-    what_happened: str = "Completed the requested work.",
-    **kwargs,
-) -> dict:
-    """Return episode tool args for direct tool tests."""
-    return {
-        "kind": "episode",
-        "title": title,
-        "body": body,
-        "user_intent": user_intent,
-        "what_happened": what_happened,
-        **kwargs,
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -151,44 +92,6 @@ class TestNormalizeStatus:
 
     def test_none_returns_active(self):
         assert _normalize_status(None) == "active"
-
-
-# ---------------------------------------------------------------------------
-# _maybe_raise_record_retry
-# ---------------------------------------------------------------------------
-
-
-class TestMaybeRaiseRecordRetry:
-    @pytest.mark.parametrize(
-        "code",
-        [
-            "title_required",
-            "body_required",
-            "title_too_long",
-            "decision_requires_decision_and_why",
-            "episode_requires_session_id",
-            "episode_requires_user_intent_and_what_happened",
-            "duplicate_episode_for_session",
-            "episode_body_too_long",
-            "episode_user_intent_too_long",
-            "episode_what_happened_too_long",
-            "episode_outcomes_too_long",
-            "record_body_too_long",
-        ],
-    )
-    def test_known_codes_raise_model_retry(self, code):
-        with pytest.raises(ModelRetry):
-            _maybe_raise_record_retry(ValueError(code))
-
-    def test_unknown_code_does_not_raise(self):
-        _maybe_raise_record_retry(ValueError("unknown_error"))
-
-    def test_empty_does_not_raise(self):
-        _maybe_raise_record_retry(ValueError(""))
-
-    def test_retry_message_content(self):
-        with pytest.raises(ModelRetry, match="non-empty title"):
-            _maybe_raise_record_retry(ValueError("title_required"))
 
 
 # ---------------------------------------------------------------------------
@@ -413,7 +316,6 @@ class TestGetContext:
         result = get_context(ctx, record_ids=[])
         parsed = json.loads(result)
         assert parsed["count"] == 0
-        assert deps.fetched_context_record_ids == set()
 
     def test_invalid_response_format(self, deps):
         ctx = make_run_context(deps)
@@ -447,7 +349,6 @@ class TestGetContext:
         assert "decision" in record
         assert "why" in record
         assert len(record["body"]) <= 2000
-        assert rec["record_id"] in deps.fetched_context_record_ids
 
     def test_detailed_full_body(self, deps, mock_embeddings):
         ctx = make_run_context(deps)
@@ -465,312 +366,6 @@ class TestGetContext:
         result = get_context(ctx, record_ids=[rec["record_id"]], detail="detailed")
         parsed = json.loads(result)
         assert len(parsed["records"][0]["body"]) == 300
-        assert rec["record_id"] in deps.fetched_context_record_ids
-
-
-# ---------------------------------------------------------------------------
-# revise_context
-# ---------------------------------------------------------------------------
-
-
-class TestReviseContext:
-    def test_basic_update(self, deps, mock_embeddings):
-        ctx = make_run_context(deps)
-        store = ContextStore(deps.context_db_path)
-        store.initialize()
-        store.register_project(deps.project_identity)
-        _seed_session(store, deps.project_identity.project_id)
-        rec = store.create_record(
-            project_id=deps.project_identity.project_id,
-            session_id="sess_test",
-            kind="fact",
-            title="Old title",
-            body="Old body",
-        )
-        _fetch_records(ctx, rec["record_id"])
-        result = revise_context(
-            ctx,
-            record_id=rec["record_id"],
-            reason="tighten title",
-            **_fact(title="New title", body="Old body"),
-        )
-        parsed = json.loads(result)
-        assert parsed["ok"] is True
-
-    def test_requires_fetch_before_update(self, deps, mock_embeddings):
-        ctx = make_run_context(deps)
-        store = ContextStore(deps.context_db_path)
-        store.initialize()
-        store.register_project(deps.project_identity)
-        _seed_session(store, deps.project_identity.project_id)
-        rec = store.create_record(
-            project_id=deps.project_identity.project_id,
-            session_id="sess_test",
-            kind="fact",
-            title="Old title",
-            body="Old body",
-        )
-
-        with pytest.raises(ModelRetry, match="get_context"):
-            revise_context(
-                ctx,
-                record_id=rec["record_id"],
-                reason="tighten title",
-                **_fact(title="New title", body="Old body"),
-            )
-
-    def test_update_does_not_require_episode_ordering(
-        self, deps_with_session, mock_embeddings
-    ):
-        ctx = make_run_context(deps_with_session)
-        store = ContextStore(deps_with_session.context_db_path)
-        store.initialize()
-        store.register_project(deps_with_session.project_identity)
-        rec = store.create_record(
-            project_id=deps_with_session.project_identity.project_id,
-            session_id="sess_test",
-            kind="fact",
-            title="Old title",
-            body="Old body",
-        )
-        _fetch_records(ctx, rec["record_id"])
-
-        result = revise_context(
-            ctx,
-            record_id=rec["record_id"],
-            reason="tighten title",
-            **_fact(title="New title", body="Old body"),
-        )
-
-        assert json.loads(result)["ok"] is True
-
-    def test_preserves_lifecycle_fields_when_omitted(self, deps, mock_embeddings):
-        ctx = make_run_context(deps)
-        store = ContextStore(deps.context_db_path)
-        store.initialize()
-        store.register_project(deps.project_identity)
-        _seed_session(store, deps.project_identity.project_id)
-        rec = store.create_record(
-            project_id=deps.project_identity.project_id,
-            session_id="sess_test",
-            kind="fact",
-            status="archived",
-            title="Old title",
-            body="Old body",
-            valid_from="2025-01-01T00:00:00+00:00",
-            valid_until="2025-02-01T00:00:00+00:00",
-        )
-        _fetch_records(ctx, rec["record_id"])
-
-        result = revise_context(
-            ctx,
-            record_id=rec["record_id"],
-            reason="tighten title",
-            **_fact(title="New title", body="Old body"),
-        )
-        record = json.loads(result)["result"]
-
-        assert record["status"] == "archived"
-        assert record["valid_from"] == "2025-01-01T00:00:00+00:00"
-        assert record["valid_until"] == "2025-02-01T00:00:00+00:00"
-
-    def test_no_meaningful_change_raises_retry(self, deps, mock_embeddings):
-        ctx = make_run_context(deps)
-        store = ContextStore(deps.context_db_path)
-        store.initialize()
-        store.register_project(deps.project_identity)
-        _seed_session(store, deps.project_identity.project_id)
-        rec = store.create_record(
-            project_id=deps.project_identity.project_id,
-            session_id="sess_test",
-            kind="fact",
-            title="Old title",
-            body="Old body",
-        )
-        _fetch_records(ctx, rec["record_id"])
-
-        with pytest.raises(ModelRetry, match="meaningful field change"):
-            revise_context(
-                ctx,
-                record_id=rec["record_id"],
-                reason="same payload",
-                **_fact(title="Old title", body="Old body"),
-            )
-
-    def test_rejects_kind_change(self, deps, mock_embeddings):
-        ctx = make_run_context(deps)
-        store = ContextStore(deps.context_db_path)
-        store.initialize()
-        store.register_project(deps.project_identity)
-        _seed_session(store, deps.project_identity.project_id)
-        rec = store.create_record(
-            project_id=deps.project_identity.project_id,
-            session_id="sess_test",
-            kind="fact",
-            title="Old fact",
-            body="Old body",
-        )
-        _fetch_records(ctx, rec["record_id"])
-
-        with pytest.raises(ModelRetry, match="cannot change a record's kind"):
-            revise_context(
-                ctx,
-                record_id=rec["record_id"],
-                reason="wrong kind",
-                **_decision(title="Decision", body="Decision body"),
-            )
-
-
-# ---------------------------------------------------------------------------
-# archive_context
-# ---------------------------------------------------------------------------
-
-
-class TestArchiveRecord:
-    def test_refuses_fresh_active_non_episode(self, deps, mock_embeddings):
-        ctx = make_run_context(deps)
-        store = ContextStore(deps.context_db_path)
-        store.initialize()
-        store.register_project(deps.project_identity)
-        _seed_session(store, deps.project_identity.project_id)
-        rec = store.create_record(
-            project_id=deps.project_identity.project_id,
-            session_id="sess_test",
-            kind="fact",
-            title="Fresh fact",
-            body="body",
-        )
-        _fetch_records(ctx, rec["record_id"])
-        with pytest.raises(ModelRetry, match="Do not archive"):
-            archive_context(ctx, record_id=rec["record_id"])
-
-    def test_requires_fetch_before_archive(self, deps, mock_embeddings):
-        ctx = make_run_context(deps)
-        store = ContextStore(deps.context_db_path)
-        store.initialize()
-        store.register_project(deps.project_identity)
-        _seed_session(store, deps.project_identity.project_id)
-        rec = store.create_record(
-            project_id=deps.project_identity.project_id,
-            session_id="sess_test",
-            kind="episode",
-            title="An episode",
-            body="It happened.",
-            user_intent="User wanted X",
-            what_happened="We did X",
-        )
-
-        with pytest.raises(ModelRetry, match="get_context"):
-            archive_context(ctx, record_id=rec["record_id"])
-
-    def test_allows_episode(self, deps, mock_embeddings):
-        ctx = make_run_context(deps)
-        store = ContextStore(deps.context_db_path)
-        store.initialize()
-        store.register_project(deps.project_identity)
-        _seed_session(store, deps.project_identity.project_id)
-        rec = store.create_record(
-            project_id=deps.project_identity.project_id,
-            session_id="sess_test",
-            kind="episode",
-            title="An episode",
-            body="It happened.",
-            user_intent="User wanted X",
-            what_happened="We did X",
-        )
-        _fetch_records(ctx, rec["record_id"])
-        result = archive_context(ctx, record_id=rec["record_id"], reason="old")
-        parsed = json.loads(result)
-        assert parsed["ok"] is True
-
-
-# ---------------------------------------------------------------------------
-# supersede_context
-# ---------------------------------------------------------------------------
-
-
-class TestSupersedeRecord:
-    def test_basic_supersede(self, deps, mock_embeddings):
-        ctx = make_run_context(deps)
-        store = ContextStore(deps.context_db_path)
-        store.initialize()
-        store.register_project(deps.project_identity)
-        _seed_session(store, deps.project_identity.project_id)
-        old = store.create_record(
-            project_id=deps.project_identity.project_id,
-            session_id="sess_test",
-            kind="fact",
-            title="Old fact",
-            body="Old body",
-        )
-        new = store.create_record(
-            project_id=deps.project_identity.project_id,
-            session_id="sess_test",
-            kind="fact",
-            title="New fact",
-            body="New body",
-        )
-        _fetch_records(ctx, old["record_id"], new["record_id"])
-        result = supersede_context(
-            ctx,
-            record_id=old["record_id"],
-            replacement_record_id=new["record_id"],
-            reason="replaced",
-        )
-        parsed = json.loads(result)
-        assert parsed["ok"] is True
-
-    def test_requires_fetch_before_supersede(self, deps, mock_embeddings):
-        ctx = make_run_context(deps)
-        store = ContextStore(deps.context_db_path)
-        store.initialize()
-        store.register_project(deps.project_identity)
-        _seed_session(store, deps.project_identity.project_id)
-        old = store.create_record(
-            project_id=deps.project_identity.project_id,
-            session_id="sess_test",
-            kind="fact",
-            title="Old fact",
-            body="Old body",
-        )
-        new = store.create_record(
-            project_id=deps.project_identity.project_id,
-            session_id="sess_test",
-            kind="fact",
-            title="New fact",
-            body="New body",
-        )
-
-        with pytest.raises(ModelRetry, match="get_context"):
-            supersede_context(
-                ctx,
-                record_id=old["record_id"],
-                replacement_record_id=new["record_id"],
-                reason="replaced",
-            )
-
-    def test_unfetched_replacement_raises_retry(self, deps, mock_embeddings):
-        ctx = make_run_context(deps)
-        store = ContextStore(deps.context_db_path)
-        store.initialize()
-        store.register_project(deps.project_identity)
-        _seed_session(store, deps.project_identity.project_id)
-        old = store.create_record(
-            project_id=deps.project_identity.project_id,
-            session_id="sess_test",
-            kind="fact",
-            title="Old fact",
-            body="Old body",
-        )
-        _fetch_records(ctx, old["record_id"])
-
-        with pytest.raises(ModelRetry, match="get_context"):
-            supersede_context(
-                ctx,
-                record_id=old["record_id"],
-                replacement_record_id="rec_missing",
-                reason="replaced",
-            )
 
 
 # ---------------------------------------------------------------------------

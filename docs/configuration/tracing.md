@@ -9,15 +9,16 @@ for one-off runs.
 
 When tracing is enabled, MLflow records:
 
-- **Sync extraction graph** -- the BAML plus LangGraph extractor emits a
-  top-level `lerim.agent.extract` span with trace metadata and model label.
-- **PydanticAI model calls** -- via `mlflow.pydantic_ai.autolog()`, maintain,
-  ask, and working-memory model invocations are captured automatically,
-  including input prompts, outputs, token counts, and latency.
-- **Agent/tool executions** -- tool calls and agent steps are traced as nested spans within each run when the runtime exposes them.
-- **agent_trace.json** -- each sync/maintain run also writes a local
-  `agent_trace.json` under the run workspace for a full tool/message history
-  (not MLflow-specific).
+- **Sync extraction and maintain graphs** -- the BAML plus LangGraph flows emit
+  top-level `lerim.agent.extract` and `lerim.agent.maintain` spans with trace
+  metadata and model labels.
+- **PydanticAI model calls** -- via `mlflow.pydantic_ai.autolog()`, ask and
+  working-memory model invocations are captured automatically, including input
+  prompts, outputs, token counts, and latency.
+- **Agent/tool executions** -- ask tool calls and PydanticAI agent steps are
+  traced as nested spans when the runtime exposes them.
+- **agent_trace.json** -- each sync/maintain run also writes local graph events
+  under the run workspace. Ask runs write the PydanticAI message/tool history.
 - **Lerim run id correlation** -- each sync/maintain trace is tagged with
   `lerim.run_id`, and MLflow `client_request_id` is set to the same value used
   in the local run `manifest.json` and workspace folder name.
@@ -107,13 +108,13 @@ In the UI, look for:
 
 - **Experiments** -- select the `lerim` experiment.
 - **Traces** -- the primary view for Lerim agent spans. Expand a trace to see
-  the sync graph span or PydanticAI model/tool span tree.
+  sync and maintain graph spans, or the PydanticAI model/tool span tree for ask.
 - **Run id** -- match a local run folder to MLflow by searching for the
   `manifest.json` `run_id` value. It is also stored as `client_request_id` and
   the `lerim.run_id` tag.
 - **Model calls** -- PydanticAI model requests are logged with input prompts,
-  outputs, token counts, and latency. Sync extraction model metadata is attached
-  to the BAML/LangGraph extract span.
+  outputs, token counts, and latency. Sync extraction and maintain model
+  metadata is attached to their BAML/LangGraph spans.
 - **Spans** -- nested spans show the call hierarchy from the top-level
   orchestration down to individual LM calls and tool invocations.
 

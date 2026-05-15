@@ -23,7 +23,7 @@ class StreamState(BaseModel, typing.Generic[StreamStateValueT]):
     value: StreamStateValueT
     state: typing_extensions.Literal["Pending", "Incomplete", "Complete"]
 # #########################################################################
-# Generated classes (5)
+# Generated classes (8)
 # #########################################################################
 
 class DurableRecordDraft(BaseModel):
@@ -45,6 +45,32 @@ class EpisodeDraft(BaseModel):
     user_intent: typing.Optional[str] = Field(default=None, description='What the user wanted in this source session. Runtime fills a generic fallback if omitted.')
     what_happened: typing.Optional[str] = Field(default=None, description='What the session actually did. Runtime fills a generic fallback if omitted.')
     outcomes: typing.Optional[str] = Field(default=None, description='Optional concise outcome.')
+
+class MaintainAction(BaseModel):
+    action_type: typing.Optional[types.MaintainActionType] = None
+    record_id: typing.Optional[str] = None
+    replacement_record_id: typing.Optional[str] = None
+    reason: typing.Optional[str] = None
+    patch: typing.Optional["MaintainRecordPatch"] = None
+
+class MaintainActionPlan(BaseModel):
+    actions: typing.List["MaintainAction"]
+    completion_summary: typing.Optional[str] = None
+
+class MaintainRecordPatch(BaseModel):
+    kind: typing.Optional[types.MaintainRecordKind] = None
+    title: typing.Optional[str] = None
+    body: typing.Optional[str] = None
+    status: typing.Optional[types.RecordStatus] = None
+    valid_from: typing.Optional[str] = None
+    valid_until: typing.Optional[str] = None
+    decision: typing.Optional[str] = None
+    why: typing.Optional[str] = None
+    alternatives: typing.Optional[str] = None
+    consequences: typing.Optional[str] = None
+    user_intent: typing.Optional[str] = None
+    what_happened: typing.Optional[str] = None
+    outcomes: typing.Optional[str] = None
 
 class SynthesizedExtraction(BaseModel):
     episode: typing.Optional["EpisodeDraft"] = Field(default=None, description='Exactly one current-session episode record draft.')

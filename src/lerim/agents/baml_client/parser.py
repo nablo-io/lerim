@@ -23,6 +23,18 @@ class LlmResponseParser:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
+    def ReviewMaintainCluster(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> types.MaintainActionPlan:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ReviewMaintainCluster", llm_response=llm_response, mode="request")
+        return typing.cast(types.MaintainActionPlan, __result__)
+
+    def ReviewMaintainHealthBatch(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> types.MaintainActionPlan:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ReviewMaintainHealthBatch", llm_response=llm_response, mode="request")
+        return typing.cast(types.MaintainActionPlan, __result__)
+
     def ScanTraceWindow(
         self, llm_response: str, baml_options: BamlCallOptions = {},
     ) -> types.TraceWindowScan:
@@ -42,6 +54,18 @@ class LlmStreamParser:
 
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
+
+    def ReviewMaintainCluster(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> stream_types.MaintainActionPlan:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ReviewMaintainCluster", llm_response=llm_response, mode="stream")
+        return typing.cast(stream_types.MaintainActionPlan, __result__)
+
+    def ReviewMaintainHealthBatch(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> stream_types.MaintainActionPlan:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ReviewMaintainHealthBatch", llm_response=llm_response, mode="stream")
+        return typing.cast(stream_types.MaintainActionPlan, __result__)
 
     def ScanTraceWindow(
         self, llm_response: str, baml_options: BamlCallOptions = {},

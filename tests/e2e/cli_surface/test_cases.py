@@ -306,7 +306,7 @@ def test_cli_maintain_json_reports_changes(
         "projects": {
             "surface-project": {
                 "maintain_counts": {
-                    "merged": 1,
+                    "created": 1,
                     "archived": 2,
                     "updated": 1,
                 }
@@ -320,7 +320,8 @@ def test_cli_maintain_json_reports_changes(
 
     payload = parse_json_output(result.stdout)
     assert server.requests[-1][0] == expectation["endpoint"]
-    assert payload["projects"]["surface-project"]["maintain_counts"]["merged"] == int(expectation["merged"])
+    assert payload["projects"]["surface-project"]["maintain_counts"]["created"] == int(expectation["created"])
+    assert payload["projects"]["surface-project"]["maintain_counts"]["updated"] == int(expectation["updated"])
     assert payload["projects"]["surface-project"]["maintain_counts"]["archived"] == int(expectation["archived"])
     assert payload["queue_health"]["degraded"] is False
 

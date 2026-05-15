@@ -20,18 +20,26 @@ from .globals import DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIM
 class TypeBuilder(type_builder.TypeBuilder):
     def __init__(self):
         super().__init__(classes=set(
-          ["DurableRecordDraft","EpisodeDraft","SynthesizedExtraction","TraceWindowFinding","TraceWindowScan",]
+          ["DurableRecordDraft","EpisodeDraft","MaintainAction","MaintainActionPlan","MaintainRecordPatch","SynthesizedExtraction","TraceWindowFinding","TraceWindowScan",]
         ), enums=set(
-          ["FindingLevel","RecordKind","RecordStatus",]
+          ["FindingLevel","MaintainActionType","MaintainRecordKind","RecordKind","RecordStatus",]
         ), runtime=DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME)
 
     # #########################################################################
-    # Generated enums 3
+    # Generated enums 5
     # #########################################################################
 
     @property
     def FindingLevel(self) -> "FindingLevelViewer":
         return FindingLevelViewer(self)
+
+    @property
+    def MaintainActionType(self) -> "MaintainActionTypeViewer":
+        return MaintainActionTypeViewer(self)
+
+    @property
+    def MaintainRecordKind(self) -> "MaintainRecordKindViewer":
+        return MaintainRecordKindViewer(self)
 
     @property
     def RecordKind(self) -> "RecordKindViewer":
@@ -43,7 +51,7 @@ class TypeBuilder(type_builder.TypeBuilder):
 
 
     # #########################################################################
-    # Generated classes 5
+    # Generated classes 8
     # #########################################################################
 
     @property
@@ -53,6 +61,18 @@ class TypeBuilder(type_builder.TypeBuilder):
     @property
     def EpisodeDraft(self) -> "EpisodeDraftViewer":
         return EpisodeDraftViewer(self)
+
+    @property
+    def MaintainAction(self) -> "MaintainActionViewer":
+        return MaintainActionViewer(self)
+
+    @property
+    def MaintainActionPlan(self) -> "MaintainActionPlanViewer":
+        return MaintainActionPlanViewer(self)
+
+    @property
+    def MaintainRecordPatch(self) -> "MaintainRecordPatchViewer":
+        return MaintainRecordPatchViewer(self)
 
     @property
     def SynthesizedExtraction(self) -> "SynthesizedExtractionViewer":
@@ -69,7 +89,7 @@ class TypeBuilder(type_builder.TypeBuilder):
 
 
 # #########################################################################
-# Generated enums 3
+# Generated enums 5
 # #########################################################################
 
 class FindingLevelAst:
@@ -130,6 +150,114 @@ class FindingLevelValues:
     @property
     def IMPLEMENTATION(self) -> type_builder.EnumValueViewer:
         return type_builder.EnumValueViewer(self.__bldr.value("IMPLEMENTATION"))
+    
+    
+
+
+class MaintainActionTypeAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.enum("MaintainActionType")
+        self._values: typing.Set[str] = set([  "NOOP",  "REVISE",  "ARCHIVE",  "SUPERSEDE",  ])
+        self._vals = MaintainActionTypeValues(self._bldr, self._values)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def values(self) -> "MaintainActionTypeValues":
+        return self._vals
+
+
+class MaintainActionTypeViewer(MaintainActionTypeAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_values(self) -> typing.List[typing.Tuple[str, type_builder.EnumValueViewer]]:
+        return [(name, type_builder.EnumValueViewer(self._bldr.value(name))) for name in self._values]
+    
+
+class MaintainActionTypeValues:
+    def __init__(self, enum_bldr: baml_py.EnumBuilder, values: typing.Set[str]):
+        self.__bldr = enum_bldr
+        self.__values = values # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def NOOP(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("NOOP"))
+    
+    @property
+    def REVISE(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("REVISE"))
+    
+    @property
+    def ARCHIVE(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("ARCHIVE"))
+    
+    @property
+    def SUPERSEDE(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("SUPERSEDE"))
+    
+    
+
+
+class MaintainRecordKindAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.enum("MaintainRecordKind")
+        self._values: typing.Set[str] = set([  "DECISION",  "PREFERENCE",  "CONSTRAINT",  "FACT",  "REFERENCE",  "EPISODE",  ])
+        self._vals = MaintainRecordKindValues(self._bldr, self._values)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def values(self) -> "MaintainRecordKindValues":
+        return self._vals
+
+
+class MaintainRecordKindViewer(MaintainRecordKindAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_values(self) -> typing.List[typing.Tuple[str, type_builder.EnumValueViewer]]:
+        return [(name, type_builder.EnumValueViewer(self._bldr.value(name))) for name in self._values]
+    
+
+class MaintainRecordKindValues:
+    def __init__(self, enum_bldr: baml_py.EnumBuilder, values: typing.Set[str]):
+        self.__bldr = enum_bldr
+        self.__values = values # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def DECISION(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("DECISION"))
+    
+    @property
+    def PREFERENCE(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("PREFERENCE"))
+    
+    @property
+    def CONSTRAINT(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("CONSTRAINT"))
+    
+    @property
+    def FACT(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("FACT"))
+    
+    @property
+    def REFERENCE(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("REFERENCE"))
+    
+    @property
+    def EPISODE(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("EPISODE"))
     
     
 
@@ -232,7 +360,7 @@ class RecordStatusValues:
 
 
 # #########################################################################
-# Generated classes 5
+# Generated classes 8
 # #########################################################################
 
 class DurableRecordDraftAst:
@@ -353,6 +481,191 @@ class EpisodeDraftProperties:
     @property
     def status(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("status"))
+    
+    @property
+    def user_intent(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("user_intent"))
+    
+    @property
+    def what_happened(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("what_happened"))
+    
+    @property
+    def outcomes(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("outcomes"))
+    
+    
+
+
+class MaintainActionAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("MaintainAction")
+        self._properties: typing.Set[str] = set([  "action_type",  "record_id",  "replacement_record_id",  "reason",  "patch",  ])
+        self._props = MaintainActionProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "MaintainActionProperties":
+        return self._props
+
+
+class MaintainActionViewer(MaintainActionAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class MaintainActionProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def action_type(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("action_type"))
+    
+    @property
+    def record_id(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("record_id"))
+    
+    @property
+    def replacement_record_id(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("replacement_record_id"))
+    
+    @property
+    def reason(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("reason"))
+    
+    @property
+    def patch(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("patch"))
+    
+    
+
+
+class MaintainActionPlanAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("MaintainActionPlan")
+        self._properties: typing.Set[str] = set([  "actions",  "completion_summary",  ])
+        self._props = MaintainActionPlanProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "MaintainActionPlanProperties":
+        return self._props
+
+
+class MaintainActionPlanViewer(MaintainActionPlanAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class MaintainActionPlanProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def actions(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("actions"))
+    
+    @property
+    def completion_summary(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("completion_summary"))
+    
+    
+
+
+class MaintainRecordPatchAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("MaintainRecordPatch")
+        self._properties: typing.Set[str] = set([  "kind",  "title",  "body",  "status",  "valid_from",  "valid_until",  "decision",  "why",  "alternatives",  "consequences",  "user_intent",  "what_happened",  "outcomes",  ])
+        self._props = MaintainRecordPatchProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "MaintainRecordPatchProperties":
+        return self._props
+
+
+class MaintainRecordPatchViewer(MaintainRecordPatchAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class MaintainRecordPatchProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def kind(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("kind"))
+    
+    @property
+    def title(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("title"))
+    
+    @property
+    def body(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("body"))
+    
+    @property
+    def status(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("status"))
+    
+    @property
+    def valid_from(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("valid_from"))
+    
+    @property
+    def valid_until(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("valid_until"))
+    
+    @property
+    def decision(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("decision"))
+    
+    @property
+    def why(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("why"))
+    
+    @property
+    def alternatives(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("alternatives"))
+    
+    @property
+    def consequences(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("consequences"))
     
     @property
     def user_intent(self) -> type_builder.ClassPropertyViewer:

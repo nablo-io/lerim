@@ -1,5 +1,6 @@
 case: cli_maintain_json_reports_changes
 expected:
   endpoint: "/api/maintain"
-  merged: 1
+  created: 1
+  updated: 1
   archived: 2

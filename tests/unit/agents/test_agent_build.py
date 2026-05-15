@@ -17,10 +17,7 @@ from lerim.agents.ask import (
     AskResult,
 )
 from lerim.agents.extract import ExtractionResult
-from lerim.agents.maintain import (
-    MAINTAIN_SYSTEM_PROMPT,
-    MaintainResult,
-)
+from lerim.agents.maintain import MaintainResult
 AUTHORITATIVE_TOOL_DOCS = (
     "README.md",
     "src/lerim/README.md",
@@ -62,9 +59,10 @@ class TestBuildExtractAgent:
 class TestBuildMaintainAgent:
     """Tests for maintain-agent public contract."""
 
-    def test_system_prompt_non_empty(self):
-        assert isinstance(MAINTAIN_SYSTEM_PROMPT, str)
-        assert len(MAINTAIN_SYSTEM_PROMPT.strip()) > 0
+    def test_baml_source_exists(self):
+        path = REPO_ROOT / "src" / "lerim" / "agents" / "baml_src" / "maintain.baml"
+        assert path.exists()
+        assert "function ReviewMaintainCluster" in path.read_text(encoding="utf-8")
 
 
 class TestBuildAskAgent:

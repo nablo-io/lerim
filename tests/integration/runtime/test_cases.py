@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 from lerim.agents.ask import AskResult
 from lerim.agents.extract import ExtractionEvent, ExtractionResult, ExtractionRunDetails
+from lerim.agents.maintain import MaintainEvent, MaintainRunDetails
 from lerim.context import ContextStore
 from lerim.working_memory import (
     MemoryLine,
@@ -60,6 +61,28 @@ def _extract_details(kwargs, *, summary: str) -> ExtractionRunDetails:
         session_id=kwargs["session_id"],
         model_name="test-model",
         trace_total_lines=1,
+    )
+
+
+def _maintain_details(kwargs, *, summary: str) -> MaintainRunDetails:
+    """Build graph-style maintain details for runtime test doubles."""
+    return MaintainRunDetails(
+        events=[
+            MaintainEvent(
+                action="final_result",
+                ok=True,
+                content=summary,
+                args={},
+                done=True,
+                completion_summary=summary,
+            )
+        ],
+        llm_calls=1,
+        done=True,
+        context_db_path=str(kwargs["context_db_path"]),
+        project_id=kwargs["project_identity"].project_id,
+        session_id=kwargs["session_id"],
+        model_name="test-model",
     )
 
 
@@ -237,7 +260,7 @@ def test_maintain_change_counts_reflect_real_mutations(
         )
         return (
             SimpleNamespace(completion_summary="maintain complete"),
-            build_ordered_ask_messages()[:1],
+            _maintain_details(kwargs, summary="maintain complete"),
         )
 
     monkeypatch.setattr("lerim.server.runtime.run_maintain", _fake_run_maintain)
@@ -381,7 +404,7 @@ def test_runtime_sync_then_maintain_then_ask_with_real_artifacts(
         )
         return (
             SimpleNamespace(completion_summary="maintain strengthened fact"),
-            build_ordered_ask_messages()[:1],
+            _maintain_details(kwargs, summary="maintain strengthened fact"),
         )
 
     def _fake_run_ask(**kwargs):

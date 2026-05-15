@@ -269,12 +269,9 @@ def test_maintain_calls_agent(monkeypatch, tmp_path) -> None:
         lambda self, **kw: (
             called.append(str(kw.get("repo_root", ""))),
             {
-                "counts": {
-                    "merged": 0,
-                    "archived": 0,
-                    "consolidated": 0,
-                    "unchanged": 0,
-                }
+                "records_created": 0,
+                "records_updated": 0,
+                "records_archived": 0,
             },
         )[1],
     )

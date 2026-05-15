@@ -94,6 +94,34 @@ class BamlSyncClient:
     def parse_stream(self):
       return self.__llm_stream_parser
 
+    def ReviewMaintainCluster(self, run_instruction: str,cluster_id: str,records_json: str,
+        baml_options: BamlCallOptions = {},
+    ) -> types.MaintainActionPlan:
+        # Check if on_tick is provided
+        if 'on_tick' in baml_options:
+            __stream__ = self.stream.ReviewMaintainCluster(run_instruction=run_instruction,cluster_id=cluster_id,records_json=records_json,
+                baml_options=baml_options)
+            return __stream__.get_final_response()
+        else:
+            # Original non-streaming code
+            __result__ = self.__options.merge_options(baml_options).call_function_sync(function_name="ReviewMaintainCluster", args={
+                "run_instruction": run_instruction,"cluster_id": cluster_id,"records_json": records_json,
+            })
+            return typing.cast(types.MaintainActionPlan, __result__.cast_to(types, types, stream_types, False, __runtime__))
+    def ReviewMaintainHealthBatch(self, run_instruction: str,batch_id: str,records_json: str,
+        baml_options: BamlCallOptions = {},
+    ) -> types.MaintainActionPlan:
+        # Check if on_tick is provided
+        if 'on_tick' in baml_options:
+            __stream__ = self.stream.ReviewMaintainHealthBatch(run_instruction=run_instruction,batch_id=batch_id,records_json=records_json,
+                baml_options=baml_options)
+            return __stream__.get_final_response()
+        else:
+            # Original non-streaming code
+            __result__ = self.__options.merge_options(baml_options).call_function_sync(function_name="ReviewMaintainHealthBatch", args={
+                "run_instruction": run_instruction,"batch_id": batch_id,"records_json": records_json,
+            })
+            return typing.cast(types.MaintainActionPlan, __result__.cast_to(types, types, stream_types, False, __runtime__))
     def ScanTraceWindow(self, run_instruction: str,prior_episode_summary: str,prior_findings_summary: str,trace_window: str,
         baml_options: BamlCallOptions = {},
     ) -> types.TraceWindowScan:
@@ -131,6 +159,30 @@ class BamlStreamClient:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
+    def ReviewMaintainCluster(self, run_instruction: str,cluster_id: str,records_json: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.BamlSyncStream[stream_types.MaintainActionPlan, types.MaintainActionPlan]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_sync_stream(function_name="ReviewMaintainCluster", args={
+            "run_instruction": run_instruction,"cluster_id": cluster_id,"records_json": records_json,
+        })
+        return baml_py.BamlSyncStream[stream_types.MaintainActionPlan, types.MaintainActionPlan](
+          __result__,
+          lambda x: typing.cast(stream_types.MaintainActionPlan, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(types.MaintainActionPlan, x.cast_to(types, types, stream_types, False, __runtime__)),
+          __ctx__,
+        )
+    def ReviewMaintainHealthBatch(self, run_instruction: str,batch_id: str,records_json: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.BamlSyncStream[stream_types.MaintainActionPlan, types.MaintainActionPlan]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_sync_stream(function_name="ReviewMaintainHealthBatch", args={
+            "run_instruction": run_instruction,"batch_id": batch_id,"records_json": records_json,
+        })
+        return baml_py.BamlSyncStream[stream_types.MaintainActionPlan, types.MaintainActionPlan](
+          __result__,
+          lambda x: typing.cast(stream_types.MaintainActionPlan, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(types.MaintainActionPlan, x.cast_to(types, types, stream_types, False, __runtime__)),
+          __ctx__,
+        )
     def ScanTraceWindow(self, run_instruction: str,prior_episode_summary: str,prior_findings_summary: str,trace_window: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.BamlSyncStream[stream_types.TraceWindowScan, types.TraceWindowScan]:
@@ -163,6 +215,20 @@ class BamlHttpRequestClient:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
+    def ReviewMaintainCluster(self, run_instruction: str,cluster_id: str,records_json: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="ReviewMaintainCluster", args={
+            "run_instruction": run_instruction,"cluster_id": cluster_id,"records_json": records_json,
+        }, mode="request")
+        return __result__
+    def ReviewMaintainHealthBatch(self, run_instruction: str,batch_id: str,records_json: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="ReviewMaintainHealthBatch", args={
+            "run_instruction": run_instruction,"batch_id": batch_id,"records_json": records_json,
+        }, mode="request")
+        return __result__
     def ScanTraceWindow(self, run_instruction: str,prior_episode_summary: str,prior_findings_summary: str,trace_window: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
@@ -185,6 +251,20 @@ class BamlHttpStreamRequestClient:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
+    def ReviewMaintainCluster(self, run_instruction: str,cluster_id: str,records_json: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="ReviewMaintainCluster", args={
+            "run_instruction": run_instruction,"cluster_id": cluster_id,"records_json": records_json,
+        }, mode="stream")
+        return __result__
+    def ReviewMaintainHealthBatch(self, run_instruction: str,batch_id: str,records_json: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="ReviewMaintainHealthBatch", args={
+            "run_instruction": run_instruction,"batch_id": batch_id,"records_json": records_json,
+        }, mode="stream")
+        return __result__
     def ScanTraceWindow(self, run_instruction: str,prior_episode_summary: str,prior_findings_summary: str,trace_window: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:

@@ -22,6 +22,15 @@ type_map = {
     "types.EpisodeDraft": types.EpisodeDraft,
     "stream_types.EpisodeDraft": stream_types.EpisodeDraft,
 
+    "types.MaintainAction": types.MaintainAction,
+    "stream_types.MaintainAction": stream_types.MaintainAction,
+
+    "types.MaintainActionPlan": types.MaintainActionPlan,
+    "stream_types.MaintainActionPlan": stream_types.MaintainActionPlan,
+
+    "types.MaintainRecordPatch": types.MaintainRecordPatch,
+    "stream_types.MaintainRecordPatch": stream_types.MaintainRecordPatch,
+
     "types.SynthesizedExtraction": types.SynthesizedExtraction,
     "stream_types.SynthesizedExtraction": stream_types.SynthesizedExtraction,
 
@@ -33,6 +42,10 @@ type_map = {
 
 
     "types.FindingLevel": types.FindingLevel,
+
+    "types.MaintainActionType": types.MaintainActionType,
+
+    "types.MaintainRecordKind": types.MaintainRecordKind,
 
     "types.RecordKind": types.RecordKind,
 

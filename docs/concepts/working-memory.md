@@ -91,8 +91,8 @@ Working Memory refresh is intentionally not part of the sync hot path.
   `--force` is passed.
 - The daemon runs a daily pass across registered projects and skips unchanged
   projects.
-- `maintain` triggers Working Memory only when it merged, archived,
-  consolidated, or otherwise changed records.
+- `maintain` triggers Working Memory only when it creates, updates, archives,
+  or otherwise changed records.
 - Empty projects get an empty-state Markdown file without a model call.
 
 ## Fixed Markdown Shape

@@ -8,16 +8,13 @@ from pathlib import Path
 from typing import Any
 
 from lerim.agents.maintain import MaintainResult, run_maintain
-from lerim.config.providers import build_pydantic_model
 from lerim.context import ContextStore, resolve_project_identity
 from tests.conftest import MAINTAIN_EXPECTATIONS_DIR
 from tests.integration.common_helpers import (
-    extract_tool_calls,
     load_yaml_expectation,
     retry_on_overload,
     seed_session,
 )
-from tests.live_helpers import dump_messages, extract_tool_names
 
 
 @dataclass
@@ -25,8 +22,8 @@ class MaintainCaseOutcome:
     """Observed result for one maintain integration case."""
 
     result: MaintainResult
-    tool_names: list[str]
-    tool_calls: list[dict[str, Any]]
+    event_names: list[str]
+    events: list[dict[str, Any]]
     rows: list[dict[str, Any]]
     records: list[dict[str, Any]]
     changed_version_rows: list[dict[str, Any]]
@@ -131,14 +128,13 @@ def run_maintain_case(
                 delta=timedelta(hours=backdate_hours),
             )
 
-    model = build_pydantic_model("agent", config=live_config)
-    result, messages = retry_on_overload(
+    result, details = retry_on_overload(
         lambda: run_maintain(
             context_db_path=live_config.context_db_path,
             project_identity=identity,
             session_id=maintain_session_id,
-            model=model,
-            return_messages=True,
+            config=live_config,
+            return_details=True,
         )
     )
 
@@ -174,11 +170,11 @@ def run_maintain_case(
         for record_id in changed_record_ids
     ]
 
-    payload = dump_messages(messages)
+    events = [event.model_dump(mode="json") for event in details.events]
     return MaintainCaseOutcome(
         result=result,
-        tool_names=extract_tool_names(payload),
-        tool_calls=extract_tool_calls(payload),
+        event_names=[str(event.get("action") or "") for event in events],
+        events=events,
         rows=rows,
         records=[record for record in records if record is not None],
         changed_version_rows=version_rows,

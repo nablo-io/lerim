@@ -11,12 +11,12 @@ lerim maintain --dry-run
 
 ## What it does
 
-`maintain` reads existing records and improves the graph:
+`maintain` reads existing records and keeps active context compact:
 
-- merge duplicates
+- supersede weaker duplicates with stronger records
 - archive low-value records
-- link related records
-- supersede outdated records
+- revise useful but verbose records
+- leave healthy records unchanged
 
 It works on the database.
 
@@ -24,27 +24,28 @@ It works on the database.
 
 ```mermaid
 flowchart TD
-    A["Trigger: lerim maintain or daemon"] --> B["Maintain agent receives project context task"]
+    A["Trigger: lerim maintain or daemon"] --> B["Python runtime resolves project scope"]
 
-    B --> C["Prompt goal: keep memory useful, current, compact, and non-duplicative"]
-    C --> D["Agent lists or searches active records"]
-    D --> E["Agent fetches full records before any mutation"]
+    B --> C["Python: load active record inventory"]
+    C --> D["Python: semantic search builds candidate clusters"]
+    D --> E["LLM/BAML: review each cluster"]
+    E --> F["LLM/BAML: review records without cluster actions"]
 
-    E --> F{"What problem is found?"}
-    F -- "duplicate or outdated truth" --> G["Use supersede_context to point old memory to newer truth"]
-    F -- "verbose, weak, or report-like" --> H["Use revise_context to rewrite into reusable present-tense memory"]
-    F -- "junk, obsolete, or low-value episode" --> I["Use archive_context"]
-    F -- "still useful" --> J["Leave unchanged"]
+    E --> G["Python: validate proposed actions"]
+    F --> G
+    G --> H{"Action type"}
+    H -- "duplicate or replaced truth" --> I["ContextStore.supersede_record"]
+    H -- "verbose, weak, or report-like" --> J["ContextStore.update_record"]
+    H -- "junk, obsolete, or low-value episode" --> K["ContextStore.archive_record"]
+    H -- "healthy or false-positive neighbor" --> L["Leave unchanged"]
 
-    G --> K["SQLite context DB + record_versions"]
-    H --> K
-    I --> K
-    J --> L{"More records to inspect?"}
-    K --> L
+    I --> M["SQLite context DB + record_versions"]
+    J --> M
+    K --> M
+    L --> N["Maintain summary and artifacts"]
+    M --> N
 
-    L -- "yes" --> D
-    L -- "no" --> M["Maintain summary and artifacts"]
-    M --> N{"Any records changed?"}
-    N -- "yes" --> O["Refresh Working Memory for project"]
-    N -- "no" --> P["Finish"]
+    N --> O{"Any records changed?"}
+    O -- "yes" --> P["Refresh Working Memory for project"]
+    O -- "no" --> Q["Finish"]
 ```

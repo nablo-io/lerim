@@ -196,7 +196,12 @@ def _seed_service_runs(db_path: Path) -> None:
 			"""INSERT INTO service_runs (job_type, status, started_at, completed_at, details)
 			VALUES (?, ?, ?, ?, ?)""",
 			("maintain", "completed", "2026-03-20T11:00:00Z", "2026-03-20T11:02:00Z",
-			 json.dumps({"maintain_metrics": {"counts": {"merged": 1}}})),
+			 json.dumps({"maintain_metrics": {
+				 "counts": {"created": 1, "updated": 0, "archived": 0},
+				 "records_created": 1,
+				 "records_updated": 0,
+				 "records_archived": 0,
+			 }})),
 		)
 
 
@@ -325,7 +330,7 @@ def test_server(tmp_path, monkeypatch):
 		"code": 0, "indexed": 5,
 	})
 	monkeypatch.setattr("lerim.server.httpd.api_maintain", lambda **kw: {
-		"code": 0, "maintain_counts": {"merged": 1},
+		"code": 0, "maintain_counts": {"created": 1},
 	})
 	monkeypatch.setattr("lerim.server.httpd.api_connect", lambda platform, path=None: {
 		"name": platform,
@@ -643,7 +648,7 @@ def test_post_maintain_blocking(test_server):
 	status, body = _api_post(port, "/api/maintain", {"blocking": True})
 	assert status == 200
 	assert body["code"] == 0
-	assert body["maintain_counts"]["merged"] == 1
+	assert body["maintain_counts"]["created"] == 1
 	assert "job_id" not in body
 
 

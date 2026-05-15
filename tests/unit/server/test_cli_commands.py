@@ -433,7 +433,7 @@ class TestCmdMaintain:
 
     def test_maintain_success_json(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Maintain with --json emits JSON response."""
-        fake = {"merged": 1, "archived": 0}
+        fake = {"records_created": 1, "records_archived": 0}
         captured: dict[str, Any] = {}
         monkeypatch.setattr(
             cli,
@@ -446,7 +446,7 @@ class TestCmdMaintain:
             code = cli._cmd_maintain(args)
         assert code == 0
         parsed = json.loads(buf.getvalue())
-        assert "merged" in parsed
+        assert "records_created" in parsed
         assert captured["path"] == "/api/maintain"
         assert captured["body"] == {"dry_run": False, "blocking": True}
 

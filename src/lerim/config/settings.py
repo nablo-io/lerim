@@ -49,7 +49,7 @@ class RoleConfig:
 	# BAML/LangGraph sync derives its windowing budget from trace size in
 	# lerim.agents.extract.windowing. There is no static extract-budget field
 	# on RoleConfig.
-	# PydanticAI request-turn limits for maintain/ask flows.
+	# Maintain uses this as a BAML call cap; ask uses it as a PydanticAI request-turn cap.
 	max_iters_maintain: int = 30
 	max_iters_ask: int = 30
 

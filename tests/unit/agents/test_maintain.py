@@ -1,15 +1,48 @@
-"""Tests for the maintain agent module."""
+"""Tests for the BAML/LangGraph maintain package."""
 
 from __future__ import annotations
 
 import inspect
-from unittest.mock import MagicMock
+from types import SimpleNamespace
 
-from lerim.agents.maintain import (
-    MAINTAIN_SYSTEM_PROMPT,
-    MaintainResult,
-    run_maintain,
+from lerim.agents.maintain import MaintainResult, MaintainRunDetails, run_maintain
+from lerim.agents.maintain.graph import (
+    _call_baml_with_retries,
+    _validate_action_plan_for_records,
 )
+from lerim.agents.maintain.inventory import (
+    build_health_batches,
+    build_similarity_clusters,
+    record_search_query,
+)
+from lerim.agents.maintain.operations import apply_maintain_action_plans
+from lerim.context import ContextStore
+from lerim.context.project_identity import ProjectIdentity
+
+
+def _identity(tmp_path) -> ProjectIdentity:
+    """Return one test project identity."""
+    return ProjectIdentity(
+        project_id="proj_maintain",
+        project_slug="maintain",
+        repo_path=tmp_path,
+    )
+
+
+def _seed_session(store: ContextStore, project_id: str, session_id: str) -> None:
+    """Seed one context-store session."""
+    store.upsert_session(
+        project_id=project_id,
+        session_id=session_id,
+        agent_type="test",
+        source_trace_ref="test",
+        repo_path="/tmp/test",
+        cwd="/tmp/test",
+        started_at="2026-01-01T00:00:00+00:00",
+        model_name="test",
+        instructions_text=None,
+        prompt_text=None,
+    )
 
 
 class TestMaintainResult:
@@ -22,15 +55,6 @@ class TestMaintainResult:
         assert data["completion_summary"] == "done"
 
 
-class TestMaintainSystemPrompt:
-    """Tests for MAINTAIN_SYSTEM_PROMPT."""
-
-    def test_keeps_policy_outside_tool_catalog(self):
-        assert "<tools>" not in MAINTAIN_SYSTEM_PROMPT
-        assert "Before any archive, revision, or supersession" in MAINTAIN_SYSTEM_PROMPT
-        assert "Fetch both rows and supersede" in MAINTAIN_SYSTEM_PROMPT
-
-
 class TestRunMaintainSignature:
     """Tests for run_maintain function signature."""
 
@@ -40,66 +64,406 @@ class TestRunMaintainSignature:
             "context_db_path",
             "project_identity",
             "session_id",
-            "model",
-            "request_limit",
-            "return_messages",
+            "config",
+            "return_details",
+            "provider",
+            "model_name",
+            "api_base_url",
+            "api_key",
+            "temperature",
+            "max_llm_calls",
+            "progress",
         }
         assert set(params.keys()) == expected
 
-    def test_runs_agent_sync(self, tmp_path, monkeypatch):
-        model = MagicMock()
-        mock_result = MagicMock()
-        mock_result.output = MaintainResult(completion_summary="ok")
-        mock_result.all_messages.return_value = []
+    def test_returns_details_when_requested(self, tmp_path, monkeypatch):
+        identity = _identity(tmp_path)
 
-        mock_agent = MagicMock()
-        mock_agent.run_sync.return_value = mock_result
         monkeypatch.setattr(
-            "lerim.agents.maintain.build_maintain_agent",
-            lambda _m: mock_agent,
+            "lerim.agents.maintain.api.model_label",
+            lambda **_kwargs: "test/model",
+        )
+        monkeypatch.setattr(
+            "lerim.agents.maintain.api.prepare_maintain_store",
+            lambda **_kwargs: None,
+        )
+        monkeypatch.setattr(
+            "lerim.agents.maintain.api.run_maintain_graph",
+            lambda **_kwargs: {
+                "completion_summary": "ok",
+                "observations": [
+                    {
+                        "action": "final_result",
+                        "ok": True,
+                        "content": "ok",
+                        "args": {},
+                        "done": True,
+                        "completion_summary": "ok",
+                    }
+                ],
+                "llm_calls": 1,
+                "done": True,
+                "records": [],
+                "clusters": [],
+            },
         )
 
-        from lerim.context.project_identity import ProjectIdentity
-
-        identity = ProjectIdentity(
-            project_id="proj_abc",
-            project_slug="test",
-            repo_path=tmp_path,
-        )
-        result = run_maintain(
+        result, details = run_maintain(
             context_db_path=tmp_path / "context.sqlite3",
             project_identity=identity,
-            session_id="sess_1",
-            model=model,
+            session_id="maintain-test",
+            return_details=True,
         )
+
         assert result.completion_summary == "ok"
+        assert isinstance(details, MaintainRunDetails)
+        assert details.done is True
+        assert details.events[0].action == "final_result"
 
-    def test_return_messages_true(self, tmp_path, monkeypatch):
-        model = MagicMock()
-        mock_result = MagicMock()
-        mock_result.output = MaintainResult(completion_summary="ok")
-        mock_result.all_messages.return_value = ["msg1"]
 
-        mock_agent = MagicMock()
-        mock_agent.run_sync.return_value = mock_result
-        monkeypatch.setattr(
-            "lerim.agents.maintain.build_maintain_agent",
-            lambda _m: mock_agent,
+class TestMaintainGraphValidation:
+    """Tests for BAML action-plan validation before mutation."""
+
+    def test_episode_revision_requires_complete_episode_fields(self):
+        feedback = _validate_action_plan_for_records(
+            {
+                "actions": [
+                    {
+                        "action_type": "revise",
+                        "record_id": "rec_episode",
+                        "patch": {
+                            "kind": "episode",
+                            "title": "Storage boundary guidance",
+                            "body": "Keep product context and queue state persistence separate.",
+                            "outcomes": "Storage boundaries stay separate.",
+                        },
+                    }
+                ]
+            },
+            records=[
+                {
+                    "record_id": "rec_episode",
+                    "kind": "episode",
+                    "title": "Verbose episode",
+                    "body": "Verbose session story.",
+                }
+            ],
         )
 
-        from lerim.context.project_identity import ProjectIdentity
+        assert feedback
+        assert "must include non-empty" in feedback
 
-        identity = ProjectIdentity(
-            project_id="proj_abc",
-            project_slug="test",
-            repo_path=tmp_path,
+    def test_retries_schema_valid_but_incomplete_plan(self):
+        calls: list[str] = []
+
+        def fake_call(instruction: str):
+            calls.append(instruction)
+            if len(calls) == 1:
+                return {
+                    "actions": [
+                        {
+                            "action_type": "revise",
+                            "record_id": "rec_episode",
+                            "patch": {
+                                "kind": "episode",
+                                "title": "Storage boundary guidance",
+                                "body": "Keep product context and queue state persistence separate.",
+                                "outcomes": "Storage boundaries stay separate.",
+                            },
+                        }
+                    ]
+                }
+            return {
+                "actions": [
+                    {
+                        "action_type": "revise",
+                        "record_id": "rec_episode",
+                        "patch": {
+                            "kind": "episode",
+                            "title": "Storage boundary guidance",
+                            "body": "Keep product context and queue state persistence separate.",
+                            "user_intent": "Preserve the storage boundary decision context.",
+                            "what_happened": "The session confirmed separate persistence paths.",
+                            "outcomes": "Product context and queue state remain separated.",
+                        },
+                    }
+                ]
+            }
+
+        result, observations, attempts = _call_baml_with_retries(
+            fake_call,
+            stage="review_health",
+            progress=False,
+            run_instruction="Keep records compact.",
+            validate_result=lambda result: _validate_action_plan_for_records(
+                result,
+                records=[
+                    {
+                        "record_id": "rec_episode",
+                        "kind": "episode",
+                        "title": "Verbose episode",
+                        "body": "Verbose session story.",
+                    }
+                ],
+            ),
         )
-        output, messages = run_maintain(
+
+        assert attempts == 2
+        assert len(calls) == 2
+        assert "Previous structured output was unsafe" in calls[1]
+        assert observations[0]["action"] == "model_retry"
+        assert _validate_action_plan_for_records(
+            result,
+            records=[
+                {
+                    "record_id": "rec_episode",
+                    "kind": "episode",
+                    "title": "Verbose episode",
+                    "body": "Verbose session story.",
+                }
+            ],
+        ) is None
+
+
+class TestMaintainInventory:
+    """Tests for maintain inventory helpers."""
+
+    def test_record_search_query_uses_typed_fields(self):
+        query = record_search_query(
+            {
+                "title": "Retry budget",
+                "body": "Persist retry state.",
+                "decision": "Use job metadata.",
+                "why": "Restarts need shared state.",
+            }
+        )
+        assert "Retry budget" in query
+        assert "Use job metadata" in query
+        assert "Restarts need shared state" in query
+
+    def test_similarity_clusters_are_project_wide_neighbors(self, tmp_path, monkeypatch):
+        identity = _identity(tmp_path)
+        records = [
+            {
+                "record_id": "rec_a",
+                "kind": "decision",
+                "title": "Persist retry state",
+                "body": "A",
+                "updated_at": "3",
+            },
+            {
+                "record_id": "rec_b",
+                "kind": "decision",
+                "title": "Retry state survives restart",
+                "body": "B",
+                "updated_at": "2",
+            },
+            {
+                "record_id": "rec_c",
+                "kind": "fact",
+                "title": "Unrelated",
+                "body": "C",
+                "updated_at": "1",
+            },
+        ]
+
+        def fake_search(self, **kwargs):
+            query = str(kwargs["query"])
+            if "Persist retry" in query:
+                return [SimpleNamespace(record_id="rec_a"), SimpleNamespace(record_id="rec_b")]
+            if "survives restart" in query:
+                return [SimpleNamespace(record_id="rec_b"), SimpleNamespace(record_id="rec_a")]
+            return [SimpleNamespace(record_id="rec_c")]
+
+        monkeypatch.setattr(ContextStore, "search", fake_search)
+        clusters = build_similarity_clusters(
             context_db_path=tmp_path / "context.sqlite3",
             project_identity=identity,
-            session_id="sess_1",
-            model=model,
-            return_messages=True,
+            records=records,
         )
-        assert output.completion_summary == "ok"
-        assert messages == ["msg1"]
+
+        assert len(clusters) == 1
+        assert set(clusters[0]["record_ids"]) == {"rec_a", "rec_b"}
+
+    def test_similarity_clusters_require_mutual_same_kind_neighbors(
+        self, tmp_path, monkeypatch
+    ):
+        identity = _identity(tmp_path)
+        records = [
+            {
+                "record_id": "rec_a",
+                "kind": "decision",
+                "title": "Persist retry state",
+                "body": "A",
+                "updated_at": "3",
+            },
+            {
+                "record_id": "rec_b",
+                "kind": "decision",
+                "title": "Retry state survives restart",
+                "body": "B",
+                "updated_at": "2",
+            },
+            {
+                "record_id": "rec_c",
+                "kind": "fact",
+                "title": "Retry metrics are emitted",
+                "body": "C",
+                "updated_at": "1",
+            },
+        ]
+
+        def fake_search(self, **kwargs):
+            query = str(kwargs["query"])
+            if "Persist retry" in query:
+                return [SimpleNamespace(record_id="rec_a"), SimpleNamespace(record_id="rec_b")]
+            if "survives restart" in query:
+                return [SimpleNamespace(record_id="rec_b")]
+            return [SimpleNamespace(record_id="rec_c"), SimpleNamespace(record_id="rec_a")]
+
+        monkeypatch.setattr(ContextStore, "search", fake_search)
+
+        clusters = build_similarity_clusters(
+            context_db_path=tmp_path / "context.sqlite3",
+            project_identity=identity,
+            records=records,
+        )
+
+        assert clusters == []
+
+    def test_health_batches_skip_records_with_prior_actions(self):
+        batches = build_health_batches(
+            records=[
+                {"record_id": "rec_clustered", "title": "A", "body": "A"},
+                {"record_id": "rec_single", "title": "B", "body": "B"},
+            ],
+            excluded_record_ids={"rec_clustered"},
+            batch_size=10,
+        )
+        assert [[record["record_id"] for record in batch] for batch in batches] == [["rec_single"]]
+
+
+class TestMaintainOperations:
+    """Tests for validated maintain mutation application."""
+
+    def test_applies_supersede_only_for_fetched_records(self, tmp_path):
+        identity = _identity(tmp_path)
+        store = ContextStore(tmp_path / "context.sqlite3")
+        store.initialize()
+        store.register_project(identity)
+        _seed_session(store, identity.project_id, "seed")
+        _seed_session(store, identity.project_id, "maintain")
+        weak = store.create_record(
+            project_id=identity.project_id,
+            session_id="seed",
+            record_id="rec_weak",
+            kind="decision",
+            title="Persist retry state",
+            body="Persist retry state in metadata.",
+            decision="Persist retry state.",
+            why="Workers need restart support.",
+        )
+        strong = store.create_record(
+            project_id=identity.project_id,
+            session_id="seed",
+            record_id="rec_strong",
+            kind="decision",
+            title="Persist retry budget in job metadata",
+            body="Persist retry budget in job metadata so retries survive restarts.",
+            decision="Persist retry budget in job metadata.",
+            why="Retries must survive restarts.",
+        )
+
+        summary = apply_maintain_action_plans(
+            context_db_path=store.db_path,
+            project_identity=identity,
+            session_id="maintain",
+            evidence_record_ids={str(weak["record_id"]), str(strong["record_id"])},
+            action_plans=[
+                {
+                    "actions": [
+                        {
+                            "action_type": "supersede",
+                            "record_id": "rec_weak",
+                            "replacement_record_id": "rec_strong",
+                            "reason": "stronger duplicate",
+                        }
+                    ]
+                }
+            ],
+        )
+
+        updated = store.fetch_record("rec_weak", project_ids=[identity.project_id])
+        assert summary.records_updated == 1
+        assert updated["superseded_by_record_id"] == "rec_strong"
+
+    def test_rejects_unfetched_mutation(self, tmp_path):
+        identity = _identity(tmp_path)
+        summary = apply_maintain_action_plans(
+            context_db_path=tmp_path / "context.sqlite3",
+            project_identity=identity,
+            session_id="maintain",
+            evidence_record_ids=set(),
+            action_plans=[
+                {
+                    "actions": [
+                        {
+                            "action_type": "archive",
+                            "record_id": "rec_missing",
+                            "reason": "not fetched",
+                        }
+                    ]
+                }
+            ],
+        )
+
+        assert summary.records_archived == 0
+        assert summary.observations[0]["ok"] is False
+        assert "unfetched_record" in summary.observations[0]["content"]
+
+    def test_rejects_revision_kind_change(self, tmp_path):
+        identity = _identity(tmp_path)
+        store = ContextStore(tmp_path / "context.sqlite3")
+        store.initialize()
+        store.register_project(identity)
+        _seed_session(store, identity.project_id, "seed")
+        _seed_session(store, identity.project_id, "maintain")
+        record = store.create_record(
+            project_id=identity.project_id,
+            session_id="seed",
+            record_id="rec_decision",
+            kind="decision",
+            title="Persist retry state",
+            body="Persist retry state in metadata.",
+            decision="Persist retry state.",
+            why="Workers need restart support.",
+        )
+
+        summary = apply_maintain_action_plans(
+            context_db_path=store.db_path,
+            project_identity=identity,
+            session_id="maintain",
+            evidence_record_ids={str(record["record_id"])},
+            action_plans=[
+                {
+                    "actions": [
+                        {
+                            "action_type": "revise",
+                            "record_id": "rec_decision",
+                            "reason": "bad patch",
+                            "patch": {
+                                "kind": "fact",
+                                "title": "Retry state",
+                                "body": "Retry state lives in metadata.",
+                            },
+                        }
+                    ]
+                }
+            ],
+        )
+
+        fetched = store.fetch_record("rec_decision", project_ids=[identity.project_id])
+        assert summary.records_updated == 0
+        assert fetched["kind"] == "decision"
+        assert summary.observations[0]["ok"] is False
+        assert "kind_change_not_allowed" in summary.observations[0]["content"]

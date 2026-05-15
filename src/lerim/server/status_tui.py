@@ -130,16 +130,15 @@ def _render_activity_line(item: dict[str, Any]) -> str:
 
     if op == "maintain":
         counts = item.get("maintain_counts") or {}
-        merged = int(counts.get("merged") or 0)
+        created = int(counts.get("created") or 0)
+        updated = int(counts.get("updated") or 0)
         archived = int(counts.get("archived") or 0)
-        consolidated = int(counts.get("consolidated") or 0)
-        unchanged = int(counts.get("unchanged") or 0)
         new = int(item.get("records_created") or 0)
         upd = int(item.get("records_updated") or 0)
         arc = int(item.get("records_archived") or 0)
         base = (
             f"{when_txt} {project} | maintain/{status} | "
-            f"merged {merged}, archived {archived}, consolidated {consolidated}, unchanged {unchanged} | "
+            f"created {created}, updated {updated}, archived {archived} | "
             f"+{new} ~{upd} -{arc}"
         )
     else:

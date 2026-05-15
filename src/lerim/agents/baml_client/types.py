@@ -37,7 +37,7 @@ def get_checks(checks: typing.Dict[CheckName, Check]) -> typing.List[Check]:
 def all_succeeded(checks: typing.Dict[CheckName, Check]) -> bool:
     return all(check.status == "succeeded" for check in get_checks(checks))
 # #########################################################################
-# Generated enums (3)
+# Generated enums (5)
 # #########################################################################
 
 class FindingLevel(str, Enum):
@@ -48,6 +48,20 @@ class FindingLevel(str, Enum):
     CONSTRAINT = "CONSTRAINT"
     FACT = "FACT"
     IMPLEMENTATION = "IMPLEMENTATION"
+
+class MaintainActionType(str, Enum):
+    NOOP = "NOOP"
+    REVISE = "REVISE"
+    ARCHIVE = "ARCHIVE"
+    SUPERSEDE = "SUPERSEDE"
+
+class MaintainRecordKind(str, Enum):
+    DECISION = "DECISION"
+    PREFERENCE = "PREFERENCE"
+    CONSTRAINT = "CONSTRAINT"
+    FACT = "FACT"
+    REFERENCE = "REFERENCE"
+    EPISODE = "EPISODE"
 
 class RecordKind(str, Enum):
     DECISION = "DECISION"
@@ -61,7 +75,7 @@ class RecordStatus(str, Enum):
     ARCHIVED = "ARCHIVED"
 
 # #########################################################################
-# Generated classes (5)
+# Generated classes (8)
 # #########################################################################
 
 class DurableRecordDraft(BaseModel):
@@ -83,6 +97,32 @@ class EpisodeDraft(BaseModel):
     user_intent: typing.Optional[str] = Field(default=None, description='What the user wanted in this source session. Runtime fills a generic fallback if omitted.')
     what_happened: typing.Optional[str] = Field(default=None, description='What the session actually did. Runtime fills a generic fallback if omitted.')
     outcomes: typing.Optional[str] = Field(default=None, description='Optional concise outcome.')
+
+class MaintainAction(BaseModel):
+    action_type: MaintainActionType
+    record_id: str
+    replacement_record_id: typing.Optional[str] = None
+    reason: str
+    patch: typing.Optional["MaintainRecordPatch"] = None
+
+class MaintainActionPlan(BaseModel):
+    actions: typing.List["MaintainAction"]
+    completion_summary: typing.Optional[str] = None
+
+class MaintainRecordPatch(BaseModel):
+    kind: MaintainRecordKind
+    title: str
+    body: str
+    status: typing.Optional[RecordStatus] = None
+    valid_from: typing.Optional[str] = None
+    valid_until: typing.Optional[str] = None
+    decision: typing.Optional[str] = None
+    why: typing.Optional[str] = None
+    alternatives: typing.Optional[str] = None
+    consequences: typing.Optional[str] = None
+    user_intent: typing.Optional[str] = None
+    what_happened: typing.Optional[str] = None
+    outcomes: typing.Optional[str] = None
 
 class SynthesizedExtraction(BaseModel):
     episode: "EpisodeDraft" = Field(description='Exactly one current-session episode record draft.')

@@ -37,16 +37,18 @@ The sync extractor is a BAML plus LangGraph graph. It reads deterministic trace
 windows, scans each window into typed findings, synthesizes records once, and
 persists them through the context store.
 
-The maintain, ask, and working-memory flows use PydanticAI. Their semantic
-context tools are:
+Maintain is also a BAML plus LangGraph graph. It loads active records, builds
+semantic-neighbor clusters, reviews each cluster with BAML, reviews records not
+already targeted by a cluster action for single-record health issues, then
+applies validated archive, revise, and supersede operations through the context
+store.
 
+Ask uses PydanticAI with semantic retrieval tools:
+
+- `count_context`
 - `list_context`
 - `search_context`
 - `get_context`
-- `revise_context`
-- `archive_context`
-- `supersede_context`
-- `count_context`
 
 Retrieval is hybrid:
 

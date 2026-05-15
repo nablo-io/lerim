@@ -837,10 +837,9 @@ def _normalize_activity_item(run: dict[str, Any]) -> dict[str, Any]:
         base.update(
             {
                 "maintain_counts": {
-                    "merged": int(counts.get("merged") or 0),
+                    "created": int(counts.get("created") or 0),
+                    "updated": int(counts.get("updated") or 0),
                     "archived": int(counts.get("archived") or 0),
-                    "consolidated": int(counts.get("consolidated") or 0),
-                    "unchanged": int(counts.get("unchanged") or 0),
                 },
                 "records_created": int(maintain_metrics.get("records_created") or 0),
                 "records_updated": int(maintain_metrics.get("records_updated") or 0),

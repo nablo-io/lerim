@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
@@ -11,12 +11,8 @@ from pydantic_ai import ModelRetry, RunContext
 
 from lerim.context import ContextStore, ProjectIdentity
 from lerim.context.spec import (
-    ALLOWED_KINDS,
-    ALLOWED_STATUSES,
-    RECORD_TYPED_FIELDS,
     normalize_record_kind,
     normalize_record_status,
-    record_validation_message,
 )
 
 DetailLevel = Literal["concise", "detailed"]
@@ -30,7 +26,6 @@ class ContextDeps:
     project_identity: ProjectIdentity
     session_id: str
     project_ids: list[str] | None = None
-    fetched_context_record_ids: set[str] = field(default_factory=set)
 
 
 def _store(ctx: RunContext[ContextDeps]) -> ContextStore:
@@ -290,8 +285,6 @@ def get_context(
         )
         if record is None:
             continue
-        fetched_record_id = str(record["record_id"])
-        ctx.deps.fetched_context_record_ids.add(fetched_record_id)
         if mode == "concise":
             records.append(
                 {
@@ -319,25 +312,6 @@ def get_context(
     return json.dumps(
         {"count": len(records), "records": records}, ensure_ascii=True, indent=2
     )
-
-
-def _require_fetched_context_records(
-    ctx: RunContext[ContextDeps], tool_name: str, *record_ids: str
-) -> list[str]:
-    """Require mutating context tools to operate only on fetched records."""
-    normalized_ids = [str(record_id or "").strip() for record_id in record_ids]
-    missing_ids = [
-        record_id
-        for record_id in normalized_ids
-        if not record_id or record_id not in ctx.deps.fetched_context_record_ids
-    ]
-    if missing_ids:
-        missing_text = ", ".join(record_id or "<blank>" for record_id in missing_ids)
-        raise ModelRetry(
-            f"{tool_name} can only mutate records fetched by get_context in this run. "
-            f"Fetch the full record(s) first, then retry. Unfetched record_id(s): {missing_text}."
-        )
-    return normalized_ids
 
 
 def _normalize_kind(kind: str) -> str:
@@ -418,233 +392,6 @@ def _filters(
         _normalize_status(str(data["status"])) if data.get("status") else None
     )
     return data
-
-
-def _context_changes(
-    *,
-    kind: str,
-    title: str,
-    body: str,
-    status: str | None = "active",
-    valid_from: str | None = None,
-    valid_until: str | None = None,
-    decision: str | None = None,
-    why: str | None = None,
-    alternatives: str | None = None,
-    consequences: str | None = None,
-    user_intent: str | None = None,
-    what_happened: str | None = None,
-    outcomes: str | None = None,
-) -> dict[str, Any]:
-    """Convert flat tool arguments into store fields."""
-    data = {
-        "kind": _clean_scalar(kind),
-        "title": title,
-        "body": body,
-        "status": _clean_scalar(status),
-        "valid_from": _clean_scalar(valid_from),
-        "valid_until": _clean_scalar(valid_until),
-        "decision": decision,
-        "why": why,
-        "alternatives": alternatives,
-        "consequences": consequences,
-        "user_intent": user_intent,
-        "what_happened": what_happened,
-        "outcomes": outcomes,
-    }
-    changes: dict[str, Any] = {
-        "kind": _normalize_kind(str(data["kind"] or "")),
-        "title": str(data["title"] or ""),
-        "body": str(data["body"] or ""),
-        "status": _normalize_status(str(data["status"] or "active")),
-        "valid_from": data.pop("valid_from") or None,
-        "valid_until": data.pop("valid_until") or None,
-    }
-    for field_name in RECORD_TYPED_FIELDS:
-        changes[field_name] = data.get(field_name) or None
-    return changes
-
-
-def _maybe_raise_record_retry(exc: ValueError) -> None:
-    """Convert record-quality validation errors into guided model retries."""
-    code = str(exc or "").strip()
-    if code == "no_changes":
-        raise ModelRetry(
-            "revise_context needs at least one meaningful field change. "
-            "Fetch the record, compare it to your intended update, then retry only if something should change."
-        ) from exc
-    message = record_validation_message(code)
-    if message:
-        raise ModelRetry(message) from exc
-    if code.startswith("invalid_kind:"):
-        raise ModelRetry(
-            f"Record kind is invalid. Use one of: {', '.join(ALLOWED_KINDS)}."
-        ) from exc
-    if code.startswith("invalid_status:"):
-        raise ModelRetry(
-            f"Record status must be one of: {', '.join(ALLOWED_STATUSES)}."
-        ) from exc
-
-
-def revise_context(
-    ctx: RunContext[ContextDeps],
-    record_id: str,
-    reason: str,
-    kind: str,
-    title: str,
-    body: str,
-    status: str | None = "",
-    valid_from: str | None = "",
-    valid_until: str | None = "",
-    decision: str | None = None,
-    why: str | None = None,
-    alternatives: str | None = None,
-    consequences: str | None = None,
-    user_intent: str | None = None,
-    what_happened: str | None = None,
-    outcomes: str | None = None,
-) -> str:
-    """Revise an existing context record with a complete improved payload."""
-    [target_record_id] = _require_fetched_context_records(
-        ctx, "revise_context", record_id
-    )
-    store = _store(ctx)
-    existing = store.fetch_record(
-        target_record_id,
-        project_ids=ctx.deps.project_ids or [ctx.deps.project_identity.project_id],
-        include_versions=False,
-    )
-    if existing is None:
-        raise ModelRetry(
-            "The record to revise does not exist in the current project scope. "
-            "Search or list context again, fetch the target, then retry with its record_id."
-        )
-    status_value = _clean_scalar(status)
-    valid_from_value = _clean_scalar(valid_from)
-    valid_until_value = _clean_scalar(valid_until)
-    changes = _context_changes(
-        kind=kind,
-        title=title,
-        body=body,
-        status=status_value if status_value is not None else existing["status"],
-        valid_from=(
-            None
-            if valid_from is None
-            else valid_from_value
-            if valid_from_value is not None
-            else existing["valid_from"]
-        ),
-        valid_until=(
-            None
-            if valid_until is None
-            else valid_until_value
-            if valid_until_value is not None
-            else existing["valid_until"]
-        ),
-        decision=decision,
-        why=why,
-        alternatives=alternatives,
-        consequences=consequences,
-        user_intent=user_intent,
-        what_happened=what_happened,
-        outcomes=outcomes,
-    )
-    if changes["kind"] != existing["kind"]:
-        raise ModelRetry(
-            "revise_context cannot change a record's kind. "
-            "Create a new context record when the corrected context belongs to a different kind."
-        )
-    try:
-        result = store.update_record(
-            record_id=target_record_id,
-            session_id=ctx.deps.session_id,
-            project_ids=ctx.deps.project_ids or [ctx.deps.project_identity.project_id],
-            changes=changes,
-            change_reason=str(reason or "").strip() or None,
-        )
-    except ValueError as exc:
-        _maybe_raise_record_retry(exc)
-        raise
-    return json.dumps({"ok": True, "result": result}, ensure_ascii=True, indent=2)
-
-
-def archive_context(
-    ctx: RunContext[ContextDeps],
-    record_id: str,
-    reason: str = "",
-) -> str:
-    """Archive low-value or obsolete context.
-
-    Args:
-        record_id: Record to archive.
-        reason: Short reason for archiving.
-    """
-    [target_record_id] = _require_fetched_context_records(
-        ctx, "archive_context", record_id
-    )
-    store = _store(ctx)
-    try:
-        result = store.archive_record(
-            record_id=target_record_id,
-            session_id=ctx.deps.session_id,
-            project_ids=ctx.deps.project_ids or [ctx.deps.project_identity.project_id],
-            reason=str(reason or "").strip() or None,
-        )
-    except ValueError as exc:
-        if str(exc).startswith("refuse_archive_recent_active_record:"):
-            raise ModelRetry(
-                "Do not archive a fresh active fact or decision directly. "
-                "Use supersede_context when it is a duplicate, or leave it active."
-            ) from exc
-        raise
-    return json.dumps({"ok": True, "result": result}, ensure_ascii=True, indent=2)
-
-
-def supersede_context(
-    ctx: RunContext[ContextDeps],
-    record_id: str,
-    replacement_record_id: str,
-    reason: str = "",
-    valid_until: str = "",
-) -> str:
-    """Mark one context record as replaced by another.
-
-    Args:
-        record_id: Older record being replaced.
-        replacement_record_id: Newer record that replaces it.
-        reason: Short reason for supersession.
-        valid_until: Optional validity end timestamp for the older record.
-    """
-    target_record_id, target_replacement_record_id = _require_fetched_context_records(
-        ctx, "supersede_context", record_id, replacement_record_id
-    )
-    store = _store(ctx)
-    try:
-        result = store.supersede_record(
-            record_id=target_record_id,
-            session_id=ctx.deps.session_id,
-            project_ids=ctx.deps.project_ids or [ctx.deps.project_identity.project_id],
-            replacement_record_id=target_replacement_record_id,
-            reason=str(reason or "").strip() or None,
-            valid_until=str(valid_until or "").strip() or None,
-        )
-    except ValueError as exc:
-        message = str(exc)
-        if message.startswith("replacement_record_not_found:"):
-            raise ModelRetry(
-                "The replacement record does not exist in the current project scope. "
-                "Search or list context again, fetch the replacement, then retry with its record_id."
-            ) from exc
-        if message.startswith("record_not_found:") or message.startswith(
-            "record_out_of_scope:"
-        ):
-            raise ModelRetry(
-                "The record to supersede does not exist in the current project scope. "
-                "Search or list context again, fetch the target, then retry with its record_id."
-            ) from exc
-        _maybe_raise_record_retry(exc)
-        raise
-    return json.dumps({"ok": True, "result": result}, ensure_ascii=True, indent=2)
 
 
 if __name__ == "__main__":

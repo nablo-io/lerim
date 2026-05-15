@@ -8,7 +8,7 @@ import pytest
 from tests.integration.maintain.helpers import load_maintain_expectation, run_maintain_case
 from tests.live_helpers import (
     FRAMEWORK_TOOL_NAMES,
-    MAINTAIN_TOOL_NAMES,
+    MAINTAIN_EVENT_NAMES,
     assert_clean_context_schema,
     assert_quality_metrics,
     audit_context_db,
@@ -57,12 +57,12 @@ def test_maintain_duplicate_durable_records_superseded(
         ],
     )
 
-    tool_names = outcome.tool_names
-    assert set(tool_names).issubset(MAINTAIN_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    for tool_name in expectation["must_use_tools"]:
-        assert tool_name in tool_names
-    for tool_name in expectation["must_not_use_tools"]:
-        assert tool_name not in tool_names
+    event_names = outcome.event_names
+    assert set(event_names).issubset(MAINTAIN_EVENT_NAMES | FRAMEWORK_TOOL_NAMES)
+    for event_name in expectation["must_use_events"]:
+        assert event_name in event_names
+    for event_name in expectation["must_not_use_events"]:
+        assert event_name not in event_names
 
     assert outcome.result.completion_summary.strip()
     weak = next(record for record in outcome.records if record["record_id"] == "rec_storage_boundary_weak")
@@ -126,12 +126,12 @@ def test_maintain_fresh_duplicate_should_not_be_archived(
         ],
     )
 
-    tool_names = outcome.tool_names
-    assert set(tool_names).issubset(MAINTAIN_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    for tool_name in expectation["must_use_tools"]:
-        assert tool_name in tool_names
-    for tool_name in expectation["must_not_use_tools"]:
-        assert tool_name not in tool_names
+    event_names = outcome.event_names
+    assert set(event_names).issubset(MAINTAIN_EVENT_NAMES | FRAMEWORK_TOOL_NAMES)
+    for event_name in expectation["must_use_events"]:
+        assert event_name in event_names
+    for event_name in expectation["must_not_use_events"]:
+        assert event_name not in event_names
 
     weak = next(record for record in outcome.records if record["record_id"] == "rec_retry_budget_weak")
     strong = next(record for record in outcome.records if record["record_id"] == "rec_retry_budget_strong")
@@ -190,12 +190,12 @@ def test_maintain_obsolete_fact_replaced_by_new_truth(
         ],
     )
 
-    tool_names = outcome.tool_names
-    assert set(tool_names).issubset(MAINTAIN_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    for tool_name in expectation["must_use_tools"]:
-        assert tool_name in tool_names
-    for tool_name in expectation["must_not_use_tools"]:
-        assert tool_name not in tool_names
+    event_names = outcome.event_names
+    assert set(event_names).issubset(MAINTAIN_EVENT_NAMES | FRAMEWORK_TOOL_NAMES)
+    for event_name in expectation["must_use_events"]:
+        assert event_name in event_names
+    for event_name in expectation["must_not_use_events"]:
+        assert event_name not in event_names
 
     old_record = next(record for record in outcome.records if record["record_id"] == "rec_old_lease_truth")
     new_record = next(record for record in outcome.records if record["record_id"] == "rec_new_lease_truth")
@@ -255,12 +255,12 @@ def test_maintain_old_capability_gap_superseded_by_newer_support(
         ],
     )
 
-    tool_names = outcome.tool_names
-    assert set(tool_names).issubset(MAINTAIN_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    for tool_name in expectation["must_use_tools"]:
-        assert tool_name in tool_names
-    for tool_name in expectation["must_not_use_tools"]:
-        assert tool_name not in tool_names
+    event_names = outcome.event_names
+    assert set(event_names).issubset(MAINTAIN_EVENT_NAMES | FRAMEWORK_TOOL_NAMES)
+    for event_name in expectation["must_use_events"]:
+        assert event_name in event_names
+    for event_name in expectation["must_not_use_events"]:
+        assert event_name not in event_names
 
     old_record = next(record for record in outcome.records if record["record_id"] == "rec_old_replay_gap")
     new_record = next(record for record in outcome.records if record["record_id"] == "rec_new_replay_support")
@@ -314,12 +314,12 @@ def test_maintain_no_change_when_store_is_already_clean(
         ],
     )
 
-    tool_names = outcome.tool_names
-    assert set(tool_names).issubset(MAINTAIN_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    for tool_name in expectation["must_use_tools"]:
-        assert tool_name in tool_names
-    for tool_name in expectation["must_not_use_tools"]:
-        assert tool_name not in tool_names
+    event_names = outcome.event_names
+    assert set(event_names).issubset(MAINTAIN_EVENT_NAMES | FRAMEWORK_TOOL_NAMES)
+    for event_name in expectation["must_use_events"]:
+        assert event_name in event_names
+    for event_name in expectation["must_not_use_events"]:
+        assert event_name not in event_names
 
     assert outcome.result.completion_summary.strip()
     assert outcome.changed_version_rows == []
@@ -367,12 +367,12 @@ def test_maintain_healthy_fresh_record_is_true_noop(
         ],
     )
 
-    tool_names = outcome.tool_names
-    assert set(tool_names).issubset(MAINTAIN_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    for tool_name in expectation["must_use_tools"]:
-        assert tool_name in tool_names
-    for tool_name in expectation["must_not_use_tools"]:
-        assert tool_name not in tool_names
+    event_names = outcome.event_names
+    assert set(event_names).issubset(MAINTAIN_EVENT_NAMES | FRAMEWORK_TOOL_NAMES)
+    for event_name in expectation["must_use_events"]:
+        assert event_name in event_names
+    for event_name in expectation["must_not_use_events"]:
+        assert event_name not in event_names
     record = next(record for record in outcome.records if record["record_id"] == "rec_fresh_clean_decision")
     assert outcome.changed_version_rows == []
     assert len(record["versions"]) == 1
@@ -411,12 +411,12 @@ def test_maintain_obsolete_low_value_durable_archived(
         ],
     )
 
-    tool_names = outcome.tool_names
-    assert set(tool_names).issubset(MAINTAIN_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    for tool_name in expectation["must_use_tools"]:
-        assert tool_name in tool_names
-    for tool_name in expectation["must_not_use_tools"]:
-        assert tool_name not in tool_names
+    event_names = outcome.event_names
+    assert set(event_names).issubset(MAINTAIN_EVENT_NAMES | FRAMEWORK_TOOL_NAMES)
+    for event_name in expectation["must_use_events"]:
+        assert event_name in event_names
+    for event_name in expectation["must_not_use_events"]:
+        assert event_name not in event_names
 
     record = next(record for record in outcome.records if record["record_id"] == "rec_obsolete_reference")
     assert record["status"] == "archived"
@@ -501,12 +501,12 @@ def test_maintain_semantic_duplicate_found_via_search(
         seed_records=seed_records,
     )
 
-    tool_names = outcome.tool_names
-    assert set(tool_names).issubset(MAINTAIN_TOOL_NAMES | FRAMEWORK_TOOL_NAMES)
-    for tool_name in expectation["must_use_tools"]:
-        assert tool_name in tool_names
-    for tool_name in expectation["must_not_use_tools"]:
-        assert tool_name not in tool_names
+    event_names = outcome.event_names
+    assert set(event_names).issubset(MAINTAIN_EVENT_NAMES | FRAMEWORK_TOOL_NAMES)
+    for event_name in expectation["must_use_events"]:
+        assert event_name in event_names
+    for event_name in expectation["must_not_use_events"]:
+        assert event_name not in event_names
 
     weak = next(record for record in outcome.records if record["record_id"] == "rec_retry_handoff_weak")
     assert weak["superseded_by_record_id"] == "rec_retry_budget_strong"

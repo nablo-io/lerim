@@ -151,7 +151,6 @@ def _patch_fake_runtime(
                 }
             )
             behavior = maintain_queue.pop(0) if maintain_queue else {
-                "counts": {"merged": 0, "archived": 0, "consolidated": 0, "unchanged": 1},
                 "records_created": 0,
                 "records_updated": 0,
                 "records_archived": 0,

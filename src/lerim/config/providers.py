@@ -359,8 +359,8 @@ def _build_minimax_anthropic_model(
 
     MiniMax M2.7 emits proper Anthropic ``tool_use`` blocks via the
     ``/anthropic`` endpoint. M2.5's tool calling is broken on both
-    endpoints. This remains the PydanticAI path for maintain, ask, and
-    working-memory flows.
+    endpoints. This remains the PydanticAI path for ask and working-memory
+    flows.
 
     Uses ``AsyncAnthropic(max_retries=5)`` for HTTP-level retries —
     the Anthropic SDK handles 429/5xx natively.

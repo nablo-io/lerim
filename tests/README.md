@@ -81,10 +81,10 @@ Rules:
 - test file names match source file names (without `_adapter`/`_functions` suffix)
 - each subpackage has its own `conftest.py` with domain-specific fixtures
 - agent tool tests also cover source-session provenance defaults so historical traces do not look freshly created when indexed later
-- agent tool tests enforce fetch-before-mutate: `revise_context`, `archive_context`, and `supersede_context` only accept records returned by `get_context` in the same run
 - agent build tests guard the runtime tool contract against documentation and helper drift
 - adapter tests cover compact-trace visibility for canonical message fields and structured event messages without keyword heuristics
 - extract persistence tests cover idempotent replay when a session episode already exists
+- maintain unit tests cover semantic clustering, action validation, and direct `ContextStore` mutation application
 - session catalog tests cover queue claim availability, content-hash refresh/change detection, and stable pagination ordering
 - API/daemon tests cover degraded status reporting when the session catalog is unavailable
 - daemon tests cover transient session-job heartbeat write failures
@@ -116,8 +116,8 @@ The current system is:
 - generated Working Memory artifacts in `~/.lerim/workspace/current/<project_id>/WORKING_MEMORY.md`
 - local semantic retrieval via ONNX embeddings + `sqlite-vec` + FTS5 + RRF
 - extract graph: deterministic window reads, BAML window scan, BAML record synthesis, context-store persistence
-- maintain tools: `list_context`, `search_context`, `get_context`, `revise_context`, `archive_context`, `supersede_context`
-- ask tools: `list_context`, `search_context`, `get_context`, `count_context`
+- maintain graph: active-record inventory, semantic-neighbor clusters, BAML cluster review, BAML health review for records without prior cluster actions, validated store mutations
+- ask tools: `count_context`, `list_context`, `search_context`, `get_context`
 
 ## Fixtures
 

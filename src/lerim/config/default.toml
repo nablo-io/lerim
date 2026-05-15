@@ -29,7 +29,7 @@ api_base = ""
 fallback_models = []  # disabled for now — ensure exact model is used, no silent fallback
 # BAML/LangGraph sync reads deterministic trace windows and derives its
 # extraction budget from the trace size in lerim.agents.extract.windowing.
-max_iters_maintain = 50                # max request turns for maintain flow
+max_iters_maintain = 50                # max BAML calls for maintain flow
 max_iters_ask = 20                     # max request turns for ask flow
 # MiniMax-M2 official sampling preset (from HuggingFace model card):
 # temperature=1.0, top_p=0.95, top_k=40. These are for "agent/tool-calling

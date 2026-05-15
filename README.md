@@ -65,7 +65,7 @@ Lerim fixes that by turning raw traces into reusable context records and making 
 - Background maintenance. `sync` ingests sessions, `maintain` consolidates overlap and archives stale records, `ask` retrieves relevant precedent.
 - Generated Working Memory. `working-memory` keeps a compact Markdown startup view at `~/.lerim/workspace/current/<project_id>/WORKING_MEMORY.md`.
 - Hybrid retrieval. Lerim combines local ONNX embeddings stored through `sqlite-vec` with SQLite FTS5 and RRF fusion.
-- Clean agent tool surface. The runtime exposes semantic DB-era tools like `list_context`, `search_context`, `get_context`, `save_context`, `revise_context`, and `count_context` instead of file CRUD.
+- Clean agent tool surface. Ask exposes semantic DB-era retrieval tools like `count_context`, `list_context`, `search_context`, and `get_context`; sync and maintain use BAML/LangGraph graphs over the same SQLite context store.
 
 ## Quick Start
 
@@ -224,21 +224,20 @@ There is no per-project durable store on disk.
 
 ## Agent Runtime
 
-The sync extractor uses a BAML plus LangGraph graph under
-`src/lerim/agents/`. The graph reads deterministic trace windows, asks BAML
-for typed window scans, synthesizes one final record payload, and persists the
-result to SQLite.
+The sync extractor and maintain flow use BAML plus LangGraph graphs under
+`src/lerim/agents/`. Sync reads deterministic trace windows, asks BAML for
+typed window scans, synthesizes one final record payload, and persists the
+result to SQLite. Maintain builds semantic-neighbor clusters from active
+records, asks BAML to review clusters, then asks BAML to review the remaining
+records for single-record health issues before applying validated store
+operations.
 
-The maintain, ask, and working-memory flows still use PydanticAI with a small
-semantic DB-era tool surface:
+Ask still uses PydanticAI with a small semantic DB-era retrieval surface:
 
+- `count_context`
 - `list_context`
 - `search_context`
 - `get_context`
-- `revise_context`
-- `archive_context`
-- `supersede_context`
-- `count_context`
 
 Keeping the surface DB-era and semantic makes the runtime easier to reason
 about and gives smaller future models a cleaner action space for training.

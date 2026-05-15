@@ -7,8 +7,8 @@ clean:
 - **Maintain** (cold path) -- refines existing records offline
 
 Both run automatically in the daemon loop and can also be triggered manually.
-Sync extraction uses the BAML plus LangGraph runtime and the `[roles.agent]`
-role model. Maintain uses the PydanticAI runtime with the same role model.
+Sync extraction and maintain both use BAML plus LangGraph graphs with the
+`[roles.agent]` role model.
 
 ---
 
@@ -55,21 +55,21 @@ lerim sync --max-sessions 10         # limit batch size
 The maintain path runs offline refinement over stored context records,
 iterating over all registered projects:
 
-1. **Browse** -- `list_context()` scans active records in one project scope with exact ordering and filters
-2. **Search** -- `search_context()` finds semantic duplicate candidates or topic-related records when needed
-3. **Inspect** -- `get_context()` loads only the records that may change
-4. **Refine or supersede** -- `revise_context()` and `supersede_context()` improve or replace redundant truth
-5. **Archive low-value** -- `archive_context()` moves junk or routine rows to archived status in the DB
-6. **Keep the store lean** -- the maintainer prefers stronger durable records over a noisy pile of routine episodes
-7. **Compress weak records** -- when records are too verbose or read like session reports, the maintainer should rewrite them into compact reusable context instead of preserving the recap style
+1. **Load inventory** -- read a bounded set of active records in one project scope
+2. **Build candidates** -- use semantic search to connect likely-neighbor records into small clusters
+3. **Review clusters** -- ask BAML to decide whether clustered records are duplicates, replacements, complementary, or false-positive neighbors
+4. **Review health batches** -- ask BAML to inspect records not already targeted by cluster actions for routine episodes, obsolete rows, or verbose session-report style
+5. **Apply validated actions** -- apply only safe archive, revise, or supersede operations through `ContextStore`
+6. **Keep the store lean** -- prefer stronger durable records over a noisy pile of routine episodes
+7. **Compress weak records** -- rewrite useful but verbose records into compact reusable context instead of preserving recap style
 
 ### Request turn limits
 
-The maintain and ask flows use explicit request-turn budgets from config:
+Maintain uses its config budget as a BAML-call cap. Ask uses its config budget as a PydanticAI request-turn cap:
 
 | Flow | Config key | Purpose |
 |------|------------|---------|
-| Maintain | `max_iters_maintain` | Caps maintain agent request turns per run |
+| Maintain | `max_iters_maintain` | Caps maintain BAML calls per run |
 | Ask | `max_iters_ask` | Caps ask agent request turns per query |
 
 ---

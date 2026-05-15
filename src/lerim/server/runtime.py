@@ -1,7 +1,7 @@
 """Runtime orchestrator for Lerim sync, maintain, and ask.
 
-Sync uses the BAML/LangGraph extract harness. Maintain, ask, and working-memory
-synthesis still use PydanticAI until those flows are migrated.
+Sync and maintain use BAML/LangGraph harnesses. Ask and working-memory synthesis
+still use PydanticAI until those flows are migrated.
 """
 
 from __future__ import annotations
@@ -21,13 +21,13 @@ from lerim.agents.contracts import (
     SyncResultContract,
     WorkingMemoryResultContract,
 )
-from lerim.agents.extract import ExtractionRunDetails, run_extraction
+from lerim.agents.extract import ExtractionResult, ExtractionRunDetails, run_extraction
 from lerim.agents.maintain import run_maintain
 from lerim.agents.mlflow_observability import finish_mlflow_run, lerim_mlflow_run
 from lerim.agents.working_memory import run_working_memory_synthesis
 from lerim.config.providers import build_pydantic_model
 from lerim.config.settings import Config, get_config
-from lerim.context import resolve_project_identity
+from lerim.context import ProjectIdentity, resolve_project_identity
 from lerim.working_memory import (
     WORKING_MEMORY_FILENAME,
     WORKING_MEMORY_OPERATION,
@@ -153,6 +153,12 @@ def _write_agent_trace(path: Path, messages: list[ModelMessage]) -> None:
 
 def _write_extract_agent_trace(path: Path, details: ExtractionRunDetails) -> None:
     """Serialize BAML/LangGraph extract events to a stable JSON artifact."""
+    payload = [event.model_dump(mode="json") for event in details.events]
+    path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
+
+
+def _write_graph_agent_trace(path: Path, details: Any) -> None:
+    """Serialize BAML/LangGraph events to a stable JSON artifact."""
     payload = [event.model_dump(mode="json") for event in details.events]
     path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
 
@@ -583,14 +589,11 @@ class LerimRuntime:
                 run_folder=run_folder,
                 request_preview=f"sync:{resolved_session_id}",
             ) as mlflow_run:
-                result, details = run_extraction(
-                    context_db_path=self.config.context_db_path,
+                result, details = self._run_sync_extraction(
                     project_identity=project_identity,
                     session_id=resolved_session_id,
                     trace_path=trace_file,
-                    config=self.config,
                     session_started_at=str(session_meta.get("started_at") or ""),
-                    return_details=True,
                 )
 
                 response_text = (result.completion_summary or "").strip() or "(no response)"
@@ -661,6 +664,42 @@ class LerimRuntime:
             )
             raise
 
+    def _run_sync_extraction(
+        self,
+        *,
+        project_identity: ProjectIdentity,
+        session_id: str,
+        trace_path: Path,
+        session_started_at: str,
+        max_attempts: int = 3,
+    ) -> tuple[ExtractionResult, ExtractionRunDetails]:
+        """Run extraction with bounded retry before any session mutation is written."""
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return run_extraction(
+                    context_db_path=self.config.context_db_path,
+                    project_identity=project_identity,
+                    session_id=session_id,
+                    trace_path=trace_path,
+                    config=self.config,
+                    session_started_at=session_started_at,
+                    return_details=True,
+                )
+            except Exception:
+                if attempt >= max_attempts:
+                    raise
+                counts = _record_change_counts(self.config, session_id)
+                if any(int(value or 0) for value in counts.values()):
+                    raise
+                wait_time = min(2**attempt, 8)
+                logger.warning(
+                    f"[sync] transient extraction failure before writes on attempt "
+                    f"{attempt}/{max_attempts}; retrying in {wait_time}s..."
+                )
+                time.sleep(wait_time)
+
+        raise RuntimeError("sync_extraction_retry_exhausted")
+
     # ------------------------------------------------------------------
     # Maintain flow
     # ------------------------------------------------------------------
@@ -730,19 +769,6 @@ class LerimRuntime:
             {"ts": manifest["started_at"], "event": "started", "run_id": run_id},
         )
 
-        def _primary_builder() -> Any:
-            return build_pydantic_model("agent", config=self.config)
-
-        def _call(model: Any) -> tuple[Any, list[ModelMessage]]:
-            return run_maintain(
-                context_db_path=self.config.context_db_path,
-                project_identity=project_identity,
-                session_id=session_id,
-                model=model,
-                request_limit=self.config.agent_role.max_iters_maintain,
-                return_messages=True,
-            )
-
         try:
             with lerim_mlflow_run(
                 enabled=self.config.mlflow_enabled,
@@ -754,17 +780,20 @@ class LerimRuntime:
                 run_folder=run_folder,
                 request_preview=f"maintain:{session_id}",
             ) as mlflow_run:
-                result, messages = self._run_with_fallback(
-                    flow="maintain",
-                    callable_fn=_call,
-                    model_builders=[_primary_builder],
+                result, details = run_maintain(
+                    context_db_path=self.config.context_db_path,
+                    project_identity=project_identity,
+                    session_id=session_id,
+                    config=self.config,
+                    return_details=True,
+                    max_llm_calls=self.config.agent_role.max_iters_maintain,
                 )
 
                 response_text = (result.completion_summary or "").strip() or "(no response)"
                 _write_text_with_newline(artifact_paths["agent_log"], response_text)
 
                 try:
-                    _write_agent_trace(artifact_paths["agent_trace"], messages)
+                    _write_graph_agent_trace(artifact_paths["agent_trace"], details)
                 except Exception as exc:
                     logger.warning(f"[maintain] Failed to write agent trace: {exc}")
                     artifact_paths["agent_trace"].write_text("[]", encoding="utf-8")
