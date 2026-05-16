@@ -20,6 +20,7 @@ Priority order:
 - `[cloud]`
 - `[agents]`
 - `[projects]`
+- `[project_types]`
 
 ## Important paths
 

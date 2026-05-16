@@ -13,6 +13,7 @@ import pytest
 
 from lerim.config.settings import (
     _deep_merge,
+    _parse_project_types_table,
     _parse_string_table,
     _toml_value,
     _toml_write_dict,
@@ -25,6 +26,7 @@ from lerim.config.settings import (
     remove_legacy_memory_dir,
     save_config_patch,
     reload_config,
+    normalize_project_type,
 )
 
 
@@ -100,6 +102,25 @@ def test_parse_string_table_skips_empty():
     raw = {"good": "/path", "bad": "", "none": None}
     result = _parse_string_table(raw, section="agents")
     assert result == {"good": "/path"}
+
+
+def test_normalize_project_type_defaults_to_supported():
+    """Blank project source types default to supported adapters."""
+    assert normalize_project_type(None) == "supported"
+    assert normalize_project_type("") == "supported"
+    assert normalize_project_type(" Supported ") == "supported"
+
+
+def test_parse_project_types_table_accepts_custom():
+    """Project type config maps project names to supported source modes."""
+    result = _parse_project_types_table({"support": "custom", "app": "supported"})
+    assert result == {"support": "custom", "app": "supported"}
+
+
+def test_parse_project_types_table_rejects_unknown_type():
+    """Project type config rejects undocumented source modes."""
+    with pytest.raises(ValueError, match="project type must be one of"):
+        _parse_project_types_table({"support": "adapter"})
 
 
 # ---------------------------------------------------------------------------

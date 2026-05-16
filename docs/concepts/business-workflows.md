@@ -81,17 +81,19 @@ lerim answer "What release constraints did previous agents discover?"
 
 ## Current source boundary
 
-The open-source package includes the trace-to-context foundation and supported
-source adapters. Customer deployments can adapt the input layer around the
-business traces that matter for a pilot workflow.
+The open-source package includes the trace-to-context foundation, supported
+source adapters, and custom clean-trace folders. Customer pilots can start by
+choosing one workflow, cleaning its traces into Lerim canonical JSONL, and
+registering that folder as a custom project.
 
-For custom agents today, the practical path is `lerim trace import`: export a
-JSON, JSONL, or text trace from the agent run, choose a scope such as `domain`,
-`workspace`, `project`, or `custom`, and let Lerim normalize and ingest it.
-Customer adapters can automate that import step once the pilot workflow is
-clear.
+For custom agents today, the practical path is:
+
+```bash
+lerim project add ~/lerim-traces/support-clean --type custom
+lerim ingest --agent custom
+```
 
 If the source trace contains customer-specific noise or sensitive fields, run a
-customer-owned cleaner before import. Lerim filters for durable business signal,
-but pre-import cleaning is still the right boundary for secrets, regulated data,
-large raw tool outputs, and retention policy.
+customer-owned cleaner before the files enter that folder. Lerim filters for
+durable business signal, but pre-ingest cleaning is still the right boundary for
+secrets, regulated data, large raw tool outputs, and retention policy.

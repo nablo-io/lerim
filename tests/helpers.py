@@ -49,6 +49,7 @@ def make_config(base: Path) -> Config:
         auto_unload=True,
         agents={},
         projects={},
+        project_types={},
         cloud_endpoint="https://api.lerim.dev",
         cloud_token=None,
     )

@@ -4,7 +4,7 @@ Lerim turns agent traces into reusable context across business workflows.
 
 The context model is meant to sit above support, research, operations, revenue,
 custom business agents, and engineering automation. Current adapters cover
-supported sources available today while the broader trace-import layer expands.
+supported sources available today. Custom agents use clean trace folders.
 
 ## Current adapters
 
@@ -22,32 +22,26 @@ It only feeds the extraction flow.
 
 ## Custom and business-agent traces
 
-For a custom agent, the current bridge is explicit import:
+For a custom agent, create a folder of already-clean Lerim canonical JSONL files
+and register it as a custom project:
 
 ```bash
-lerim trace import ./agent-run.jsonl \
-  --source-name support-bot \
-  --source-profile support \
-  --scope-type domain \
-  --scope support
+lerim project add ~/lerim-traces/support-clean --type custom
+lerim ingest --agent custom
 ```
 
-The custom agent or surrounding system produces a JSON, JSONL, or text trace.
-Lerim normalizes that file, writes a canonical compact copy under the Lerim
-workspace, registers the selected scope, and runs ingestion into the shared
-context store.
-
-Built-in adapters monitor known tools automatically. Custom agents currently use
-explicit import unless a customer deployment adds a workflow-specific adapter.
+Each `.jsonl` file is one completed agent or workflow session. Custom mode does
+not run a Lerim adapter and does not compact or normalize files. It reads the
+clean files directly and indexes them as `agent_type=custom`.
 
 For sensitive or very noisy traces, run a customer-owned cleaner before import.
 Lerim can filter reusable signal during ingestion, but it should not be treated
 as the only redaction, privacy, or retention-control layer for arbitrary custom
 source data.
 
-## Custom business trace import
+## Custom business trace cleaning
 
-A customer-specific trace import should preserve enough structure for Lerim to
+A customer-specific cleaner should preserve enough structure for Lerim to
 separate routine activity from reusable context.
 
 Useful fields include:

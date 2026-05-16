@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-05-16
+
+### Added
+- Added custom trace-folder projects with `lerim project add <path> --type custom`.
+- Added direct custom JSONL session discovery with `agent_type=custom`, without platform adapters or compaction.
+- Added custom-agent integration docs with a pasteable cleaner prompt for generating customer-owned trace cleaning scripts.
+- Added per-agent architecture docs with Mermaid flowcharts generated from the compiled LangGraph graphs.
+- Added integration coverage that registers a custom project, writes synthetic traces, runs ingest, and verifies custom sessions/jobs use the original clean trace files.
+
+### Changed
+- Updated README, docs, bundled skill text, and configuration reference around the broader context-compiler positioning and custom-agent trace flow.
+- Extended project config/API/CLI payloads with `supported` and `custom` source types while preserving existing project defaults.
+
 ## [0.2.0] - 2026-05-16
 
 ### Added

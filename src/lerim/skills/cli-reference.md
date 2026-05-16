@@ -76,16 +76,21 @@ lerim init
 
 ### `lerim project` (host-only)
 
-Manage tracked repositories. Project registration only records the repository path.
-There is no project-local Lerim state directory. Durable Lerim context stays in
-`~/.lerim/context.sqlite3`.
+Manage tracked project paths. Project registration only records the path and
+source type. There is no project-local Lerim state directory. Durable Lerim
+context stays in `~/.lerim/context.sqlite3`.
 
 ```bash
 lerim project add ~/codes/my-app       # register a project
 lerim project add .                     # register current directory
+lerim project add ~/traces --type custom # register clean custom traces
 lerim project list                      # show all registered projects
 lerim project remove my-app             # unregister a project
 ```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--type` | `supported` | `supported` for projects whose sessions come from connected adapters; `custom` for folders of already-clean Lerim canonical JSONL traces |
 
 Adding/removing a project restarts the Docker container if running.
 
@@ -172,8 +177,8 @@ lerim connect remove claude               # disconnect Claude
 
 ### `lerim ingest`
 
-Hot-path: discover new agent sessions from connected platforms, enqueue them,
-and run BAML plus LangGraph extraction to create context records.
+Hot-path: discover new sessions from connected platforms and custom clean-trace
+folders, enqueue them, and run extraction to create context records.
 Requires a running server (`lerim up` or `lerim serve`).
 
 **Time window** controls which sessions to scan:
@@ -188,6 +193,7 @@ lerim ingest                          # ingest using configured window (default:
 lerim ingest --window 30d             # ingest last 30 days
 lerim ingest --window all             # ingest everything
 lerim ingest --agent claude,codex     # only ingest these platforms
+lerim ingest --agent custom           # only ingest custom trace folders
 lerim ingest --run-id abc123 --force  # re-extract a specific session
 lerim ingest --since 2026-02-01T00:00:00Z --until 2026-02-08T00:00:00Z
 lerim ingest --no-extract             # index and enqueue only, skip extraction
@@ -215,8 +221,17 @@ Notes:
 
 ### `lerim trace import` (host-only)
 
-Import a JSON, JSONL, or text trace from a custom agent or business workflow,
-normalize it, register the selected scope, and run ingestion.
+Import one JSON, JSONL, or text trace file into an explicit scope.
+
+For ongoing custom-agent workflows, prefer custom project folders:
+
+```bash
+lerim project add ~/lerim-traces/support-clean --type custom
+lerim ingest --agent custom
+```
+
+Use `trace import` only when you intentionally want a one-file import into a
+non-project scope.
 
 ```bash
 lerim trace import ./support-agent-run.jsonl \
@@ -237,9 +252,7 @@ lerim trace import ./support-agent-run.jsonl \
 | `--session-id` | Optional stable session id. Defaults to the normalized trace id |
 
 The imported trace is copied to the Lerim workspace imports directory in compact
-canonical form, then ingested into the shared context store. This is the current
-custom-agent integration point; workflow-specific adapters can automate the
-export-and-import step.
+canonical form, then ingested into the shared context store.
 
 For sensitive or very noisy traces, run a customer-owned cleaner before import.
 Lerim filters for durable signal during ingestion, but it is not the only

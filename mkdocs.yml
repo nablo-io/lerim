@@ -121,6 +121,11 @@ nav:
     - lerim serve: cli/serve.md
     - Background loop: cli/daemon.md
     - lerim dashboard: cli/dashboard.md
+  - Agent Architecture:
+    - Trace Ingestion: agents/trace-ingestion.md
+    - Context Curator: agents/context-curator.md
+    - Context Answerer: agents/context-answerer.md
+    - Context Brief: agents/context-brief.md
   - Configuration:
     - Overview: configuration/overview.md
     - config.toml Reference: configuration/config-toml.md
@@ -128,6 +133,7 @@ nav:
     - Tracing: configuration/tracing.md
   - Guides:
     - Connecting Agents: guides/connecting-agents.md
+    - Custom Trace Folders: guides/custom-trace-folders.md
     - Dashboard: guides/dashboard.md
     - Querying Context: guides/querying-context.md
   - Contributing: contributing/getting-started.md

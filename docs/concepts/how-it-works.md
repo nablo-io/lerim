@@ -6,17 +6,17 @@ Lerim is trace-to-context infrastructure for repeated agent work.
 
 The flow is:
 
-1. adapters read raw agent traces from supported sources
-2. traces are normalized
+1. supported adapters read raw agent traces, or custom projects provide clean canonical traces
+2. supported traces are normalized; custom traces are already clean
 3. the trace ingestor extracts durable context records and drops low-value candidates
 4. the context curator cleans, merges, archives, and supersedes records
 5. the context-brief compiler generates fast startup context from records
 6. the context answerer retrieves records and answers questions
 
-The current package includes supported source adapters. Customer deployments can
-adapt the input layer around business traces such as research briefs, support
-handoffs, incident investigations, revenue workflows, and custom internal agent
-logs.
+The current package includes supported source adapters and custom clean-trace
+folders. Customer deployments can adapt the input layer around business traces
+such as research briefs, support handoffs, incident investigations, revenue
+workflows, and custom internal agent logs.
 
 For operational targets and scale boundaries, see
 [Capacity and SLOs](capacity-and-slos.md).
@@ -25,7 +25,7 @@ For operational targets and scale boundaries, see
 
 ```mermaid
 flowchart TD
-    A["Agent activity sources"] --> B["Source adapters and generic import"]
+    A["Agent activity sources"] --> B["Supported adapters or custom clean folders"]
     B --> C["Session catalog and work queue"]
     C --> D["Ingest"]
     D --> E["Durable-signal filter"]

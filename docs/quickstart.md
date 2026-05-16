@@ -3,9 +3,9 @@
 This is the shortest real path.
 
 The open-source quickstart uses the sources available in the current package.
-Customer deployments can adapt trace imports around a specific business workflow
-such as support escalations, research briefs, incidents, reviews, or revenue
-handoffs.
+Customer deployments can register custom clean-trace folders around a specific
+business workflow such as support escalations, research briefs, incidents,
+reviews, or revenue handoffs.
 
 ## 1. Prepare
 

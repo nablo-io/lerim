@@ -3,7 +3,7 @@
 Lerim has two runtime paths that keep the shared context store accurate and
 clean:
 
-- **Trace ingestion** (hot path) -- processes supported agent traces and extracts context records
+- **Trace ingestion** (hot path) -- processes supported traces or custom clean traces and extracts context records
 - **Context curation** (cold path) -- refines existing records offline
 
 Both run automatically in the daemon loop and can also be triggered manually.
@@ -16,10 +16,10 @@ structured review and synthesis.
 
 The ingestion path turns raw agent traces into structured context records:
 
-1. **Discover** -- adapters scan session directories for new sessions within the time window
+1. **Discover** -- adapters scan supported session directories; custom projects scan clean `.jsonl` folders directly
 2. **Index** -- new sessions are cataloged in `sessions.sqlite3`
 3. **Match to project** -- sessions matching a registered project are enqueued; unmatched sessions are indexed but not extracted
-4. **Compact** -- traces are compacted and cached
+4. **Prepare trace** -- supported traces are compacted and cached; custom traces are read directly because they are already canonical
 5. **Trace-to-context flow** -- the ingest flow reads deterministic trace windows, observes typed findings, filters for durable signal, writes the final context payload, and stores one episode record plus zero or more durable records
 
 ### Record quality contract

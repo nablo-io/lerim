@@ -43,9 +43,11 @@ from lerim.server.docker_runtime import (
 )
 from lerim.config.settings import (
     Config,
+    PROJECT_TYPE_SUPPORTED,
     get_config,
     get_user_config_path,
     load_toml_file,
+    normalize_project_type,
     remove_legacy_memory_dir,
     save_config_patch,
     _write_config_full,
@@ -1308,6 +1310,7 @@ def api_project_list(*, include_paths: bool = True) -> list[dict[str, Any]]:
         item: dict[str, Any] = {
             "name": name,
             "project_id": resolve_project_identity(resolved).project_id,
+            "type": config.project_types.get(name, PROJECT_TYPE_SUPPORTED),
             "exists": resolved.exists(),
         }
         if include_paths:
@@ -1326,17 +1329,31 @@ def _project_config_name(resolved: Path, existing_projects: dict[str, str]) -> s
     return f"{base_name}-{suffix}"
 
 
-def api_project_add(path_str: str, *, include_paths: bool = True) -> dict[str, Any]:
+def api_project_add(
+    path_str: str,
+    *,
+    project_type: str = PROJECT_TYPE_SUPPORTED,
+    include_paths: bool = True,
+) -> dict[str, Any]:
     """Register a project directory and return status."""
     resolved = Path(path_str).expanduser().resolve()
     if not resolved.is_dir():
         message = f"Not a directory: {resolved}" if include_paths else "Not a directory"
         return {"error": message, "name": None}
+    try:
+        resolved_project_type = normalize_project_type(project_type)
+    except ValueError as exc:
+        return {"error": str(exc), "name": None}
 
     config = get_config()
     name = _project_config_name(resolved, config.projects or {})
     # Update config
-    save_config_patch({"projects": {name: str(resolved)}})
+    save_config_patch(
+        {
+            "projects": {name: str(resolved)},
+            "project_types": {name: resolved_project_type},
+        }
+    )
     config = get_config()
     store = _context_store(config)
     identity = resolve_project_identity(resolved)
@@ -1345,6 +1362,7 @@ def api_project_add(path_str: str, *, include_paths: bool = True) -> dict[str, A
     payload: dict[str, Any] = {
         "name": name,
         "project_id": identity.project_id,
+        "type": resolved_project_type,
     }
     if include_paths:
         payload["path"] = str(resolved)
@@ -1367,6 +1385,10 @@ def api_project_remove(name: str) -> dict[str, Any]:
     if isinstance(projects, dict) and name in projects:
         del projects[name]
         existing["projects"] = projects
+    project_types = existing.get("project_types", {})
+    if isinstance(project_types, dict) and name in project_types:
+        del project_types[name]
+        existing["project_types"] = project_types
 
     # Write directly — save_config_patch would re-merge the deleted key
     _write_config_full(existing)

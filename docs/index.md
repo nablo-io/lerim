@@ -8,7 +8,8 @@ Lerim sits above agent workflows, extracts durable signal from their traces, and
 
 The product direction is a context compiler for support, research, operations,
 revenue, custom business agents, and engineering automation. Current adapters
-are one compatibility path while the broader trace-import layer expands.
+are one compatibility path; custom clean-trace folders are the path for other
+agents and business workflows.
 
 If you are evaluating Lerim, start with the workflow: traces in, durable context
 out, cited answers and startup context for future agents.
@@ -40,6 +41,7 @@ The operating model is simple:
 - [Installation](installation.md)
 - [Quickstart](quickstart.md)
 - [Business Workflows](concepts/business-workflows.md)
+- [Custom Trace Folders](guides/custom-trace-folders.md)
 - [How It Works](concepts/how-it-works.md)
 - [Context Brief](concepts/context-brief.md)
 - [CLI Overview](cli/overview.md)

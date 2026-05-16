@@ -1343,6 +1343,7 @@ class TestCmdProject:
         assert code == 0
         text = buf.getvalue()
         assert "myapp" in text
+        assert "supported" in text
         assert ".lerim" not in text
 
     def test_project_list_json(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1370,9 +1371,10 @@ class TestCmdProject:
         monkeypatch.setattr(
             cli,
             "api_project_add",
-            lambda p: {
+            lambda p, **kwargs: {
                 "name": "myapp",
                 "path": p,
+                "type": kwargs.get("project_type", "supported"),
                 "error": None,
             },
         )
@@ -1386,14 +1388,48 @@ class TestCmdProject:
         assert code == 0
         text = buf.getvalue()
         assert "myapp" in text
+        assert "type=supported" in text
         assert ".lerim" not in text
+
+    def test_project_add_custom_type(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Project add forwards the requested custom source type."""
+        captured: dict[str, str] = {}
+
+        def fake_project_add(path: str, **kwargs):
+            captured["path"] = path
+            captured["project_type"] = kwargs["project_type"]
+            return {
+                "name": "support-traces",
+                "path": path,
+                "type": kwargs["project_type"],
+                "error": None,
+            }
+
+        monkeypatch.setattr(cli, "api_project_add", fake_project_add)
+        monkeypatch.setattr(cli, "is_docker_container_running", lambda: False)
+        args = _ns(
+            command="project",
+            json=False,
+            project_action="add",
+            path="/home/user/support-traces",
+            project_type="custom",
+        )
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = cli._cmd_project(args)
+        assert code == 0
+        assert captured == {
+            "path": "/home/user/support-traces",
+            "project_type": "custom",
+        }
+        assert "type=custom" in buf.getvalue()
 
     def test_project_add_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Project add with error response returns 1."""
         monkeypatch.setattr(
             cli,
             "api_project_add",
-            lambda p: {
+            lambda p, **_kwargs: {
                 "error": "path does not exist",
             },
         )
@@ -1412,9 +1448,10 @@ class TestCmdProject:
         monkeypatch.setattr(
             cli,
             "api_project_add",
-            lambda p: {
+            lambda p, **kwargs: {
                 "name": "myapp",
                 "path": p,
+                "type": kwargs.get("project_type", "supported"),
                 "error": None,
             },
         )
@@ -1438,9 +1475,10 @@ class TestCmdProject:
         monkeypatch.setattr(
             cli,
             "api_project_add",
-            lambda p: {
+            lambda p, **kwargs: {
                 "name": "myapp",
                 "path": p,
+                "type": kwargs.get("project_type", "supported"),
                 "error": None,
             },
         )

@@ -1,16 +1,23 @@
 # lerim trace
 
-Import explicit generic agent traces.
+Import one explicit generic trace file.
 
 ## Overview
 
-`lerim trace import` is the current bridge for custom agents and business
-workflows that are not one of the built-in connected sources.
+`lerim trace import` is a host-only one-file import utility.
 
 Built-in `connect` adapters discover sessions from supported local tools such as
-Claude Code, Codex CLI, Cursor, and OpenCode. Custom agents work differently
-today: the agent or surrounding system should write a trace file, then call
-`lerim trace import` for that run.
+Claude Code, Codex CLI, Cursor, and OpenCode.
+
+Custom agents should normally use custom trace folders:
+
+```bash
+lerim project add ~/lerim-traces/support-clean --type custom
+lerim ingest --agent custom
+```
+
+Use `trace import` only when you intentionally want to import one standalone
+file into a non-project scope.
 
 ## Syntax
 
@@ -81,5 +88,5 @@ Scope decides where imported context belongs.
 | `user` | Personal assistant context |
 | `custom` | Customer-defined boundary |
 
-For customer deployments, the import call is the integration point: an adapter
-can export each run's trace and call `lerim trace import` automatically.
+For ongoing custom-agent workflows, prefer
+[Custom Trace Folders](../guides/custom-trace-folders.md).

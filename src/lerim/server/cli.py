@@ -1099,7 +1099,8 @@ def _cmd_project(args: argparse.Namespace) -> int:
         _emit(f"Registered projects: {len(projects)}")
         for p in projects:
             status = "ok" if p["exists"] else "missing"
-            _emit(f"  {p['name']}: {p['path']} ({status})")
+            project_type = str(p.get("type") or "supported")
+            _emit(f"  {p['name']}: {p['path']} ({project_type}, {status})")
         return 0
 
     if action == "add":
@@ -1107,11 +1108,16 @@ def _cmd_project(args: argparse.Namespace) -> int:
         if not path_str:
             _emit("Usage: lerim project add <path>", file=sys.stderr)
             return 2
-        result = api_project_add(path_str)
+        result = api_project_add(
+            path_str,
+            project_type=str(getattr(args, "project_type", "supported") or "supported"),
+        )
         if result.get("error"):
             _emit(result["error"], file=sys.stderr)
             return 1
-        _emit(f'Added project "{result["name"]}" ({result["path"]})')
+        _emit(
+            f'Added project "{result["name"]}" ({result["path"]}, type={result["type"]})'
+        )
         return _restart_docker_for_project_change(
             "Restarting Lerim to mount new project..."
         )
@@ -2137,6 +2143,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Register a project directory",
     )
     proj_add.add_argument("path", help="Path to the project directory.")
+    proj_add.add_argument(
+        "--type",
+        dest="project_type",
+        choices=["supported", "custom"],
+        default="supported",
+        help=(
+            "Project source type. Use 'supported' for normal projects connected to "
+            "Claude/Codex/Cursor/OpenCode adapters; use 'custom' for folders of "
+            "already-clean Lerim canonical JSONL traces."
+        ),
+    )
 
     project_sub.add_parser(
         "list",

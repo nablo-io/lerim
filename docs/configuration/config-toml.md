@@ -68,6 +68,10 @@ endpoint = "https://api.lerim.dev"
 
 [projects]
 # my-project = "~/codes/my-project"
+
+[project_types]
+# Optional. Omitted projects default to "supported".
+# my-custom-traces = "custom"
 ```
 
 ## Notes
@@ -79,3 +83,4 @@ endpoint = "https://api.lerim.dev"
 - there is one active model role today: `[roles.agent]`
 - API keys come from environment variables, not TOML
 - `curate_max_llm_calls` caps context-curator BAML calls; `answer_max_retrieval_actions` caps context-answerer retrieval actions
+- `[project_types]` marks custom clean-trace folders; accepted values are `supported` and `custom`

@@ -61,3 +61,8 @@ endpoint = "https://api.lerim.dev"
 [projects]
 # Map project short names to absolute host paths.
 # my-project = "~/codes/my-project"
+
+[project_types]
+# Optional project source type. Omitted projects default to "supported".
+# Use "custom" only for folders of already-clean Lerim canonical JSONL traces.
+# my-custom-traces = "custom"

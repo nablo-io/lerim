@@ -940,7 +940,12 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
             if not proj_path:
                 self._error(HTTPStatus.BAD_REQUEST, "Missing 'path'")
                 return
-            result = api_project_add(proj_path, include_paths=False)
+            project_type = str(body.get("type") or "supported").strip() or "supported"
+            result = api_project_add(
+                proj_path,
+                project_type=project_type,
+                include_paths=False,
+            )
             status_code = (
                 HTTPStatus.BAD_REQUEST if result.get("error") else HTTPStatus.OK
             )

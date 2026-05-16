@@ -954,12 +954,17 @@ def test_api_project_list_with_projects(monkeypatch, tmp_path) -> None:
     proj_dir = tmp_path / "myproject"
     proj_dir.mkdir()
 
-    cfg = replace(make_config(tmp_path), projects={"myproject": str(proj_dir)})
+    cfg = replace(
+        make_config(tmp_path),
+        projects={"myproject": str(proj_dir)},
+        project_types={"myproject": "custom"},
+    )
     monkeypatch.setattr(api_mod, "get_config", lambda: cfg)
 
     result = api_project_list()
     assert len(result) == 1
     assert result[0]["name"] == "myproject"
+    assert result[0]["type"] == "custom"
     assert result[0]["exists"] is True
     assert "has_lerim" not in result[0]
 
@@ -982,6 +987,35 @@ def test_api_project_add_registers_project_in_context_db(monkeypatch, tmp_path) 
     assert not (proj_dir / ".lerim").exists()
     assert len(saved) == 1
     assert "newproject" in saved[0]["projects"]
+    assert saved[0]["project_types"]["newproject"] == "supported"
+
+
+def test_api_project_add_registers_custom_project_type(monkeypatch, tmp_path) -> None:
+    """api_project_add persists the custom source type when requested."""
+    traces_dir = tmp_path / "clean-traces"
+    traces_dir.mkdir()
+    cfg = replace(make_config(tmp_path), projects={})
+
+    saved: list[dict] = []
+    monkeypatch.setattr(api_mod, "save_config_patch", lambda patch: saved.append(patch))
+    monkeypatch.setattr(api_mod, "get_config", lambda: cfg)
+
+    result = api_project_add(str(traces_dir), project_type="custom")
+
+    assert result["name"] == "clean-traces"
+    assert result["type"] == "custom"
+    assert saved[0]["project_types"]["clean-traces"] == "custom"
+
+
+def test_api_project_add_rejects_unknown_project_type(tmp_path) -> None:
+    """api_project_add rejects undocumented source types."""
+    traces_dir = tmp_path / "clean-traces"
+    traces_dir.mkdir()
+
+    result = api_project_add(str(traces_dir), project_type="unknown")
+
+    assert result["name"] is None
+    assert "project type must be one of" in result["error"]
 
 
 def test_api_project_add_disambiguates_duplicate_basenames(
@@ -1003,6 +1037,7 @@ def test_api_project_add_disambiguates_duplicate_basenames(
     assert result["name"] != "service"
     assert result["name"].startswith("service-")
     assert saved[0]["projects"][result["name"]] == str(second.resolve())
+    assert saved[0]["project_types"][result["name"]] == "supported"
 
 
 def test_api_status_reports_projects_and_unscoped(
@@ -1090,13 +1125,18 @@ def test_api_project_remove_success(monkeypatch, tmp_path) -> None:
 
     config_file = tmp_path / "user_config.toml"
     config_file.write_text(
-        '[projects]\nmyproject = "/tmp/myproject"\n', encoding="utf-8"
+        '[projects]\nmyproject = "/tmp/myproject"\n\n'
+        '[project_types]\nmyproject = "custom"\n',
+        encoding="utf-8",
     )
     monkeypatch.setattr(api_mod, "get_user_config_path", lambda: config_file)
-    monkeypatch.setattr(api_mod, "_write_config_full", lambda data: None)
+    written: list[dict] = []
+    monkeypatch.setattr(api_mod, "_write_config_full", lambda data: written.append(data))
 
     result = api_project_remove("myproject")
     assert result["removed"] is True
+    assert written[0]["projects"] == {}
+    assert written[0]["project_types"] == {}
 
 
 def test_api_project_remove_not_found(monkeypatch, tmp_path) -> None:

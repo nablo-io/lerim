@@ -296,6 +296,7 @@ class Config:
 
     agents: dict[str, str]
     projects: dict[str, str]
+    project_types: dict[str, str]
 
     def public_dict(self) -> dict[str, Any]:
         """Return safe serialized config for CLI/dashboard visibility."""
@@ -318,6 +319,7 @@ class Config:
             "cloud_authenticated": self.cloud_token is not None,
             "connected_agents": sorted(self.agents),
             "project_names": sorted(self.projects),
+            "project_types": dict(sorted(self.project_types.items())),
         }
 
 
@@ -365,6 +367,28 @@ def _parse_string_table(raw: dict[str, Any], *, section: str = "config") -> dict
     return result
 
 
+PROJECT_TYPE_SUPPORTED = "supported"
+PROJECT_TYPE_CUSTOM = "custom"
+PROJECT_TYPE_CHOICES = frozenset({PROJECT_TYPE_SUPPORTED, PROJECT_TYPE_CUSTOM})
+
+
+def normalize_project_type(value: str | None) -> str:
+    """Normalize a configured project source type."""
+    text = (value or PROJECT_TYPE_SUPPORTED).strip().lower()
+    if not text:
+        return PROJECT_TYPE_SUPPORTED
+    if text not in PROJECT_TYPE_CHOICES:
+        allowed = ", ".join(sorted(PROJECT_TYPE_CHOICES))
+        raise ValueError(f"project type must be one of: {allowed}")
+    return text
+
+
+def _parse_project_types_table(raw: dict[str, Any]) -> dict[str, str]:
+    """Parse project-name to source-type mappings."""
+    parsed = _parse_string_table(raw, section="project_types")
+    return {name: normalize_project_type(value) for name, value in parsed.items()}
+
+
 def _default_context_db_path(global_data_dir: Path) -> Path:
     """Return the canonical global context DB path for the current data root."""
     return global_data_dir / "context.sqlite3"
@@ -380,6 +404,7 @@ _TOP_LEVEL_CONFIG_KEYS = {
     "cloud",
     "agents",
     "projects",
+    "project_types",
 }
 _DATA_KEYS = {"dir", "context_db_path"}
 _SEMANTIC_SEARCH_KEYS = {
@@ -515,6 +540,7 @@ def load_config() -> Config:
 
     agents = _parse_string_table(_ensure_dict(toml_data, "agents"), section="agents")
     projects = _parse_string_table(_ensure_dict(toml_data, "projects"), section="projects")
+    project_types = _parse_project_types_table(_ensure_dict(toml_data, "project_types"))
 
     cloud_endpoint = _to_non_empty_string(os.environ.get("LERIM_CLOUD_ENDPOINT"))
     if not cloud_endpoint:
@@ -579,6 +605,7 @@ def load_config() -> Config:
         cloud_token=cloud_token or None,
         agents=agents,
         projects=projects,
+        project_types=project_types,
     )
 
 

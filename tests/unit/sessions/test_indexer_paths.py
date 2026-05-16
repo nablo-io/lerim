@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -38,6 +39,7 @@ class _FakeAdapter:
                 content_hash="hash-new",
             )
         ]
+
 
 class _FakeCursorAdapter(_FakeAdapter):
     @staticmethod
@@ -105,6 +107,48 @@ def test_index_new_sessions_cursor_path_ingestion(monkeypatch, tmp_path: Path) -
     out = catalog.index_new_sessions(return_details=True)
     assert len(out) == 1
     assert out[0].run_id == "run-cursor-1"
+
+
+def test_index_new_sessions_indexes_custom_project_folder(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Custom projects are scanned directly without a platform adapter."""
+    traces = tmp_path / "clean-traces"
+    traces.mkdir()
+    trace_file = traces / "support-run.jsonl"
+    trace_file.write_text(
+        json.dumps(
+            {
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": "Support agent approved escalation.",
+                },
+                "timestamp": "2026-05-16T09:00:00Z",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    config_path = write_test_config(
+        tmp_path,
+        projects={"support": str(traces)},
+        project_types={"support": "custom"},
+    )
+    monkeypatch.setenv("LERIM_CONFIG", str(config_path))
+    reload_config()
+    monkeypatch.setattr(catalog.adapter_registry, "get_connected_agents", lambda _p: [])
+    monkeypatch.setattr(
+        catalog.adapter_registry, "get_connected_platform_paths", lambda _p: {}
+    )
+
+    out = catalog.index_new_sessions(return_details=True)
+
+    assert len(out) == 1
+    assert out[0].agent_type == "custom"
+    assert out[0].repo_path == str(traces.resolve())
+    assert out[0].session_path == str(trace_file.resolve())
+    assert fetch_session_doc(out[0].run_id)["agent_type"] == "custom"
 
 
 def test_index_new_sessions_marks_changed_when_known_hash_differs(

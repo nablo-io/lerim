@@ -2,9 +2,8 @@
 
 Lerim reads trace data from supported sources and turns it into reusable context.
 
-The commands below connect the sources available today. Generic trace import
-and broader source support are the direction for support, research, operations,
-revenue, compliance, and custom business-agent workflows.
+The commands below connect the supported sources available today. For custom
+agents and business workflows, use a custom trace folder instead of `connect`.
 
 ## Auto-detect
 
@@ -32,3 +31,15 @@ lerim connect claude --path /custom/path
 ```bash
 lerim connect list
 ```
+
+## Custom agents
+
+Custom agents do not use `lerim connect`. Export and clean their traces into
+Lerim canonical JSONL, then register the clean folder as a custom project:
+
+```bash
+lerim project add ~/lerim-traces/support-clean --type custom
+lerim ingest --agent custom
+```
+
+See [Custom Trace Folders](custom-trace-folders.md).

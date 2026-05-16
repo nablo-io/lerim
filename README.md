@@ -55,11 +55,14 @@ Without a durable context layer:
 
 Lerim fixes that by turning raw traces into reusable context records and making them queryable from agent tools and product workflows.
 
-The current package provides the trace-to-context foundation and supported source adapters. For customer deployments, Lerim can be adapted around the business traces that matter: support handoffs, operations incidents, research workflows, revenue processes, security reviews, and internal automation logs.
+The current package provides the trace-to-context foundation, supported source
+adapters, and custom clean-trace folders for business workflows such as support
+handoffs, operations incidents, research workflows, revenue processes, security
+reviews, and internal automation logs.
 
 ## Key Capabilities
 
-- Trace-to-context extraction. `ingest` reads supported traces, extracts reusable signal, and can archive routine runs without creating noisy durable records.
+- Trace-to-context extraction. `ingest` reads supported sources and custom clean-trace folders, extracts reusable signal, and can archive routine runs without creating noisy durable records.
 - Shared context across agents. What one agent learns can become useful context for a different agent or workflow later.
 - Context curation. Lerim consolidates overlap, archives weak records, and keeps the context layer compact.
 - Query and startup context. Agents can ask questions against accumulated context or start from a compact context brief.
@@ -80,30 +83,30 @@ The current package provides the trace-to-context foundation and supported sourc
 Built-in `connect` adapters monitor the supported sources available today:
 Claude Code, Codex CLI, Cursor, and OpenCode.
 
-For another agent or business workflow, use explicit trace import:
+For another agent or business workflow, create a folder of already-clean Lerim
+canonical JSONL traces and register it as a custom project:
 
 ```bash
-lerim trace import ./support-agent-run.jsonl \
-  --source-name support-bot \
-  --source-profile support \
-  --scope-type domain \
-  --scope support
+python clean_to_lerim_jsonl.py \
+  --input ./raw-support-agent-traces \
+  --output ~/lerim-traces/support-clean
+
+lerim project add ~/lerim-traces/support-clean --type custom
+lerim ingest --agent custom
 ```
 
-The trace can be JSON, JSONL, or plain text. Lerim normalizes it into the compact
-trace shape, stores a canonical copy under the Lerim workspace, registers the
-selected scope, and runs ingestion into the shared context store.
+Each `.jsonl` file is one completed source session. Each line must be a
+canonical user or assistant event:
 
-Today, the custom-agent path expects the user or customer system to produce the
-trace file and call `lerim trace import` after a run. For a customer deployment,
-the adapter layer can automate that step around the customer's agent runtime,
-ticket system, browser workflow, or internal automation logs.
+```json
+{"type":"user","message":{"role":"user","content":"Customer asked for renewal approval."},"timestamp":"2026-05-16T09:00:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":"Agent found approval is required above EUR 500."},"timestamp":"2026-05-16T09:02:00Z"}
+```
 
-Customers can also run their own exporter, cleaner, or redaction step before
-import. That is the recommended path when traces contain source-specific noise,
-large tool payloads, secrets, regulated data, or customer-specific retention
-rules. Lerim filters for durable signal during ingestion, but it should not be
-used as the only privacy or compliance sanitizer for arbitrary traces.
+Custom mode has no Lerim adapter and no compaction step. The user or customer
+owns the exporter, cleaner, redaction, and retention boundary before files enter
+the custom folder. See the custom trace folder guide for the pasteable prompt
+that helps a coding agent generate that cleaner.
 
 ## Quick Start
 
@@ -351,7 +354,7 @@ Contributions are welcome.
 
 Good starting points include:
 
-- trace-source adapters and generic import
+- trace-source adapters and custom trace-folder examples
 - extraction quality
 - context curation quality
 - docs and demo examples

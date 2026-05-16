@@ -15,7 +15,8 @@ from typing import Any, Callable
 from lerim.adapters import registry as adapter_registry
 from lerim.config.project_scope import match_session_project
 from lerim.config.logging import logger
-from lerim.config.settings import get_config, reload_config
+from lerim.config.settings import PROJECT_TYPE_CUSTOM, get_config, reload_config
+from lerim.sessions.custom_traces import iter_custom_trace_sessions
 
 
 JOB_TYPE_EXTRACT = "extract"
@@ -637,7 +638,7 @@ def index_new_sessions(
     skip_unscoped: bool = False,
     stats: dict[str, int] | None = None,
 ) -> int | list[IndexedSession]:
-    """Discover and index new sessions from connected adapters.
+    """Discover and index new sessions from connected adapters and custom folders.
 
     Known sessions with the same content hash are skipped. New sessions are
     returned with ``changed=False``; known sessions with a missing or different
@@ -657,12 +658,15 @@ def index_new_sessions(
     selected_agents = agents or adapter_registry.get_connected_agents(
         config.platforms_path
     )
+    selected_agent_set = set(selected_agents)
     known_ids = get_indexed_run_ids()
     known_hashes = _get_indexed_content_hashes()
 
     new_sessions: list[IndexedSession] = []
 
     for agent_name in selected_agents:
+        if agent_name == PROJECT_TYPE_CUSTOM:
+            continue
         adapter = adapter_registry.get_adapter(agent_name)
         traces_dir = connected_paths.get(agent_name)
         if adapter is None or traces_dir is None:
@@ -693,56 +697,87 @@ def index_new_sessions(
                         )
                     continue
 
-            content_hash = getattr(session, "content_hash", None)
-            previous_hash = known_hashes.get(session.run_id)
-            is_known = session.run_id in known_ids
-            if is_known and content_hash is not None and previous_hash == content_hash:
-                continue
-            is_changed = is_known
-
-            summaries_json = json.dumps(session.summaries, ensure_ascii=True)
-            summary_text = "\n".join(item for item in session.summaries if item)
-            content = summary_text
-            if not content:
-                content = f"run:{session.run_id} agent:{session.agent_type}"
-
-            indexed = index_session_for_fts(
-                run_id=session.run_id,
-                agent_type=session.agent_type,
-                content=content,
-                repo_path=session.repo_path,
-                repo_name=session.repo_name,
-                start_time=session.start_time,
-                status=session.status,
-                duration_ms=session.duration_ms,
-                message_count=session.message_count,
-                tool_call_count=session.tool_call_count,
-                error_count=session.error_count,
-                total_tokens=session.total_tokens,
-                summaries=summaries_json,
-                summary_text=summary_text,
-                session_path=session.session_path,
-                content_hash=content_hash,
+            indexed_session = _index_discovered_session(
+                session=session,
+                known_ids=known_ids,
+                known_hashes=known_hashes,
             )
-            if not indexed:
-                continue
+            if indexed_session is not None:
+                new_sessions.append(indexed_session)
 
-            known_ids.add(session.run_id)
-            known_hashes[session.run_id] = content_hash
-            new_sessions.append(
-                IndexedSession(
-                    run_id=session.run_id,
-                    agent_type=session.agent_type,
-                    session_path=session.session_path,
-                    start_time=session.start_time,
-                    repo_path=session.repo_path,
-                    changed=is_changed,
+    if not agents or PROJECT_TYPE_CUSTOM in selected_agent_set:
+        for project_name, project_path_str in config.projects.items():
+            if config.project_types.get(project_name) != PROJECT_TYPE_CUSTOM:
+                continue
+            sessions = iter_custom_trace_sessions(
+                project_name=project_name,
+                project_path=Path(project_path_str),
+                start=start,
+                end=end,
+            )
+            for session in sessions:
+                indexed_session = _index_discovered_session(
+                    session=session,
+                    known_ids=known_ids,
+                    known_hashes=known_hashes,
                 )
-            )
+                if indexed_session is not None:
+                    new_sessions.append(indexed_session)
 
     # Sort chronologically (oldest first) so later sessions can update earlier ones.
     new_sessions.sort(key=lambda s: s.start_time or "")
     return new_sessions if return_details else len(new_sessions)
+
+
+def _index_discovered_session(
+    *,
+    session: Any,
+    known_ids: set[str],
+    known_hashes: dict[str, str | None],
+) -> IndexedSession | None:
+    """Persist one discovered session row and return its queue payload."""
+    content_hash = getattr(session, "content_hash", None)
+    previous_hash = known_hashes.get(session.run_id)
+    is_known = session.run_id in known_ids
+    if is_known and content_hash is not None and previous_hash == content_hash:
+        return None
+    is_changed = is_known
+
+    summaries_json = json.dumps(session.summaries, ensure_ascii=True)
+    summary_text = "\n".join(item for item in session.summaries if item)
+    content = summary_text or f"run:{session.run_id} agent:{session.agent_type}"
+
+    indexed = index_session_for_fts(
+        run_id=session.run_id,
+        agent_type=session.agent_type,
+        content=content,
+        repo_path=session.repo_path,
+        repo_name=session.repo_name,
+        start_time=session.start_time,
+        status=session.status,
+        duration_ms=session.duration_ms,
+        message_count=session.message_count,
+        tool_call_count=session.tool_call_count,
+        error_count=session.error_count,
+        total_tokens=session.total_tokens,
+        summaries=summaries_json,
+        summary_text=summary_text,
+        session_path=session.session_path,
+        content_hash=content_hash,
+    )
+    if not indexed:
+        return None
+
+    known_ids.add(session.run_id)
+    known_hashes[session.run_id] = content_hash
+    return IndexedSession(
+        run_id=session.run_id,
+        agent_type=session.agent_type,
+        session_path=session.session_path,
+        start_time=session.start_time,
+        repo_path=session.repo_path,
+        changed=is_changed,
+    )
 
 
 def enqueue_session_job(

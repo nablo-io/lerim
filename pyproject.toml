@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lerim"
-version = "0.2.0"
+version = "0.2.1"
 description = "Trace-to-context layer for AI agent workflows."
 readme = "README.md"
 requires-python = ">=3.11"
