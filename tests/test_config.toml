@@ -8,7 +8,6 @@
 [roles.agent]
 provider = "minimax"
 model = "MiniMax-M2.5"
-max_iters_maintain = 30
-max_iters_ask = 30
+curate_max_llm_calls = 30
+answer_max_retrieval_actions = 30
 temperature = 1.0
-max_tokens = 32000

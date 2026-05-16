@@ -6,7 +6,7 @@ under ``~/.local/share/opencode/``.  The schema has three main tables:
 blobs in the ``data`` column.  Timestamps are millisecond-epoch integers.
 
 Like the Cursor adapter, each session is exported to an individual JSONL
-cache file so the downstream sync pipeline and dashboard can read it as
+cache file so the downstream ingest pipeline and dashboard can read it as
 plain text.
 """
 
@@ -44,7 +44,7 @@ def _clean_entry(obj: dict[str, Any]) -> dict[str, Any] | None:
     1. If the entry is already canonical, ensure any tool_result content
        blocks have their output cleared, then return as-is.
     2. If the entry is not canonical (e.g., old-format cache), return None
-       to drop it -- it will be re-exported from the DB on next sync.
+       to drop it -- it will be re-exported from the DB on next ingest.
     """
     if not validate_canonical_entry(obj):
         return None

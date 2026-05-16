@@ -1,12 +1,12 @@
 # lerim connect
 
-Manage agent platform connections for session ingestion.
+Manage trace-source connections for session ingestion.
 
 ## Overview
 
-Register, list, or remove agent platform connections. Lerim reads session data from connected platforms to build shared context records.
+Register, list, or remove trace-source connections. Lerim reads session data from connected platforms to build shared context records.
 
-Supported platforms: `claude`, `codex`, `cursor`, `opencode`
+Current supported platforms are coding-agent trace sources: `claude`, `codex`, `cursor`, `opencode`
 
 ## Syntax
 
@@ -20,13 +20,13 @@ lerim connect remove <platform>
 
 ## Subcommands
 
-### Auto-detect all platforms
+### Auto-detect all current platforms
 
 ```bash
 lerim connect auto
 ```
 
-Scans default paths for each platform and registers any that are found.
+Scans default paths for each current trace-source platform and registers any that are found.
 
 ### Connect a specific platform
 
@@ -99,12 +99,12 @@ lerim connect remove claude
 
     [:octicons-arrow-right-24: lerim init](init.md)
 
--   :material-sync: **lerim sync**
+-   :material-ingest: **lerim ingest**
 
     ---
 
-    Sync sessions after connecting
+    Ingest sessions after connecting
 
-    [:octicons-arrow-right-24: lerim sync](sync.md)
+    [:octicons-arrow-right-24: lerim ingest](ingest.md)
 
 </div>

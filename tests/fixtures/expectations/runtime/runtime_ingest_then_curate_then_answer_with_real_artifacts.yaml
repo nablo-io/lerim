@@ -1,0 +1,12 @@
+case: runtime_ingest_then_curate_then_answer_with_real_artifacts
+expected:
+  ingest_workspace_subdir: "ingest"
+  curate_workspace_subdir: "curate"
+  answer_must_include_all:
+    - bounded backoff
+    - worker retries
+  answer_must_not_include:
+    - runaway queue pressure
+  answer_retrieval_action_order:
+    - list
+    - search

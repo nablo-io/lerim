@@ -17,7 +17,7 @@ from typing import Generator
 
 import pytest
 
-from tests.conftest import EXTRACT_TRACES_DIR
+from tests.conftest import TRACE_INGESTION_TRACES_DIR
 from tests.live_helpers import require_live_agent_config
 
 
@@ -43,8 +43,8 @@ def e2e_home(tmp_path: Path) -> Path:
 		"logs",
 		"models/embeddings",
 		"models/huggingface/hub",
-		"workspace/sync",
-		"workspace/maintain",
+		"workspace/ingest",
+		"workspace/curate",
 	):
 		(lerim_home / subdir).mkdir(parents=True, exist_ok=True)
 	(lerim_home / "platforms.json").write_text("{}\n", encoding="utf-8")
@@ -73,10 +73,10 @@ def e2e_config(e2e_home: Path, e2e_project: Path) -> Path:
 		"[server]",
 		'host = "127.0.0.1"',
 		"port = 18765",
-		"sync_interval_minutes = 60",
-		"maintain_interval_minutes = 60",
-		"sync_window_days = 7",
-		"sync_max_sessions = 50",
+		"ingest_interval_minutes = 60",
+		"curate_interval_minutes = 60",
+		"ingest_window_days = 7",
+		"ingest_max_sessions = 50",
 		"",
 		"[semantic_search]",
 		'embedding_model_id = "mixedbread-ai/mxbai-embed-xsmall-v1"',
@@ -85,14 +85,11 @@ def e2e_config(e2e_home: Path, e2e_project: Path) -> Path:
 		"lexical_shortlist_size = 40",
 		"",
 		"[roles.agent]",
-		f'provider = "{source_config.agent_role.provider}"',
-		f'model = "{source_config.agent_role.model}"',
-		"temperature = 1.0",
-		"top_p = 0.95",
-		"top_k = 40",
-		"max_tokens = 32000",
-		"max_iters_maintain = 30",
-		"max_iters_ask = 20",
+			f'provider = "{source_config.agent_role.provider}"',
+			f'model = "{source_config.agent_role.model}"',
+			"temperature = 1.0",
+			"curate_max_llm_calls = 30",
+			"answer_max_retrieval_actions = 20",
 		"",
 		"[providers]",
 		'minimax = "https://api.minimax.io/v1"',
@@ -239,4 +236,4 @@ def cli(e2e_env: dict[str, str]) -> CLIRunner:
 @pytest.fixture(scope="function")
 def trace_fixture_path() -> Path:
 	"""Path to the extract trace fixtures directory."""
-	return EXTRACT_TRACES_DIR
+	return TRACE_INGESTION_TRACES_DIR

@@ -1,6 +1,6 @@
 """Shared API logic for CLI and HTTP endpoints.
 
-Extracts the core business logic for ask, sync, maintain, and project
+Extracts the core business logic for answer, ingest, curate, and project
 management so both the argparse CLI and the HTTP API call the same code.
 """
 
@@ -33,8 +33,8 @@ from lerim.server.daemon import (
     ServiceLock,
     WRITER_LOCK_NAME,
     resolve_window_bounds,
-    run_maintain_once,
-    run_sync_once,
+    run_curate_once,
+    run_ingest_once,
 )
 from lerim.server.docker_runtime import (
     RUNTIME_IMAGE_ENV,
@@ -387,14 +387,14 @@ def _queue_counts_for_repo(
     return counts, blocked_run_id, last_error
 
 
-def api_ask(
+def api_answer(
     question: str,
     *,
     scope: str = "all",
     project: str | None = None,
     verbose: bool = False,
 ) -> dict[str, Any]:
-    """Run one ask query against the runtime agent and return result dict."""
+    """Run one answer query against the runtime agent and return result dict."""
     config = get_config()
     selected_projects: list[tuple[str, Path]] = []
     normalized_scope = "project" if str(scope).strip().lower() == "project" else "all"
@@ -422,7 +422,7 @@ def api_ask(
             _context_store(config).register_project(identity)
             project_ids.append(identity.project_id)
         repo_root = selected_projects[0][1]
-    response, session_id, cost_usd, debug = agent.ask(
+    response, session_id, cost_usd, debug = agent.answer(
         question,
         project_ids=project_ids or None,
         repo_root=repo_root,
@@ -552,7 +552,7 @@ def api_memory_reset(
             return {
                 "error": True,
                 "message": (
-                    f"Cannot reset memory while sync or maintain is writing. {exc}"
+                    f"Cannot reset memory while ingest or curate is writing. {exc}"
                 ),
             }
 
@@ -638,7 +638,7 @@ def api_memory_reset(
             lock.release()
 
 
-def api_sync(
+def api_ingest(
     agent: str | None = None,
     window: str | None = None,
     since: str | None = None,
@@ -650,21 +650,21 @@ def api_sync(
     dry_run: bool = False,
     ignore_lock: bool = False,
 ) -> dict[str, Any]:
-    """Run one blocking sync cycle and return a summary dict."""
+    """Run one blocking ingest cycle and return a summary dict."""
     config = get_config()
     window_start, window_end = resolve_window_bounds(
-        window=window or f"{config.sync_window_days}d",
+        window=window or f"{config.ingest_window_days}d",
         since_raw=since,
         until_raw=until,
         parse_duration_to_seconds=parse_duration_to_seconds,
     )
     with ollama_lifecycle(config):
-        code, summary = run_sync_once(
+        code, summary = run_ingest_once(
             run_id=run_id,
             agent_filter=parse_agent_filter(agent) if agent else None,
             no_extract=no_extract,
             force=force,
-            max_sessions=max_sessions or config.sync_max_sessions,
+            max_sessions=max_sessions or config.ingest_max_sessions,
             dry_run=dry_run,
             ignore_lock=ignore_lock,
             trigger="api",
@@ -684,11 +684,11 @@ def api_sync(
     return payload
 
 
-def api_maintain(dry_run: bool = False) -> dict[str, Any]:
-    """Run one blocking maintain cycle and return a result dict."""
+def api_curate(dry_run: bool = False) -> dict[str, Any]:
+    """Run one blocking context-curation cycle and return a result dict."""
     config = get_config()
     with ollama_lifecycle(config):
-        code, payload = run_maintain_once(dry_run=dry_run)
+        code, payload = run_curate_once(dry_run=dry_run)
     queue_health = _safe_queue_health_snapshot()
     result: dict[str, Any] = {"code": code, **payload, "queue_health": queue_health}
     if queue_health.get("degraded"):
@@ -750,10 +750,10 @@ def _schedule_item(
     }
 
 
-def _sync_metrics_from_details(details: dict[str, Any]) -> dict[str, Any]:
-    """Return the structured sync metrics payload from service-run details."""
-    sync_metrics = details.get("sync_metrics")
-    return sync_metrics if isinstance(sync_metrics, dict) else {}
+def _ingest_metrics_from_details(details: dict[str, Any]) -> dict[str, Any]:
+    """Return the structured ingest metrics payload from service-run details."""
+    ingest_metrics = details.get("ingest_metrics")
+    return ingest_metrics if isinstance(ingest_metrics, dict) else {}
 
 
 def _public_error_message(raw: Any) -> str:
@@ -812,7 +812,8 @@ def _normalize_activity_item(run: dict[str, Any]) -> dict[str, Any]:
     else:
         project_label = "global"
 
-    op_type = str(run.get("job_type") or "sync")
+    raw_job_type = str(run.get("job_type") or "ingest").strip()
+    op_type = raw_job_type if raw_job_type in {"curate", "context-brief"} else "ingest"
     base: dict[str, Any] = {
         "time": run.get("started_at"),
         "op_type": op_type,
@@ -823,42 +824,42 @@ def _normalize_activity_item(run: dict[str, Any]) -> dict[str, Any]:
         "error": _public_error_message(details.get("error")),
     }
 
-    if op_type == "maintain":
-        maintain_metrics = (
-            details.get("maintain_metrics")
-            if isinstance(details.get("maintain_metrics"), dict)
+    if op_type == "curate":
+        curate_metrics = (
+            details.get("curate_metrics")
+            if isinstance(details.get("curate_metrics"), dict)
             else {}
         )
         counts = (
-            maintain_metrics.get("counts")
-            if isinstance(maintain_metrics.get("counts"), dict)
+            curate_metrics.get("counts")
+            if isinstance(curate_metrics.get("counts"), dict)
             else {}
         )
         base.update(
             {
-                "maintain_counts": {
+                "curate_counts": {
                     "created": int(counts.get("created") or 0),
                     "updated": int(counts.get("updated") or 0),
                     "archived": int(counts.get("archived") or 0),
                 },
-                "records_created": int(maintain_metrics.get("records_created") or 0),
-                "records_updated": int(maintain_metrics.get("records_updated") or 0),
-                "records_archived": int(maintain_metrics.get("records_archived") or 0),
+                "records_created": int(curate_metrics.get("records_created") or 0),
+                "records_updated": int(curate_metrics.get("records_updated") or 0),
+                "records_archived": int(curate_metrics.get("records_archived") or 0),
             }
         )
         return base
 
-    sync_metrics = _sync_metrics_from_details(details)
+    ingest_metrics = _ingest_metrics_from_details(details)
     base.update(
         {
-            "sessions_analyzed": int(sync_metrics.get("sessions_analyzed") or 0),
-            "sessions_extracted": int(sync_metrics.get("sessions_extracted") or 0),
-            "sessions_failed": int(sync_metrics.get("sessions_failed") or 0),
-            "sessions_skipped": int(sync_metrics.get("sessions_skipped") or 0),
-            "skipped_unscoped": int(sync_metrics.get("skipped_unscoped") or 0),
-            "records_created": int(sync_metrics.get("records_created") or 0),
-            "records_updated": int(sync_metrics.get("records_updated") or 0),
-            "records_archived": int(sync_metrics.get("records_archived") or 0),
+            "sessions_analyzed": int(ingest_metrics.get("sessions_analyzed") or 0),
+            "sessions_extracted": int(ingest_metrics.get("sessions_extracted") or 0),
+            "sessions_failed": int(ingest_metrics.get("sessions_failed") or 0),
+            "sessions_skipped": int(ingest_metrics.get("sessions_skipped") or 0),
+            "skipped_unscoped": int(ingest_metrics.get("skipped_unscoped") or 0),
+            "records_created": int(ingest_metrics.get("records_created") or 0),
+            "records_updated": int(ingest_metrics.get("records_updated") or 0),
+            "records_archived": int(ingest_metrics.get("records_archived") or 0),
         }
     )
     return base
@@ -899,7 +900,7 @@ def _is_empty_activity_item(item: dict[str, Any]) -> bool:
         and int(item.get("records_created") or 0) == 0
         and int(item.get("records_updated") or 0) == 0
         and int(item.get("records_archived") or 0) == 0
-        and not item.get("maintain_counts")
+        and not item.get("curate_counts")
     )
 
 
@@ -914,8 +915,8 @@ def _normalize_latest_run(run: dict[str, Any] | None) -> dict[str, Any] | None:
         "project_label": normalized.get("project_label") or "",
         "error": _public_error_message(details.get("error")),
     }
-    if str(run.get("job_type") or "") == "maintain":
-        details_payload["maintain_counts"] = normalized.get("maintain_counts") or {}
+    if str(normalized.get("op_type") or "") == "curate":
+        details_payload["curate_counts"] = normalized.get("curate_counts") or {}
         details_payload["records_created"] = int(normalized.get("records_created") or 0)
         details_payload["records_updated"] = int(normalized.get("records_updated") or 0)
         details_payload["records_archived"] = int(
@@ -942,7 +943,7 @@ def _normalize_latest_run(run: dict[str, Any] | None) -> dict[str, Any] | None:
         )
     return {
         "id": run.get("id"),
-        "job_type": run.get("job_type"),
+        "job_type": normalized.get("op_type"),
         "status": run.get("status"),
         "started_at": run.get("started_at"),
         "completed_at": run.get("completed_at"),
@@ -978,7 +979,7 @@ def _running_activity_rows(
             project_name,
             {
                 "time": now.isoformat(),
-                "op_type": "sync",
+                "op_type": "ingest",
                 "status": "running",
                 "duration_ms": 0,
                 "projects": [project_name],
@@ -1095,25 +1096,25 @@ def api_status(
     now = datetime.now(timezone.utc)
     catalog_error: sqlite3.Error | None = None
     try:
-        latest_sync_raw = latest_service_run("sync")
-        latest_maintain_raw = latest_service_run("maintain")
+        latest_ingest_raw = latest_service_run("ingest")
+        latest_curate_raw = latest_service_run("curate")
         queue = count_session_jobs_by_status()
         queue_health = queue_health_snapshot()
         sessions_indexed_count = count_fts_indexed()
         unscoped_by_agent = count_unscoped_sessions_by_agent(projects=config.projects)
     except sqlite3.Error as exc:
         catalog_error = exc
-        latest_sync_raw = None
-        latest_maintain_raw = None
+        latest_ingest_raw = None
+        latest_curate_raw = None
         queue = _empty_queue_counts()
         queue_health = _catalog_unavailable_health(exc)
         sessions_indexed_count = 0
         unscoped_by_agent = {}
 
-    latest_sync_details = (latest_sync_raw or {}).get("details") or {}
-    latest_sync_metrics = (
-        _sync_metrics_from_details(latest_sync_details)
-        if isinstance(latest_sync_details, dict)
+    latest_ingest_details = (latest_ingest_raw or {}).get("details") or {}
+    latest_ingest_metrics = (
+        _ingest_metrics_from_details(latest_ingest_details)
+        if isinstance(latest_ingest_details, dict)
         else {}
     )
 
@@ -1138,7 +1139,7 @@ def api_status(
     else:
         recent_activity = []
 
-    latest_sync = _normalize_latest_run(latest_sync_raw)
+    latest_ingest = _normalize_latest_run(latest_ingest_raw)
 
     payload: dict[str, Any] = {
         "timestamp": now.isoformat(),
@@ -1158,16 +1159,16 @@ def api_status(
             else "",
         },
         "projects": projects_payload,
-        "sync_window_days": config.sync_window_days,
+        "ingest_window_days": config.ingest_window_days,
         "schedule": {
-            "sync": _schedule_item(
-                latest=latest_sync_raw,
-                interval_minutes=config.sync_interval_minutes,
+            "ingest": _schedule_item(
+                latest=latest_ingest_raw,
+                interval_minutes=config.ingest_interval_minutes,
                 now=now,
             ),
-            "maintain": _schedule_item(
-                latest=latest_maintain_raw,
-                interval_minutes=config.maintain_interval_minutes,
+            "curate": _schedule_item(
+                latest=latest_curate_raw,
+                interval_minutes=config.curate_interval_minutes,
                 now=now,
             ),
         },
@@ -1178,10 +1179,12 @@ def api_status(
         "scope": {
             "strict_project_only": True,
             "mode": normalized_scope,
-            "skipped_unscoped": int(latest_sync_metrics.get("skipped_unscoped") or 0),
+            "skipped_unscoped": int(
+                latest_ingest_metrics.get("skipped_unscoped") or 0
+            ),
         },
-        "latest_sync": latest_sync,
-        "latest_maintain": _normalize_latest_run(latest_maintain_raw),
+        "latest_ingest": latest_ingest,
+        "latest_curate": _normalize_latest_run(latest_curate_raw),
         "recent_activity": recent_activity,
     }
     return payload

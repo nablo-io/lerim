@@ -39,19 +39,12 @@ class RoleConfig:
 	provider: str
 	model: str
 	api_base: str = ""
-	fallback_models: tuple[str, ...] = ()
-	# MiniMax-M2 official preset: temperature=1.0, top_p=0.95, top_k=40
 	temperature: float = 1.0
-	top_p: float = 0.95
-	top_k: int = 40
-	max_tokens: int = 32000
-	parallel_tool_calls: bool = True
-	# BAML/LangGraph sync derives its windowing budget from trace size in
-	# lerim.agents.extract.windowing. There is no static extract-budget field
-	# on RoleConfig.
-	# Maintain uses this as a BAML call cap; ask uses it as a PydanticAI request-turn cap.
-	max_iters_maintain: int = 30
-	max_iters_ask: int = 30
+	# BAML/LangGraph trace ingestion derives its windowing budget from trace size in
+	# lerim.agents.trace_ingestion.windowing. There is no static trace-ingestion
+	# budget field on RoleConfig.
+	curate_max_llm_calls: int = 30
+	answer_max_retrieval_actions: int = 30
 
 
 def load_toml_file(path: Path | None) -> dict[str, Any]:
@@ -184,27 +177,6 @@ def _require_int(raw: dict[str, Any], key: str, minimum: int = 0) -> int:
     return _read_int(raw, key, minimum=minimum)
 
 
-def _to_fallback_models(value: Any) -> tuple[str, ...]:
-    """Normalize fallback model list from TOML list/string values."""
-    if value is None:
-        return ()
-    if isinstance(value, list):
-        models: list[str] = []
-        for item in value:
-            if not isinstance(item, str):
-                raise ValueError(
-                    f"config key fallback_models list items must be strings, got: {item!r}"
-                )
-            text = item.strip()
-            if text:
-                models.append(text)
-        return tuple(models)
-    if isinstance(value, str):
-        parts = [item.strip() for item in value.split(",")]
-        return tuple(item for item in parts if item)
-    raise ValueError(f"config key fallback_models must be a string or list, got: {value!r}")
-
-
 def get_user_config_path() -> Path:
     """Return the effective writable config path.
 
@@ -301,16 +273,15 @@ class Config:
 
     server_host: str
     server_port: int
-    sync_interval_minutes: int
-    maintain_interval_minutes: int
-    sync_window_days: int
-    sync_max_sessions: int
+    ingest_interval_minutes: int
+    curate_interval_minutes: int
+    ingest_window_days: int
+    ingest_max_sessions: int
 
     agent_role: RoleConfig
 
     mlflow_enabled: bool
 
-    anthropic_api_key: str | None
     openai_api_key: str | None
     zai_api_key: str | None
     openrouter_api_key: str | None
@@ -334,10 +305,10 @@ class Config:
             "lexical_shortlist_size": self.lexical_shortlist_size,
             "server_host": self.server_host,
             "server_port": self.server_port,
-            "sync_interval_minutes": self.sync_interval_minutes,
-            "maintain_interval_minutes": self.maintain_interval_minutes,
-            "sync_window_days": self.sync_window_days,
-            "sync_max_sessions": self.sync_max_sessions,
+            "ingest_interval_minutes": self.ingest_interval_minutes,
+            "curate_interval_minutes": self.curate_interval_minutes,
+            "ingest_window_days": self.ingest_window_days,
+            "ingest_max_sessions": self.ingest_max_sessions,
             "agent_role": {
                 "provider": self.agent_role.provider,
                 "model": self.agent_role.model,
@@ -363,14 +334,11 @@ def _build_role(
 		provider=provider,
 		model=model,
 		api_base=_read_optional_string(raw, "api_base"),
-		fallback_models=_to_fallback_models(raw.get("fallback_models")),
 		temperature=_read_float(raw, "temperature", default=1.0),
-		top_p=_read_float(raw, "top_p", default=0.95),
-		top_k=_read_int(raw, "top_k", default=40),
-		max_tokens=_read_int(raw, "max_tokens", default=32000),
-		parallel_tool_calls=_read_bool(raw, "parallel_tool_calls", default=True),
-		max_iters_maintain=_read_int(raw, "max_iters_maintain", default=30),
-		max_iters_ask=_read_int(raw, "max_iters_ask", default=30),
+		curate_max_llm_calls=_read_int(raw, "curate_max_llm_calls", default=30),
+		answer_max_retrieval_actions=_read_int(
+			raw, "answer_max_retrieval_actions", default=30
+		),
 	)
 
 
@@ -423,32 +391,23 @@ _SEMANTIC_SEARCH_KEYS = {
 _SERVER_KEYS = {
     "host",
     "port",
-    "sync_interval_minutes",
-    "maintain_interval_minutes",
-    "sync_window_days",
-    "sync_max_sessions",
+    "ingest_interval_minutes",
+    "curate_interval_minutes",
+    "ingest_window_days",
+    "ingest_max_sessions",
 }
 _OBSERVABILITY_KEYS = {"mlflow_enabled"}
 _ROLE_KEYS = {
     "provider",
     "model",
     "api_base",
-    "fallback_models",
     "temperature",
-    "top_p",
-    "top_k",
-    "max_tokens",
-	"parallel_tool_calls",
-	"max_iters_maintain",
-	"max_iters_ask",
-	# Retired documented keys: accept them so old configs can still boot.
-	"openrouter_provider_order",
-	"thinking",
+	"curate_max_llm_calls",
+	"answer_max_retrieval_actions",
 }
 _ROLES_KEYS = {"agent"}
 _PROVIDER_KEYS = {
     "minimax",
-    "minimax_anthropic",
     "zai",
     "openai",
     "openrouter",
@@ -586,20 +545,18 @@ def load_config() -> Config:
         ),
         server_host=_read_optional_string(server, "host") or "127.0.0.1",
         server_port=port,
-        sync_interval_minutes=_require_int(server, "sync_interval_minutes", minimum=1),
-        maintain_interval_minutes=_require_int(
-            server, "maintain_interval_minutes", minimum=1
+        ingest_interval_minutes=_require_int(server, "ingest_interval_minutes", minimum=1),
+        curate_interval_minutes=_require_int(
+            server, "curate_interval_minutes", minimum=1
         ),
-        sync_window_days=_require_int(server, "sync_window_days", minimum=1),
-        sync_max_sessions=_require_int(server, "sync_max_sessions", minimum=1),
+        ingest_window_days=_require_int(server, "ingest_window_days", minimum=1),
+        ingest_max_sessions=_require_int(server, "ingest_max_sessions", minimum=1),
         agent_role=agent_role,
         mlflow_enabled=(
             os.getenv("LERIM_MLFLOW", "").strip().lower() in ("1", "true", "yes", "on")
             if os.getenv("LERIM_MLFLOW") is not None
             else _read_bool(observability, "mlflow_enabled", default=False)
         ),
-        anthropic_api_key=_to_non_empty_string(os.environ.get("ANTHROPIC_API_KEY"))
-        or None,
         openai_api_key=_to_non_empty_string(os.environ.get("OPENAI_API_KEY")) or None,
         zai_api_key=_to_non_empty_string(os.environ.get("ZAI_API_KEY")) or None,
         openrouter_api_key=_to_non_empty_string(os.environ.get("OPENROUTER_API_KEY"))
@@ -705,7 +662,6 @@ if __name__ == "__main__":
     assert cfg.context_db_path.name == "context.sqlite3"
     assert cfg.agent_role.provider
     assert cfg.agent_role.model
-    assert isinstance(cfg.agent_role.fallback_models, tuple)
     assert isinstance(cfg.mlflow_enabled, bool)
     assert isinstance(cfg.agents, dict)
     assert isinstance(cfg.projects, dict)

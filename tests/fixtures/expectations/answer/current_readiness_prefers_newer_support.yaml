@@ -1,0 +1,32 @@
+question: "What are the current release readiness risks for answer currentness quality?"
+seed_records:
+  - session_id: "seed-currentness-new"
+    record_id: "rec_answer_currentness_new_support"
+    kind: "fact"
+    created_at: "2026-04-23T15:00:00+00:00"
+    updated_at: "2026-04-23T15:00:00+00:00"
+    title: "Answer currentness release risk is reduced"
+    body: "Newer stored support says answer currentness release risk is reduced: answer has timestamp anchoring, should prefer current active durable records, and stored context is not live repository inspection."
+  - session_id: "seed-currentness-old"
+    record_id: "rec_answer_currentness_old_audit"
+    kind: "fact"
+    created_at: "2026-04-10T09:00:00+00:00"
+    updated_at: "2026-04-10T09:00:00+00:00"
+    valid_until: "2026-04-23T15:00:00+00:00"
+    superseded_by_record_id: "rec_answer_currentness_new_support"
+    title: "Answer currentness audit found release blockers"
+    body: "An older audit said answer currentness release readiness was blocked because timestamp anchoring was absent and active retrieval was not preferred."
+expected:
+  required_current_record_id: "rec_answer_currentness_new_support"
+  older_record_id: "rec_answer_currentness_old_audit"
+  answer_must_include_all:
+    - "timestamp"
+    - "active"
+  answer_must_include_any_provenance:
+    - "stored"
+    - "context"
+    - "updated"
+    - "2026-04-23"
+  answer_must_not_include:
+    - "timestamp anchoring was absent"
+    - "active retrieval was not preferred"

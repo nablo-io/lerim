@@ -45,6 +45,7 @@ lerim down
 ### `lerim logs`
 
 View local log entries from dated JSONL files under `~/.lerim/logs/YYYY/MM/DD/` (last 50 by default).
+If no log file exists yet, the command prints an empty-state message and exits successfully.
 
 ```bash
 lerim logs                      # show recent logs

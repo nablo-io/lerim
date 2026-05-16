@@ -1,0 +1,27 @@
+case: duplicate_existing_record
+summary: Update one existing durable decision instead of creating a duplicate.
+
+expected:
+  episode_count: 1
+  created_durable_count: 0
+  changed_record_count: 1
+  changed_decision_count: 1
+  must_use_tools:
+    - read_window
+    - filter_signals
+    - synthesize_records
+    - save_context
+  must_not_use_tools: []
+  updated_decision_text_must_include_all:
+    - separate
+  updated_decision_text_must_include_any:
+    - lifecycle
+    - recovery
+    - recover
+    - fail
+    - product
+    - queue
+    - state
+  updated_decision_text_must_not_include:
+    - duplicate record
+    - fork it

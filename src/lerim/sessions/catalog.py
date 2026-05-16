@@ -878,7 +878,7 @@ def claim_session_jobs(
 
         # Per-project ordered claiming: partition by repo_path, pick only one
         # active job per project using the requested backlog policy.  Normal
-        # sync uses newest-first for first-run quality; chronological replay
+        # ingest uses newest-first for first-run quality; chronological replay
         # callers can request oldest-first explicitly.
         #
         # IMPORTANT: The run_id filter is applied before ranking so targeted
@@ -1228,7 +1228,7 @@ def queue_health_snapshot(
     degraded = stale_running_count > 0 or dead_letter_count > 0
     advice_parts: list[str] = []
     if stale_running_count > 0:
-        advice_parts.append("run `lerim sync` to trigger stale-job recovery")
+        advice_parts.append("run `lerim ingest` to trigger stale-job recovery")
     if dead_letter_count > 0:
         advice_parts.append(
             "inspect with `lerim queue --failed`, then `lerim retry <run_id>` or `lerim skip <run_id>`"

@@ -1,24 +1,73 @@
 /* Custom CSS for Lerim docs — enriches MkDocs Material with
    step indicators, parameter fields, hero sections, and feature grids. */
 
-/* ── Brand colors (matching lerim-landing: blue #3b82f6 + teal #10b981) ── */
+/* ── Brand colors (matching the B2B landing page) ── */
 :root,
 [data-md-color-scheme="default"] {
-  --md-primary-fg-color: #3b82f6;
-  --md-primary-fg-color--light: #60a5fa;
-  --md-primary-fg-color--dark: #2563eb;
-  --md-accent-fg-color: #10b981;
-  --md-accent-fg-color--transparent: rgba(16, 185, 129, 0.1);
+  --lerim-paper: #f6f8f5;
+  --lerim-surface: #ffffff;
+  --lerim-ink: #151713;
+  --lerim-muted: #61685d;
+  --lerim-line: #d8dfd4;
+  --lerim-green: #245f46;
+  --lerim-green-soft: #e4f0e8;
+  --lerim-blue: #315f7d;
+  --lerim-blue-soft: #e7eff4;
+  --lerim-copper: #a55f3f;
+  --lerim-copper-soft: #f3e8e2;
+  --md-primary-fg-color: var(--lerim-green);
+  --md-primary-fg-color--light: #3d8062;
+  --md-primary-fg-color--dark: #174530;
+  --md-accent-fg-color: var(--lerim-copper);
+  --md-accent-fg-color--transparent: rgba(165, 95, 63, 0.12);
+  --md-default-bg-color: var(--lerim-paper);
+  --md-default-fg-color: var(--lerim-ink);
+  --md-typeset-a-color: var(--lerim-green);
+  --md-code-bg-color: rgba(255, 255, 255, 0.72);
 }
 
 [data-md-color-scheme="slate"] {
-  --md-primary-fg-color: #3b82f6;
-  --md-primary-fg-color--light: #60a5fa;
-  --md-primary-fg-color--dark: #2563eb;
-  --md-accent-fg-color: #10b981;
-  --md-accent-fg-color--transparent: rgba(16, 185, 129, 0.1);
-  --md-default-bg-color: #0f172a;
-  --md-default-bg-color--light: #1e293b;
+  --lerim-paper: #11130f;
+  --lerim-surface: #181c16;
+  --lerim-ink: #f6f8f5;
+  --lerim-muted: #b4bead;
+  --lerim-line: #30392d;
+  --lerim-green: #8cc4a4;
+  --lerim-green-soft: rgba(140, 196, 164, 0.14);
+  --lerim-blue: #9bbfd3;
+  --lerim-blue-soft: rgba(155, 191, 211, 0.14);
+  --lerim-copper: #d9a07f;
+  --lerim-copper-soft: rgba(217, 160, 127, 0.14);
+  --md-primary-fg-color: #245f46;
+  --md-primary-fg-color--light: #8cc4a4;
+  --md-primary-fg-color--dark: #174530;
+  --md-accent-fg-color: var(--lerim-copper);
+  --md-accent-fg-color--transparent: rgba(217, 160, 127, 0.14);
+  --md-default-bg-color: var(--lerim-paper);
+  --md-default-bg-color--light: var(--lerim-surface);
+  --md-typeset-a-color: var(--lerim-green);
+  --md-code-bg-color: rgba(255, 255, 255, 0.06);
+}
+
+.md-header,
+.md-tabs {
+  background-color: var(--md-primary-fg-color);
+}
+
+.md-main {
+  background:
+    linear-gradient(rgba(216, 223, 212, 0.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(216, 223, 212, 0.12) 1px, transparent 1px),
+    var(--md-default-bg-color);
+  background-size: 72px 72px, 72px 72px, auto;
+}
+
+[data-md-color-scheme="slate"] .md-main {
+  background:
+    linear-gradient(rgba(140, 196, 164, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(140, 196, 164, 0.04) 1px, transparent 1px),
+    var(--md-default-bg-color);
+  background-size: 72px 72px, 72px 72px, auto;
 }
 
 /* ── Hero section on landing page ── */
@@ -79,7 +128,7 @@
 
 /* ── Parameter field styling ── */
 .param-field {
-  border: 1px solid var(--md-default-fg-color--lightest);
+  border: 1px solid var(--lerim-line);
   border-radius: 0.4rem;
   padding: 1rem 1.2rem;
   margin-bottom: 0.75rem;
@@ -114,7 +163,7 @@
   border-radius: 0.25rem;
 }
 .param-field .param-badge.required {
-  background: #e53935;
+  background: var(--lerim-copper);
   color: white;
 }
 .param-field .param-badge.default {
@@ -135,14 +184,15 @@
   margin: 1.5rem 0;
 }
 .feature-grid .feature-item {
-  border: 1px solid var(--md-default-fg-color--lightest);
+  border: 1px solid var(--lerim-line);
   border-radius: 0.5rem;
   padding: 1.2rem;
+  background: var(--lerim-surface);
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 .feature-grid .feature-item:hover {
   border-color: var(--md-primary-fg-color);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 2px 8px rgba(17, 19, 15, 0.08);
 }
 .feature-grid .feature-item h4 {
   margin-top: 0;
@@ -159,12 +209,13 @@
 
 /* ── Card links (used for "Next steps" / "Related" sections) ── */
 .md-typeset .grid.cards > ul > li {
-  border: 1px solid var(--md-default-fg-color--lightest);
+  border: 1px solid var(--lerim-line);
+  background: var(--lerim-surface);
   transition: border-color 0.2s, box-shadow 0.2s, transform 0.15s;
 }
 .md-typeset .grid.cards > ul > li:hover {
   border-color: var(--md-primary-fg-color);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 12px rgba(17, 19, 15, 0.1);
   transform: translateY(-2px);
 }
 .md-typeset .grid.cards > ul > li a {
@@ -180,12 +231,12 @@
   font-weight: 600;
 }
 .status-badge.supported {
-  background: #c8e6c9;
-  color: #2e7d32;
+  background: var(--lerim-green-soft);
+  color: var(--lerim-green);
 }
 .status-badge.planned {
-  background: #fff9c4;
-  color: #f57f17;
+  background: var(--lerim-copper-soft);
+  color: var(--lerim-copper);
 }
 
 /* ── Code block enhancements ── */
@@ -196,7 +247,7 @@
 /* ── Section dividers ── */
 .section-divider {
   border: none;
-  border-top: 1px solid var(--md-default-fg-color--lightest);
+  border-top: 1px solid var(--lerim-line);
   margin: 2.5rem 0;
 }
 

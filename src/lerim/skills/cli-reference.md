@@ -10,12 +10,12 @@ If `lerim` is not on `PATH`, resolve the runnable command in `SKILL.md` first.
 Common fallback: `uvx lerim` or `/Users/kargarisaac/.local/bin/uvx lerim`.
 
 Durable Lerim context lives in the global SQLite DB under the active Lerim data dir (default: `~/.lerim/context.sqlite3`).
-Commands that call the HTTP API (`ask`, `sync`, `maintain`, `status`) require a
+Commands that call the HTTP API (`answer`, `ingest`, `curate`, `status`) require a
 running server (`lerim up` or `lerim serve`). `unscoped` also requires the running
 API. Most other commands are **host-only**
 (local files, Docker CLI, local SQLite state).
-`working-memory show`, `working-memory status`, and `working-memory path` are
-fast local reads. `working-memory refresh` runs local generation for the resolved
+`context-brief show`, `context-brief status`, and `context-brief path` are
+fast local reads. `context-brief refresh` runs local generation for the resolved
 project and records a service run.
 
 ## Global flags
@@ -40,11 +40,12 @@ project and records a service run.
 - `up` / `down` / `logs` (host-only)
 - `serve` (Docker entrypoint, or run directly)
 - `connect`
-- `sync`
-- `maintain`
-- `working-memory` (`show`, `status`, `path`, `refresh`) (host-only)
+- `ingest`
+- `curate`
+- `trace` (`import`) (host-only)
+- `context-brief` (`show`, `status`, `path`, `refresh`) (host-only)
 - `dashboard`
-- `ask`
+- `answer`
 - `query`
 - `status`
 - `queue`
@@ -55,11 +56,18 @@ project and records a service run.
 - `skill` (`install`) (host-only)
 - `auth` (`login`, `status`, `logout`, or bare `lerim auth`)
 
+Compatibility aliases:
+
+- `sync` -> `ingest` (deprecated; may be removed in a future release)
+- `maintain` -> `curate` (deprecated; may be removed in a future release)
+- `ask` -> `answer` (deprecated; may be removed in a future release)
+- `working-memory` -> `context-brief` (deprecated; may be removed in a future release)
+
 ## Commands
 
 ### `lerim init` (host-only)
 
-Interactive setup wizard. Detects installed coding agents and writes config to
+Interactive setup wizard. Detects installed agent sources and writes config to
 the active Lerim config path (default: `~/.lerim/config.toml`).
 
 ```bash
@@ -162,7 +170,7 @@ lerim connect remove claude               # disconnect Claude
 | `extra_arg` | Used with `remove` -- the platform to disconnect |
 | `--path` | Custom filesystem path to the platform's session store |
 
-### `lerim sync`
+### `lerim ingest`
 
 Hot-path: discover new agent sessions from connected platforms, enqueue them,
 and run BAML plus LangGraph extraction to create context records.
@@ -176,67 +184,99 @@ Requires a running server (`lerim up` or `lerim serve`).
 Duration format: `<number><unit>` where unit is `s` (seconds), `m` (minutes), `h` (hours), `d` (days).
 
 ```bash
-lerim sync                          # sync using configured window (default: 7d)
-lerim sync --window 30d             # sync last 30 days
-lerim sync --window all             # sync everything
-lerim sync --agent claude,codex     # only sync these platforms
-lerim sync --run-id abc123 --force  # re-extract a specific session
-lerim sync --since 2026-02-01T00:00:00Z --until 2026-02-08T00:00:00Z
-lerim sync --no-extract             # index and enqueue only, skip extraction
-lerim sync --dry-run                # preview what would happen, no writes
-lerim sync --max-sessions 100       # process up to 100 sessions
+lerim ingest                          # ingest using configured window (default: 7d)
+lerim ingest --window 30d             # ingest last 30 days
+lerim ingest --window all             # ingest everything
+lerim ingest --agent claude,codex     # only ingest these platforms
+lerim ingest --run-id abc123 --force  # re-extract a specific session
+lerim ingest --since 2026-02-01T00:00:00Z --until 2026-02-08T00:00:00Z
+lerim ingest --no-extract             # index and enqueue only, skip extraction
+lerim ingest --dry-run                # preview what would happen, no writes
+lerim ingest --max-sessions 100       # process up to 100 sessions
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--run-id` | -- | Target a single session by run ID (bypasses index scan) |
 | `--agent` | all | Comma-separated platform filter (e.g. `claude,codex`) |
-| `--window` | config `sync_window_days` (`7d`) | Relative time window (`30s`, `2m`, `1h`, `7d`, or `all`) |
+| `--window` | config `ingest_window_days` (`7d`) | Relative time window (`30s`, `2m`, `1h`, `7d`, or `all`) |
 | `--since` | -- | ISO-8601 start bound (overrides `--window`) |
 | `--until` | now | ISO-8601 end bound (only with `--since`) |
-| `--max-sessions` | config `sync_max_sessions` (`50`) | Max sessions to extract per run |
+| `--max-sessions` | config `ingest_max_sessions` (`50`) | Max sessions to extract per run |
 | `--no-extract` | off | Index/enqueue only, skip extraction |
 | `--force` | off | Re-extract already-processed sessions |
 | `--dry-run` | off | Preview mode, no writes |
 
 Notes:
-- `sync` is the hot path (queue + BAML/LangGraph extraction + context write).
-- Normal backlog sync claims the newest available session per project first.
-- `--ignore-lock` exists only as a CLI-local debug flag and is intentionally not supported by `/api/sync`; skipping the writer lock risks corruption.
-- Cold maintenance work is not executed in `sync`.
+- `ingest` is the hot path (queue + BAML/LangGraph extraction + context write).
+- Normal backlog ingest claims the newest available session per project first.
+- `--ignore-lock` exists only as a CLI-local debug flag and is intentionally not supported by `/api/ingest`; skipping the writer lock risks corruption.
+- Cold curation work is not executed in `ingest`.
 
-### `lerim maintain`
+### `lerim trace import` (host-only)
+
+Import a JSON, JSONL, or text trace from a custom agent or business workflow,
+normalize it, register the selected scope, and run ingestion.
+
+```bash
+lerim trace import ./support-agent-run.jsonl \
+  --source-name support-bot \
+  --source-profile support \
+  --scope-type domain \
+  --scope support
+```
+
+| Flag | Description |
+|------|-------------|
+| `path` | Trace file path. JSON, JSONL, and plain text are accepted |
+| `--source-name` | Source agent or system name, for example `support-bot` |
+| `--source-profile` | Source category, for example `support`, `research`, `web`, or `generic` |
+| `--scope-type` | One of `project`, `domain`, `user`, `session`, `workspace`, or `custom` |
+| `--scope` | Scope token. For `project`, pass the repository path |
+| `--scope-label` | Optional human-readable scope label |
+| `--session-id` | Optional stable session id. Defaults to the normalized trace id |
+
+The imported trace is copied to the Lerim workspace imports directory in compact
+canonical form, then ingested into the shared context store. This is the current
+custom-agent integration point; workflow-specific adapters can automate the
+export-and-import step.
+
+For sensitive or very noisy traces, run a customer-owned cleaner before import.
+Lerim filters for durable signal during ingestion, but it is not the only
+redaction, privacy, or compliance boundary for arbitrary custom traces.
+
+### `lerim curate`
 
 Cold-path: offline context refinement. Scans existing records and merges
 duplicates, archives low-value items, and consolidates related context.
 Requires a running server (`lerim up` or `lerim serve`).
 
 ```bash
-lerim maintain                # run one maintenance pass
-lerim maintain --dry-run      # preview only, no writes
+lerim curate                # run one curation pass
+lerim curate --dry-run      # preview only, no writes
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--dry-run` | Record a run but skip actual record changes |
 
-### `lerim working-memory` (host-only)
+### `lerim context-brief` (host-only)
 
-Generated markdown startup context for coding agents. The markdown lives under
-`~/.lerim/workspace/current/<project_id>/WORKING_MEMORY.md` and is a derived
+Generated markdown startup context for project-scoped agent work. The markdown lives under
+`~/.lerim/workspace/current/<project_id>/CONTEXT_BRIEF.md` and is a derived
 view of `~/.lerim/context.sqlite3`, not a second memory store.
 
 ```bash
-lerim working-memory show              # print live DB freshness + markdown
-lerim working-memory status            # show freshness metadata
-lerim working-memory path              # print stable current file path
-lerim working-memory refresh           # regenerate if records changed
-lerim working-memory refresh --force   # regenerate even if unchanged
+lerim context-brief show              # print live DB freshness + markdown
+lerim context-brief status            # show freshness metadata
+lerim context-brief path              # print stable current file path
+lerim context-brief refresh           # regenerate if records changed
+lerim context-brief refresh --force   # regenerate even if unchanged
 ```
 
 | Subcommand | Description |
 |------------|-------------|
-| `show` | Print live DB freshness plus the current `WORKING_MEMORY.md` without model calls |
+| `show` | Print live DB freshness plus the current `CONTEXT_BRIEF.md` without model calls |
 | `status` | Print availability, generated time, age, records included, DB changed-record count, current path, latest run, and suggested action |
 | `path` | Print the stable expected current artifact path |
 | `refresh` | Generate dated artifacts and update the stable current copy |
@@ -252,7 +292,7 @@ Rendered artifact shape:
 | Section | Source |
 |---------|--------|
 | `Summary` | Compact cited startup cache |
-| `Start Here` | Deterministic Lerim guidance for repo scope, freshness, git state, and verification |
+| `Start Here` | Deterministic Lerim guidance for project scope, freshness, workspace state, and verification |
 | `Current Handoff` | Recent episode evidence only; otherwise an explicit no-handoff note |
 | `Decisions` | Durable decision records |
 | `Constraints & Preferences` | Durable constraint and preference records |
@@ -262,37 +302,37 @@ Rendered artifact shape:
 | `Sources` | Cited record IDs used by the body |
 
 Notes:
-- Coding agents should call `lerim working-memory show` instead of hardcoding a `project_id`.
-- Use `lerim working-memory status` for dynamic freshness: current age, DB record-change count, current path, latest run folder, and suggested action.
-- Treat test/build results inside Working Memory as historical persisted evidence; rerun relevant checks after edits.
+- Agents should call `lerim context-brief show` instead of hardcoding a `project_id`.
+- Use `lerim context-brief status` for dynamic freshness: current age, DB record-change count, current path, latest run folder, and suggested action.
+- Treat validation/build/check results inside Context Brief as historical persisted evidence; rerun relevant checks after edits.
 - `show` prepends live DB freshness; the markdown that follows is still the last generated snapshot.
 - `Start Here` is deterministic. Do not read it as model-written evidence.
 - `Current Handoff` is valid only when backed by recent episode records.
-- Daily daemon refresh and maintain-triggered refresh skip unchanged projects.
-- Sync does not directly trigger Working Memory in v1.
+- Daily daemon refresh and curate-triggered refresh skip unchanged projects.
+- Ingest does not directly trigger Context Brief in v1.
 
 Flow:
 
 ```mermaid
 flowchart TD
-    A["manual refresh, daily daemon, or maintain trigger"] --> B["resolve registered project"]
+    A["manual refresh, daily daemon, or curate trigger"] --> B["resolve registered project"]
     B --> C["count changed DB record_versions since generated_at"]
     C --> D{"current artifact exists and changed count is 0?"}
     D -- "yes" --> E["skip without model call"]
     D -- "no or --force" --> F["load active candidate records"]
     F --> G{"candidate records exist?"}
     G -- "no" --> H["render empty-state markdown"]
-    G -- "yes" --> I["run Working Memory synthesis agent"]
+    G -- "yes" --> I["run Context Brief synthesis agent"]
     I --> J["validate cited record IDs and fixed sections"]
     H --> K["write dated run artifacts"]
     J --> K
     K --> L["copy latest files to workspace/current/<project_id>"]
 ```
 
-### Background sync and maintain
+### Background ingest and curate
 
-There is **no** separate `lerim daemon` command. The daemon loop (sync + maintain
-on `sync_interval_minutes` / `maintain_interval_minutes`, plus daily Working Memory)
+There is **no** separate `lerim daemon` command. The daemon loop (ingest + curate
+on `ingest_interval_minutes` / `curate_interval_minutes`, plus daily Context Brief)
 runs **inside**
 `lerim serve` and therefore inside `lerim up` (Docker).
 
@@ -304,15 +344,15 @@ Shows current web UI status and lists CLI alternatives for common tasks.
 lerim dashboard
 ```
 
-### `lerim ask`
+### `lerim answer`
 
-One-shot query: ask Lerim a question with context-informed retrieval.
+One-shot query: answer Lerim a question with context-informed retrieval.
 Requires a running server (`lerim up` or `lerim serve`).
 
 ```bash
-lerim ask 'What auth pattern do we use?'
-lerim ask "How is the database configured?"
-lerim ask "How is the database configured?" --verbose
+lerim answer 'What auth pattern do we use?'
+lerim answer "How is the database configured?"
+lerim answer "How is the database configured?" --verbose
 ```
 
 | Flag | Default | Description |
@@ -320,12 +360,12 @@ lerim ask "How is the database configured?" --verbose
 | `question` | required | Your question (quote if spaces) |
 | `--scope` | `all` | Read scope: `all` or `project` |
 | `--project` | -- | Project name/path when `--scope=project` |
-| `--verbose` | off | Show the full sanitized ask trace in message order |
+| `--verbose` | off | Show the full sanitized answer trace in message order |
 
 Notes:
-- Ask uses hybrid retrieval for explanatory questions: local ONNX embeddings, `sqlite-vec`, SQLite FTS5, and RRF.
-- Ask uses deterministic query tools for count/latest/date questions.
-- `--verbose` prints the ordered ask trace: prompts, tool calls, tool returns, and assistant text.
+- Answer uses hybrid retrieval for explanatory questions: local ONNX embeddings, `sqlite-vec`, SQLite FTS5, and RRF.
+- Answer uses deterministic query tools for count/latest/date questions.
+- `--verbose` prints the ordered answer trace: prompts, tool calls, tool returns, and assistant text.
 - System prompts are shown as character counts, not full text.
 - Tool-return payloads are clipped to the first 200 characters to keep the trace readable.
 - Hidden provider reasoning is not exposed.
@@ -364,7 +404,7 @@ lerim query sessions list --order-by created_at --limit 20
 ### `lerim status`
 
 Print runtime state: connected platforms, context record count, session queue stats,
-and timestamps of the latest sync/maintain runs.
+and timestamps of the latest ingest/curate runs.
 Requires a running server (`lerim up` or `lerim serve`).
 
 ```bash
@@ -444,7 +484,7 @@ lerim auth logout
 
 ### `lerim skill` (host-only)
 
-Install Lerim skill files into coding agent directories.
+Install Lerim skill files into supported agent directories.
 
 Installs to two locations:
 - `~/.agents/skills/lerim/` — shared by Cursor, Codex, OpenCode, and others

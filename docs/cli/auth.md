@@ -14,4 +14,4 @@ lerim auth logout
 ## Notes
 
 - Auth stores the cloud token in the active Lerim config.
-- Local sync, maintain, and ask do not require Lerim Cloud auth.
+- Local ingest, curate, and answer do not require Lerim Cloud auth.

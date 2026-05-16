@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lerim"
-version = "0.1.83"
-description = "Continual learning layer for coding agents and software projects."
+version = "0.2.0"
+description = "Trace-to-context layer for AI agent workflows."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "BUSL-1.1"
@@ -13,8 +13,6 @@ dependencies = [
     "pydantic==2.12.5",
     "baml-py==0.222.0",
     "langgraph==1.2.0",
-    "pydantic-ai==1.70.0",
-    "pydantic-evals==1.70.0",
     "eval_type_backport==0.3.1; python_version < '3.13'",
     "python-dotenv==1.2.2",
     "PyYAML==6.0.3",

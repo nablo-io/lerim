@@ -1,7 +1,0 @@
-case: working_memory_refresh_writes_empty_state_without_model_call
-expected:
-  workspace_subdir: "working-memory"
-  empty_state_must_include:
-    - "No active project context records exist yet."
-    - "lerim sync"
-    - "lerim maintain"

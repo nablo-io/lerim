@@ -1,5 +1,5 @@
 """Unit tests for daemon.py pure logic: resolve_window_bounds, lock state,
-OperationResult, SyncSummary, ServiceLock, log_activity, and helper functions.
+OperationResult, IngestSummary, ServiceLock, log_activity, and helper functions.
 
 Focuses on testable functions without requiring a real runtime or database.
 """
@@ -26,7 +26,7 @@ from lerim.server.daemon import (
     LockBusyError,
     OperationResult,
     ServiceLock,
-    SyncSummary,
+    IngestSummary,
     _is_stale,
     _now_iso,
     _parse_iso,
@@ -283,7 +283,7 @@ def test_service_lock_reclaims_stale(tmp_path) -> None:
     lock_file.write_text(json.dumps(stale_state), encoding="utf-8")
 
     lock = ServiceLock(lock_file, stale_seconds=60)
-    state = lock.acquire("new-owner", "lerim sync")
+    state = lock.acquire("new-owner", "lerim ingest")
 
     assert state["owner"] == "new-owner"
     assert state["pid"] == os.getpid()
@@ -304,7 +304,7 @@ def test_service_lock_reclaims_reused_pid(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(daemon, "_process_start_ticks", lambda _pid: "new-start")
 
     lock = ServiceLock(lock_file, stale_seconds=60)
-    state = lock.acquire("new-container", "lerim sync")
+    state = lock.acquire("new-container", "lerim ingest")
 
     assert state["owner"] == "new-container"
     assert state["process_start_ticks"] == "new-start"
@@ -324,7 +324,7 @@ def test_service_lock_busy_raises(tmp_path) -> None:
 
     lock = ServiceLock(lock_file, stale_seconds=60)
     with pytest.raises(LockBusyError):
-        lock.acquire("conflicting", "lerim maintain")
+        lock.acquire("conflicting", "lerim curate")
 
 
 def test_service_lock_refreshes_heartbeat(tmp_path) -> None:
@@ -376,10 +376,10 @@ def test_lock_busy_error_str_with_state(tmp_path) -> None:
     """LockBusyError.__str__ shows owner and PID when state is present."""
     err = LockBusyError(
         lock_path=tmp_path / "writer.lock",
-        state={"owner": "sync", "pid": 12345},
+        state={"owner": "ingest", "pid": 12345},
     )
     s = str(err)
-    assert "sync" in s
+    assert "ingest" in s
     assert "12345" in s
 
 
@@ -395,10 +395,10 @@ def test_lock_busy_error_str_without_state(tmp_path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_operation_result_to_details_json_sync() -> None:
+def test_operation_result_to_details_json_ingest() -> None:
     """to_details_json strips zero/empty values and metadata keys."""
     op = OperationResult(
-        operation="sync",
+        operation="ingest",
         status="completed",
         trigger="manual",
         extracted_sessions=3,
@@ -424,7 +424,7 @@ def test_operation_result_to_details_json_sync() -> None:
 def test_operation_result_to_details_json_dry_run() -> None:
     """to_details_json strips dry_run=False but keeps dry_run=True."""
     op_false = OperationResult(
-        operation="sync",
+        operation="ingest",
         status="completed",
         trigger="api",
         dry_run=False,
@@ -432,7 +432,7 @@ def test_operation_result_to_details_json_dry_run() -> None:
     assert "dry_run" not in op_false.to_details_json()
 
     op_true = OperationResult(
-        operation="sync",
+        operation="ingest",
         status="completed",
         trigger="api",
         dry_run=True,
@@ -440,10 +440,10 @@ def test_operation_result_to_details_json_dry_run() -> None:
     assert op_true.to_details_json()["dry_run"] is True
 
 
-def test_operation_result_to_span_attrs_sync() -> None:
-    """to_span_attrs returns flat attributes for sync operation."""
+def test_operation_result_to_span_attrs_ingest() -> None:
+    """to_span_attrs returns flat attributes for ingest operation."""
     op = OperationResult(
-        operation="sync",
+        operation="ingest",
         status="completed",
         trigger="daemon",
         extracted_sessions=5,
@@ -453,32 +453,32 @@ def test_operation_result_to_span_attrs_sync() -> None:
     )
     attrs = op.to_span_attrs()
 
-    assert attrs["operation"] == "sync"
+    assert attrs["operation"] == "ingest"
     assert attrs["extracted_sessions"] == 5
     assert attrs["cost_usd"] == 0.01
     assert "error" not in attrs  # None -> excluded
 
 
-def test_operation_result_to_span_attrs_maintain() -> None:
-    """to_span_attrs returns projects_count for maintain operation."""
+def test_operation_result_to_span_attrs_curate() -> None:
+    """to_span_attrs returns projects_count for curate operation."""
     op = OperationResult(
-        operation="maintain",
+        operation="curate",
         status="completed",
         trigger="daemon",
         projects={"proj-a": {}, "proj-b": {}},
     )
     attrs = op.to_span_attrs()
 
-    assert attrs["operation"] == "maintain"
+    assert attrs["operation"] == "curate"
     assert attrs["projects_count"] == 2
-    # sync-specific keys absent
+    # ingest-specific keys absent
     assert "indexed_sessions" not in attrs
 
 
 def test_operation_result_to_span_attrs_with_error() -> None:
     """to_span_attrs includes error when present."""
     op = OperationResult(
-        operation="sync",
+        operation="ingest",
         status="failed",
         trigger="api",
         error="something went wrong",
@@ -488,13 +488,13 @@ def test_operation_result_to_span_attrs_with_error() -> None:
 
 
 # ---------------------------------------------------------------------------
-# SyncSummary
+# IngestSummary
 # ---------------------------------------------------------------------------
 
 
-def test_sync_summary_dataclass() -> None:
-    """SyncSummary is a frozen dataclass with expected fields."""
-    s = SyncSummary(
+def test_ingest_summary_dataclass() -> None:
+    """IngestSummary is a frozen dataclass with expected fields."""
+    s = IngestSummary(
         indexed_sessions=10,
         extracted_sessions=8,
         skipped_sessions=1,
@@ -507,9 +507,9 @@ def test_sync_summary_dataclass() -> None:
     assert len(s.run_ids) == 2
 
 
-def test_sync_summary_defaults() -> None:
-    """SyncSummary cost_usd defaults to 0.0."""
-    s = SyncSummary(
+def test_ingest_summary_defaults() -> None:
+    """IngestSummary cost_usd defaults to 0.0."""
+    s = IngestSummary(
         indexed_sessions=0,
         extracted_sessions=0,
         skipped_sessions=0,
@@ -604,8 +604,8 @@ def test_resolve_window_bounds_window_with_since_raises() -> None:
 
 
 def test_resolve_window_bounds_no_window_uses_config(monkeypatch, tmp_path) -> None:
-    """No window/since/until falls back to config.sync_window_days."""
-    cfg = replace(make_config(tmp_path), sync_window_days=14)
+    """No window/since/until falls back to config.ingest_window_days."""
+    cfg = replace(make_config(tmp_path), ingest_window_days=14)
     monkeypatch.setattr("lerim.server.daemon.get_config", lambda: cfg)
 
     start, end = resolve_window_bounds(
@@ -713,11 +713,11 @@ def test_log_activity_creates_file(tmp_path, monkeypatch) -> None:
     log_file = tmp_path / "subdir" / "activity.log"
     monkeypatch.setattr("lerim.server.daemon.ACTIVITY_LOG_PATH", log_file)
 
-    log_activity("sync", "myproject", "2 new", 3.5, cost_usd=0.001)
+    log_activity("ingest", "myproject", "2 new", 3.5, cost_usd=0.001)
 
     assert log_file.exists()
     content = log_file.read_text()
-    assert "| sync" in content
+    assert "| ingest" in content
     assert "myproject" in content
     assert "$0.0010" in content
     assert "3.5s" in content
@@ -728,8 +728,8 @@ def test_log_activity_appends_multiple(tmp_path, monkeypatch) -> None:
     log_file = tmp_path / "activity.log"
     monkeypatch.setattr("lerim.server.daemon.ACTIVITY_LOG_PATH", log_file)
 
-    log_activity("sync", "proj-a", "1 new", 1.0)
-    log_activity("maintain", "proj-b", "2 merged", 2.0)
+    log_activity("ingest", "proj-a", "1 new", 1.0)
+    log_activity("curate", "proj-b", "2 merged", 2.0)
 
     lines = log_file.read_text().splitlines()
     assert len(lines) == 2
@@ -740,22 +740,22 @@ def test_log_activity_cost_formatting(tmp_path, monkeypatch) -> None:
     log_file = tmp_path / "activity.log"
     monkeypatch.setattr("lerim.server.daemon.ACTIVITY_LOG_PATH", log_file)
 
-    log_activity("sync", "proj", "stats", 1.0, cost_usd=0.12345)
+    log_activity("ingest", "proj", "stats", 1.0, cost_usd=0.12345)
 
     content = log_file.read_text()
     assert "$0.1235" in content  # rounded to 4 decimals
 
 
 # ---------------------------------------------------------------------------
-# _empty_sync_summary
+# _empty_ingest_summary
 # ---------------------------------------------------------------------------
 
 
-def test_empty_sync_summary() -> None:
-    """_empty_sync_summary returns zeroed-out SyncSummary."""
-    from lerim.server.daemon import _empty_sync_summary
+def test_empty_ingest_summary() -> None:
+    """_empty_ingest_summary returns zeroed-out IngestSummary."""
+    from lerim.server.daemon import _empty_ingest_summary
 
-    s = _empty_sync_summary()
+    s = _empty_ingest_summary()
     assert s.indexed_sessions == 0
     assert s.extracted_sessions == 0
     assert s.run_ids == []
@@ -802,7 +802,7 @@ def test_record_service_event_calls_fn() -> None:
 
     _record_service_event(
         fake_record,
-        job_type="sync",
+        job_type="ingest",
         status="completed",
         started_at="2026-01-01T00:00:00+00:00",
         trigger="manual",
@@ -810,7 +810,7 @@ def test_record_service_event_calls_fn() -> None:
     )
 
     assert len(captured) == 1
-    assert captured[0]["job_type"] == "sync"
+    assert captured[0]["job_type"] == "ingest"
     assert captured[0]["status"] == "completed"
     assert captured[0]["trigger"] == "manual"
     assert captured[0]["completed_at"]  # should be set by _now_iso
@@ -827,7 +827,7 @@ def test_record_service_event_suppresses_sqlite_error() -> None:
 
     _record_service_event(
         broken_record,
-        job_type="sync",
+        job_type="ingest",
         status="failed",
         started_at="2026-01-01T00:00:00+00:00",
         trigger="manual",
@@ -847,12 +847,12 @@ def test_record_service_start_calls_fn() -> None:
 
     _record_service_start(
         fake_record,
-        job_type="sync",
+        job_type="ingest",
         started_at="2026-01-01T00:00:00+00:00",
         trigger="api",
     )
 
-    assert captured[0]["job_type"] == "sync"
+    assert captured[0]["job_type"] == "ingest"
     assert captured[0]["status"] == "started"
     assert captured[0]["completed_at"] is None
     assert captured[0]["details"] is None
@@ -913,7 +913,7 @@ def test_pid_alive_os_error(monkeypatch) -> None:
 def test_operation_result_with_all_fields() -> None:
     """OperationResult with all fields populated serializes correctly."""
     op = OperationResult(
-        operation="sync",
+        operation="ingest",
         status="partial",
         trigger="daemon",
         indexed_sessions=10,
@@ -943,10 +943,10 @@ def test_operation_result_with_all_fields() -> None:
     assert attrs["cost_usd"] == 0.05
 
 
-def test_operation_result_maintain_no_cost() -> None:
-    """Maintain OperationResult without cost excludes cost_usd from attrs."""
+def test_operation_result_curate_no_cost() -> None:
+    """Curate OperationResult without cost excludes cost_usd from attrs."""
     op = OperationResult(
-        operation="maintain",
+        operation="curate",
         status="completed",
         trigger="daemon",
         cost_usd=0.0,
@@ -956,12 +956,12 @@ def test_operation_result_maintain_no_cost() -> None:
 
 
 # ---------------------------------------------------------------------------
-# run_maintain_once dry_run shortcut
+# run_curate_once dry_run shortcut
 # ---------------------------------------------------------------------------
 
 
-def test_run_maintain_once_dry_run(monkeypatch, tmp_path) -> None:
-    """run_maintain_once with dry_run=True returns immediately without lock."""
+def test_run_curate_once_dry_run(monkeypatch, tmp_path) -> None:
+    """run_curate_once with dry_run=True returns immediately without lock."""
     from lerim.server import daemon
     from lerim.sessions import catalog
 
@@ -976,7 +976,7 @@ def test_run_maintain_once_dry_run(monkeypatch, tmp_path) -> None:
     reload_config()
     catalog.init_sessions_db()
 
-    code, payload = daemon.run_maintain_once(dry_run=True)
+    code, payload = daemon.run_curate_once(dry_run=True)
     assert code == EXIT_OK
     assert payload.get("dry_run") is True
 

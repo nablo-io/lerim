@@ -7,22 +7,22 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
-from lerim.agents.ask import AskResult
-from lerim.agents.extract import ExtractionEvent, ExtractionResult, ExtractionRunDetails
-from lerim.agents.maintain import MaintainEvent, MaintainRunDetails
+from lerim.agents.context_answerer import ContextAnswerResult
+from lerim.agents.trace_ingestion import TraceIngestionEvent, TraceIngestionResult, TraceIngestionRunDetails
+from lerim.agents.context_curator import ContextCuratorEvent, ContextCuratorRunDetails
 from lerim.context import ContextStore
-from lerim.working_memory import (
+from lerim.context_brief import (
     MemoryLine,
     MemorySection,
-    WorkingMemoryDraft,
-    working_memory_paths,
+    ContextBriefDraft,
+    context_brief_paths,
 )
 from tests.integration.runtime.helpers import (
-    build_ordered_ask_messages,
+    build_ordered_answer_messages,
     build_runtime_case_context,
     load_runtime_expectation,
     seed_runtime_session,
-    write_sync_trace,
+    write_ingest_trace,
 )
 
 
@@ -41,11 +41,11 @@ def _assert_run_folder_layout(
     assert len(day.name) == 2 and day.name.isdigit()
 
 
-def _extract_details(kwargs, *, summary: str) -> ExtractionRunDetails:
-    """Build graph-style extraction details for sync runtime test doubles."""
-    return ExtractionRunDetails(
+def _extract_details(kwargs, *, summary: str) -> TraceIngestionRunDetails:
+    """Build graph-style extraction details for ingest runtime test doubles."""
+    return TraceIngestionRunDetails(
         events=[
-            ExtractionEvent(
+            TraceIngestionEvent(
                 action="final_result",
                 ok=True,
                 content=summary,
@@ -64,11 +64,11 @@ def _extract_details(kwargs, *, summary: str) -> ExtractionRunDetails:
     )
 
 
-def _maintain_details(kwargs, *, summary: str) -> MaintainRunDetails:
-    """Build graph-style maintain details for runtime test doubles."""
-    return MaintainRunDetails(
+def _curate_details(kwargs, *, summary: str) -> ContextCuratorRunDetails:
+    """Build graph-style curate details for runtime test doubles."""
+    return ContextCuratorRunDetails(
         events=[
-            MaintainEvent(
+            ContextCuratorEvent(
                 action="final_result",
                 ok=True,
                 content=summary,
@@ -86,11 +86,11 @@ def _maintain_details(kwargs, *, summary: str) -> MaintainRunDetails:
     )
 
 
-def test_sync_artifact_paths_are_stable_per_flow(
+def test_ingest_artifact_paths_are_stable_per_flow(
     monkeypatch, live_config, live_repo_root
 ):
-    """Sync writes artifacts only under the canonical sync workspace layout."""
-    expectation = load_runtime_expectation("sync_artifact_paths_are_stable_per_flow")[
+    """Ingest writes artifacts only under the canonical ingest workspace layout."""
+    expectation = load_runtime_expectation("ingest_artifact_paths_are_stable_per_flow")[
         "expected"
     ]
     ctx = build_runtime_case_context(
@@ -98,20 +98,16 @@ def test_sync_artifact_paths_are_stable_per_flow(
         live_config=live_config,
         live_repo_root=live_repo_root,
     )
-    trace_path = write_sync_trace(live_repo_root, name="sync-artifacts.jsonl")
+    trace_path = write_ingest_trace(live_repo_root, name="ingest-artifacts.jsonl")
     monkeypatch.setattr(
-        "lerim.server.runtime.build_pydantic_model",
-        lambda *args, **kwargs: "fake-model",
-    )
-    monkeypatch.setattr(
-        "lerim.server.runtime.run_extraction",
+        "lerim.server.runtime.run_trace_ingestion",
         lambda **kwargs: (
-            ExtractionResult(completion_summary="sync complete"),
-            _extract_details(kwargs, summary="sync complete"),
+            TraceIngestionResult(completion_summary="ingest complete"),
+            _extract_details(kwargs, summary="ingest complete"),
         ),
     )
 
-    result = ctx.runtime.sync(trace_path=trace_path, session_id="sync-artifacts-case")
+    result = ctx.runtime.ingest(trace_path=trace_path, session_id="ingest-artifacts-case")
 
     run_folder = Path(result["run_folder"])
     workspace_root = live_config.global_data_dir / "workspace"
@@ -122,7 +118,7 @@ def test_sync_artifact_paths_are_stable_per_flow(
     assert set(result["artifacts"]) == set(expectation["artifact_names"])
     assert (run_folder / "agent.log").read_text(
         encoding="utf-8"
-    ).strip() == "sync complete"
+    ).strip() == "ingest complete"
     assert (run_folder / "subagents.log").read_text(encoding="utf-8") == ""
     session_log = json.loads((run_folder / "session.log").read_text(encoding="utf-8"))
     assert session_log["run_id"] == run_folder.name
@@ -134,12 +130,12 @@ def test_sync_artifact_paths_are_stable_per_flow(
     assert manifest["mlflow_client_request_id"] == run_folder.name
 
 
-def test_ask_debug_trace_preserves_ordered_tool_flow(
+def test_answer_debug_trace_preserves_ordered_tool_flow(
     monkeypatch, live_config, live_repo_root
 ):
-    """Ask debug payload keeps message order and tool flow intact."""
+    """Answer debug payload keeps message order and tool flow intact."""
     expectation = load_runtime_expectation(
-        "ask_debug_trace_preserves_ordered_tool_flow"
+        "answer_debug_trace_preserves_ordered_tool_flow"
     )["expected"]
     ctx = build_runtime_case_context(
         monkeypatch=monkeypatch,
@@ -147,18 +143,14 @@ def test_ask_debug_trace_preserves_ordered_tool_flow(
         live_repo_root=live_repo_root,
     )
     monkeypatch.setattr(
-        "lerim.server.runtime.build_pydantic_model",
-        lambda *args, **kwargs: "fake-model",
-    )
-    monkeypatch.setattr(
-        "lerim.server.runtime.run_ask",
+        "lerim.server.runtime.run_context_answerer",
         lambda **kwargs: (
-            AskResult(answer="Final answer"),
-            build_ordered_ask_messages(),
+            ContextAnswerResult(answer="Final answer"),
+            build_ordered_answer_messages(),
         ),
     )
 
-    answer, session_id, cost, debug = ctx.runtime.ask(
+    answer, session_id, cost, debug = ctx.runtime.answer(
         "What changed recently?",
         repo_root=live_repo_root,
         include_debug=True,
@@ -168,45 +160,36 @@ def test_ask_debug_trace_preserves_ordered_tool_flow(
     assert session_id.startswith("lerim-")
     assert cost == 0.0
     assert debug is not None
-    assert [item["tool_name"] for item in debug["tool_calls"]] == expectation[
-        "tool_call_order"
+    assert [item["action_type"] for item in debug["retrieval_actions"]] == expectation[
+        "retrieval_action_order"
     ]
-    assert [item["tool_name"] for item in debug["tool_results"]] == [
-        "list_context",
-        "get_context",
-    ]
-    assert debug["message_count"] == 6
+    assert debug["message_count"] == 4
     assert [item["kind"] for item in debug["messages"]] == expectation["message_kinds"]
-    assert debug["messages"][1]["parts"][0]["part_kind"] == "tool-call"
-    assert debug["messages"][1]["parts"][0]["tool_name"] == "list_context"
-    assert debug["messages"][2]["parts"][0]["part_kind"] == "tool-return"
-    assert len(debug["messages"][2]["parts"][0]["content_preview"]) == 200
-    assert debug["messages"][5]["parts"][0]["part_kind"] == "text"
-    assert (
-        debug["messages"][5]["parts"][0]["content"]
-        == "The latest change updated the recent record."
-    )
+    assert debug["messages"][0]["parts"][0]["part_kind"] == "PlanContextRetrieval"
+    assert debug["messages"][1]["parts"][0]["part_kind"] == "list"
+    assert debug["messages"][2]["parts"][0]["part_kind"] == "search"
+    assert debug["messages"][3]["parts"][0]["part_kind"] == "AnswerFromContext"
 
 
-def test_maintain_change_counts_reflect_real_mutations(
+def test_curate_change_counts_reflect_real_mutations(
     monkeypatch, live_config, live_repo_root
 ):
-    """Maintain payload counts should match the actual store mutations from the run."""
+    """Curate payload counts should match the actual store mutations from the run."""
     expectation = load_runtime_expectation(
-        "maintain_change_counts_reflect_real_mutations"
+        "curate_change_counts_reflect_real_mutations"
     )["expected"]
     ctx = build_runtime_case_context(
         monkeypatch=monkeypatch,
         live_config=live_config,
         live_repo_root=live_repo_root,
     )
-    seed_session_id = "runtime-maintain-seed"
+    seed_session_id = "runtime-curate-seed"
     seed_runtime_session(
         ctx.store,
         project_id=ctx.project_id,
         session_id=seed_session_id,
         repo_root=live_repo_root,
-        source_trace_ref="maintain-seed",
+        source_trace_ref="curate-seed",
     )
     seed_fact = ctx.store.create_record(
         project_id=ctx.project_id,
@@ -227,12 +210,7 @@ def test_maintain_change_counts_reflect_real_mutations(
         outcomes="No durable context.",
         change_reason="seed_episode",
     )
-    monkeypatch.setattr(
-        "lerim.server.runtime.build_pydantic_model",
-        lambda *args, **kwargs: "fake-model",
-    )
-
-    def _fake_run_maintain(**kwargs):
+    def _fake_run_context_curator(**kwargs):
         session_id = kwargs["session_id"]
         store = ctx.store
         store.create_record(
@@ -241,7 +219,7 @@ def test_maintain_change_counts_reflect_real_mutations(
             kind="fact",
             title="Worker retries need bounded backoff",
             body="Bound retry backoff to avoid runaway queue pressure.",
-            change_reason="maintain_create",
+            change_reason="curate_create",
         )
         store.update_record(
             record_id=str(seed_fact["record_id"]),
@@ -250,23 +228,23 @@ def test_maintain_change_counts_reflect_real_mutations(
             changes={
                 "body": "Retries in the worker loop should stay bounded and observable."
             },
-            change_reason="maintain_update",
+            change_reason="curate_update",
         )
         store.archive_record(
             record_id=str(seed_episode["record_id"]),
             session_id=session_id,
             project_ids=[ctx.project_id],
-            reason="maintain_archive",
+            reason="curate_archive",
         )
         return (
-            SimpleNamespace(completion_summary="maintain complete"),
-            _maintain_details(kwargs, summary="maintain complete"),
+            SimpleNamespace(completion_summary="curate complete"),
+            _curate_details(kwargs, summary="curate complete"),
         )
 
-    monkeypatch.setattr("lerim.server.runtime.run_maintain", _fake_run_maintain)
+    monkeypatch.setattr("lerim.server.runtime.run_context_curator", _fake_run_context_curator)
 
-    result = ctx.runtime.maintain(
-        repo_root=live_repo_root, session_id="runtime-maintain-case"
+    result = ctx.runtime.curate(
+        repo_root=live_repo_root, session_id="runtime-curate-case"
     )
 
     run_folder = Path(result["run_folder"])
@@ -282,7 +260,7 @@ def test_maintain_change_counts_reflect_real_mutations(
     assert result["records_archived"] == int(expectation["records_archived"])
     assert (run_folder / "agent.log").read_text(
         encoding="utf-8"
-    ).strip() == "maintain complete"
+    ).strip() == "curate complete"
     archived_episode = ctx.store.fetch_record(
         str(seed_episode["record_id"]),
         project_ids=[ctx.project_id],
@@ -300,38 +278,34 @@ def test_maintain_change_counts_reflect_real_mutations(
     )
 
 
-def test_sync_retries_transient_error_and_then_writes_artifacts(
+def test_ingest_retries_transient_error_and_then_writes_artifacts(
     monkeypatch, live_config, live_repo_root
 ):
-    """Sync should retry one transient failure and still finish with normal artifacts."""
+    """Ingest should retry one transient failure and still finish with normal artifacts."""
     expectation = load_runtime_expectation(
-        "sync_retries_transient_error_and_then_writes_artifacts"
+        "ingest_retries_transient_error_and_then_writes_artifacts"
     )["expected"]
     ctx = build_runtime_case_context(
         monkeypatch=monkeypatch,
         live_config=live_config,
         live_repo_root=live_repo_root,
     )
-    trace_path = write_sync_trace(live_repo_root, name="sync-retry.jsonl")
+    trace_path = write_ingest_trace(live_repo_root, name="ingest-retry.jsonl")
     attempts = {"count": 0}
     monkeypatch.setattr(time, "sleep", lambda *_: None)
-    monkeypatch.setattr(
-        "lerim.server.runtime.build_pydantic_model",
-        lambda *args, **kwargs: "fake-model",
-    )
 
-    def _flaky_run_extraction(**kwargs):
+    def _flaky_run_trace_ingestion(**kwargs):
         attempts["count"] += 1
         if attempts["count"] == 1:
             raise RuntimeError("temporary upstream failure")
         return (
-            ExtractionResult(completion_summary="sync recovered"),
-            _extract_details(kwargs, summary="sync recovered"),
+            TraceIngestionResult(completion_summary="ingest recovered"),
+            _extract_details(kwargs, summary="ingest recovered"),
         )
 
-    monkeypatch.setattr("lerim.server.runtime.run_extraction", _flaky_run_extraction)
+    monkeypatch.setattr("lerim.server.runtime.run_trace_ingestion", _flaky_run_trace_ingestion)
 
-    result = ctx.runtime.sync(trace_path=trace_path, session_id="sync-retry-case")
+    result = ctx.runtime.ingest(trace_path=trace_path, session_id="ingest-retry-case")
 
     run_folder = Path(result["run_folder"])
     assert attempts["count"] == int(expectation["expected_attempts"])
@@ -342,30 +316,26 @@ def test_sync_retries_transient_error_and_then_writes_artifacts(
     )
     assert (run_folder / "agent.log").read_text(
         encoding="utf-8"
-    ).strip() == "sync recovered"
+    ).strip() == "ingest recovered"
     assert (run_folder / "session.log").exists()
     assert (run_folder / "agent_trace.json").exists()
 
 
-def test_runtime_sync_then_maintain_then_ask_with_real_artifacts(
+def test_runtime_ingest_then_curate_then_answer_with_real_artifacts(
     monkeypatch, live_config, live_repo_root
 ):
-    """A sync-created record should survive maintain and be what ask later answers from."""
+    """A ingest-created record should survive curate and be what answer later answers from."""
     expectation = load_runtime_expectation(
-        "runtime_sync_then_maintain_then_ask_with_real_artifacts"
+        "runtime_ingest_then_curate_then_answer_with_real_artifacts"
     )["expected"]
     ctx = build_runtime_case_context(
         monkeypatch=monkeypatch,
         live_config=live_config,
         live_repo_root=live_repo_root,
     )
-    trace_path = write_sync_trace(live_repo_root, name="sync-chain.jsonl")
-    monkeypatch.setattr(
-        "lerim.server.runtime.build_pydantic_model",
-        lambda *args, **kwargs: "fake-model",
-    )
+    trace_path = write_ingest_trace(live_repo_root, name="ingest-chain.jsonl")
 
-    def _fake_run_extraction(**kwargs):
+    def _fake_run_trace_ingestion(**kwargs):
         store = ContextStore(kwargs["context_db_path"])
         store.create_record(
             project_id=kwargs["project_identity"].project_id,
@@ -373,14 +343,14 @@ def test_runtime_sync_then_maintain_then_ask_with_real_artifacts(
             kind="fact",
             title="Worker retries need bounded backoff",
             body="Worker retries need bounded backoff.",
-            change_reason="runtime_chain_sync",
+            change_reason="runtime_chain_ingest",
         )
         return (
-            ExtractionResult(completion_summary="sync wrote initial fact"),
-            _extract_details(kwargs, summary="sync wrote initial fact"),
+            TraceIngestionResult(completion_summary="ingest wrote initial fact"),
+            _extract_details(kwargs, summary="ingest wrote initial fact"),
         )
 
-    def _fake_run_maintain(**kwargs):
+    def _fake_run_context_curator(**kwargs):
         store = ContextStore(kwargs["context_db_path"])
         rows = store.query(
             entity="records",
@@ -400,14 +370,14 @@ def test_runtime_sync_then_maintain_then_ask_with_real_artifacts(
                 "title": "Worker retries need bounded backoff",
                 "body": "Worker retries need bounded backoff so failures stay observable.",
             },
-            change_reason="runtime_chain_maintain",
+            change_reason="runtime_chain_curate",
         )
         return (
-            SimpleNamespace(completion_summary="maintain strengthened fact"),
-            _maintain_details(kwargs, summary="maintain strengthened fact"),
+            SimpleNamespace(completion_summary="curate strengthened fact"),
+            _curate_details(kwargs, summary="curate strengthened fact"),
         )
 
-    def _fake_run_ask(**kwargs):
+    def _fake_run_context_answerer(**kwargs):
         store = ContextStore(kwargs["context_db_path"])
         rows = store.query(
             entity="records",
@@ -425,46 +395,46 @@ def test_runtime_sync_then_maintain_then_ask_with_real_artifacts(
         assert record is not None
         answer = str(record["body"])
         return (
-            AskResult(answer=answer),
-            build_ordered_ask_messages(),
+            ContextAnswerResult(answer=answer),
+            build_ordered_answer_messages(),
         )
 
-    monkeypatch.setattr("lerim.server.runtime.run_extraction", _fake_run_extraction)
-    monkeypatch.setattr("lerim.server.runtime.run_maintain", _fake_run_maintain)
-    monkeypatch.setattr("lerim.server.runtime.run_ask", _fake_run_ask)
+    monkeypatch.setattr("lerim.server.runtime.run_trace_ingestion", _fake_run_trace_ingestion)
+    monkeypatch.setattr("lerim.server.runtime.run_context_curator", _fake_run_context_curator)
+    monkeypatch.setattr("lerim.server.runtime.run_context_answerer", _fake_run_context_answerer)
 
-    sync_result = ctx.runtime.sync(
-        trace_path=trace_path, session_id="runtime-sync-chain"
+    ingest_result = ctx.runtime.ingest(
+        trace_path=trace_path, session_id="runtime-ingest-chain"
     )
-    maintain_result = ctx.runtime.maintain(
-        repo_root=live_repo_root, session_id="runtime-maintain-chain"
+    curate_result = ctx.runtime.curate(
+        repo_root=live_repo_root, session_id="runtime-curate-chain"
     )
-    answer, _session_id, cost, debug = ctx.runtime.ask(
+    answer, _session_id, cost, debug = ctx.runtime.answer(
         "What is true now about worker retries?",
         repo_root=live_repo_root,
         include_debug=True,
     )
 
-    sync_run_folder = Path(sync_result["run_folder"])
-    maintain_run_folder = Path(maintain_result["run_folder"])
+    ingest_run_folder = Path(ingest_result["run_folder"])
+    curate_run_folder = Path(curate_result["run_folder"])
     _assert_run_folder_layout(
-        sync_run_folder,
+        ingest_run_folder,
         live_config.global_data_dir / "workspace",
-        str(expectation["sync_workspace_subdir"]),
+        str(expectation["ingest_workspace_subdir"]),
     )
     _assert_run_folder_layout(
-        maintain_run_folder,
+        curate_run_folder,
         live_config.global_data_dir / "workspace",
-        str(expectation["maintain_workspace_subdir"]),
+        str(expectation["curate_workspace_subdir"]),
     )
-    assert sync_run_folder.exists()
-    assert maintain_run_folder.exists()
-    assert (sync_run_folder / "agent.log").read_text(
+    assert ingest_run_folder.exists()
+    assert curate_run_folder.exists()
+    assert (ingest_run_folder / "agent.log").read_text(
         encoding="utf-8"
-    ).strip() == "sync wrote initial fact"
-    assert (maintain_run_folder / "agent.log").read_text(
+    ).strip() == "ingest wrote initial fact"
+    assert (curate_run_folder / "agent.log").read_text(
         encoding="utf-8"
-    ).strip() == "maintain strengthened fact"
+    ).strip() == "curate strengthened fact"
     assert cost == 0.0
     lowered = answer.lower()
     for token in expectation["answer_must_include_all"]:
@@ -472,60 +442,56 @@ def test_runtime_sync_then_maintain_then_ask_with_real_artifacts(
     for token in expectation["answer_must_not_include"]:
         assert token not in lowered
     assert debug is not None
-    assert [item["tool_name"] for item in debug["tool_calls"]] == expectation[
-        "ask_tool_call_order"
+    assert [item["action_type"] for item in debug["retrieval_actions"]] == expectation[
+        "answer_retrieval_action_order"
     ]
 
 
-def test_working_memory_refresh_writes_dated_and_current_artifacts(
+def test_context_brief_refresh_writes_dated_and_current_artifacts(
     monkeypatch, live_config, live_repo_root
 ):
-    """Working Memory generation should write dated artifacts plus stable current copies."""
+    """Context Brief generation should write dated artifacts plus stable current copies."""
     expectation = load_runtime_expectation(
-        "working_memory_refresh_writes_dated_and_current_artifacts"
+        "context_brief_refresh_writes_dated_and_current_artifacts"
     )["expected"]
     ctx = build_runtime_case_context(
         monkeypatch=monkeypatch,
         live_config=live_config,
         live_repo_root=live_repo_root,
     )
-    seed_session_id = "runtime-working-memory-seed"
+    seed_session_id = "runtime-context-brief-seed"
     seed_runtime_session(
         ctx.store,
         project_id=ctx.project_id,
         session_id=seed_session_id,
         repo_root=live_repo_root,
-        source_trace_ref="working-memory-seed",
+        source_trace_ref="context-brief-seed",
     )
     decision = ctx.store.create_record(
         project_id=ctx.project_id,
         session_id=seed_session_id,
         kind="decision",
-        title="Use generated Working Memory at startup",
-        body="Use generated Working Memory at startup so agents get fast context.",
-        decision="Use generated Working Memory at startup.",
+        title="Use generated Context Brief at startup",
+        body="Use generated Context Brief at startup so agents get fast context.",
+        decision="Use generated Context Brief at startup.",
         why="Startup must stay fast and avoid live synthesis.",
-        change_reason="working_memory_seed_decision",
+        change_reason="context_brief_seed_decision",
     )
     constraint = ctx.store.create_record(
         project_id=ctx.project_id,
         session_id=seed_session_id,
         kind="constraint",
         title="Markdown is not canonical memory",
-        body="Markdown Working Memory is a derived view; SQLite remains canonical.",
-        change_reason="working_memory_seed_constraint",
+        body="Markdown Context Brief is a derived view; SQLite remains canonical.",
+        change_reason="context_brief_seed_constraint",
     )
     monkeypatch.setattr(
-        "lerim.server.runtime.build_pydantic_model",
-        lambda *args, **kwargs: "fake-model",
-    )
-    monkeypatch.setattr(
-        "lerim.server.runtime.run_working_memory_synthesis",
+        "lerim.server.runtime.compile_context_brief",
         lambda **kwargs: (
-            WorkingMemoryDraft(
+            ContextBriefDraft(
                 summary=(
                     MemoryLine(
-                        "Use generated Working Memory at startup.",
+                        "Use generated Context Brief at startup.",
                         (str(decision["record_id"]),),
                     ),
                 ),
@@ -541,18 +507,18 @@ def test_working_memory_refresh_writes_dated_and_current_artifacts(
                     ),
                 ),
             ),
-            build_ordered_ask_messages()[:1],
+            build_ordered_answer_messages()[:1],
         ),
     )
 
-    result = ctx.runtime.working_memory(
+    result = ctx.runtime.context_brief(
         repo_root=live_repo_root,
         project_name="runtime-project",
         force=True,
     )
 
     run_folder = Path(str(result["run_folder"]))
-    paths = working_memory_paths(live_config, ctx.project_id)
+    paths = context_brief_paths(live_config, ctx.project_id)
     _assert_run_folder_layout(
         run_folder,
         live_config.global_data_dir / "workspace",
@@ -563,10 +529,10 @@ def test_working_memory_refresh_writes_dated_and_current_artifacts(
     assert result["records_included"] == int(expectation["records_included"])
     assert paths.current_file.is_file()
     assert paths.current_manifest.is_file()
-    assert (run_folder / "WORKING_MEMORY.md").is_file()
+    assert (run_folder / "CONTEXT_BRIEF.md").is_file()
     assert (run_folder / "agent.log").read_text(encoding="utf-8").strip()
     manifest = json.loads((run_folder / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["operation"] == "working-memory"
+    assert manifest["operation"] == "context-brief"
     assert manifest["status"] == "succeeded"
     assert manifest["current_file"] == str(paths.current_file)
     assert sorted(manifest["included_record_ids"]) == sorted(result["included_record_ids"])
@@ -576,64 +542,60 @@ def test_working_memory_refresh_writes_dated_and_current_artifacts(
     assert "derived view, not the source of truth" in current_markdown
 
 
-def test_working_memory_refresh_skips_when_records_unchanged(
+def test_context_brief_refresh_skips_when_records_unchanged(
     monkeypatch, live_config, live_repo_root
 ):
     """A second unchanged refresh should skip before creating a run folder or model call."""
     expectation = load_runtime_expectation(
-        "working_memory_refresh_skips_when_records_unchanged"
+        "context_brief_refresh_skips_when_records_unchanged"
     )["expected"]
     ctx = build_runtime_case_context(
         monkeypatch=monkeypatch,
         live_config=live_config,
         live_repo_root=live_repo_root,
     )
-    seed_session_id = "runtime-working-memory-skip-seed"
+    seed_session_id = "runtime-context-brief-skip-seed"
     seed_runtime_session(
         ctx.store,
         project_id=ctx.project_id,
         session_id=seed_session_id,
         repo_root=live_repo_root,
-        source_trace_ref="working-memory-skip-seed",
+        source_trace_ref="context-brief-skip-seed",
     )
     decision = ctx.store.create_record(
         project_id=ctx.project_id,
         session_id=seed_session_id,
         kind="decision",
-        title="Skip unchanged Working Memory refresh",
-        body="Skip Working Memory refresh when no records changed.",
-        decision="Skip unchanged Working Memory refresh.",
+        title="Skip unchanged Context Brief refresh",
+        body="Skip Context Brief refresh when no records changed.",
+        decision="Skip unchanged Context Brief refresh.",
         why="Avoid unnecessary model cost.",
-        change_reason="working_memory_skip_seed",
+        change_reason="context_brief_skip_seed",
     )
     calls = {"synthesis": 0}
-    monkeypatch.setattr(
-        "lerim.server.runtime.build_pydantic_model",
-        lambda *args, **kwargs: "fake-model",
-    )
 
     def _fake_synthesis(**kwargs):
         calls["synthesis"] += 1
         if calls["synthesis"] > 1:
             raise AssertionError("unchanged refresh should not synthesize")
         return (
-            WorkingMemoryDraft(
+            ContextBriefDraft(
                 summary=(
                     MemoryLine(
-                        "Skip unchanged Working Memory refresh.",
+                        "Skip unchanged Context Brief refresh.",
                         (str(decision["record_id"]),),
                     ),
                 ),
                 sections=(),
             ),
-            build_ordered_ask_messages()[:1],
+            build_ordered_answer_messages()[:1],
         )
 
     monkeypatch.setattr(
-        "lerim.server.runtime.run_working_memory_synthesis",
+        "lerim.server.runtime.compile_context_brief",
         _fake_synthesis,
     )
-    first = ctx.runtime.working_memory(
+    first = ctx.runtime.context_brief(
         repo_root=live_repo_root,
         project_name="runtime-project",
         force=True,
@@ -641,7 +603,7 @@ def test_working_memory_refresh_skips_when_records_unchanged(
     operation_dir = Path(str(first["run_folder"])).parent
     before = sorted(path.name for path in operation_dir.iterdir())
 
-    second = ctx.runtime.working_memory(
+    second = ctx.runtime.context_brief(
         repo_root=live_repo_root,
         project_name="runtime-project",
         force=False,
@@ -656,12 +618,12 @@ def test_working_memory_refresh_skips_when_records_unchanged(
     assert before == after
 
 
-def test_working_memory_refresh_writes_empty_state_without_model_call(
+def test_context_brief_refresh_writes_empty_state_without_model_call(
     monkeypatch, live_config, live_repo_root
 ):
     """Projects with no active records should get an empty-state artifact without synthesis."""
     expectation = load_runtime_expectation(
-        "working_memory_refresh_writes_empty_state_without_model_call"
+        "context_brief_refresh_writes_empty_state_without_model_call"
     )["expected"]
     ctx = build_runtime_case_context(
         monkeypatch=monkeypatch,
@@ -669,26 +631,20 @@ def test_working_memory_refresh_writes_empty_state_without_model_call(
         live_repo_root=live_repo_root,
     )
     monkeypatch.setattr(
-        "lerim.server.runtime.build_pydantic_model",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            AssertionError("empty-state refresh should not build a model")
-        ),
-    )
-    monkeypatch.setattr(
-        "lerim.server.runtime.run_working_memory_synthesis",
+        "lerim.server.runtime.compile_context_brief",
         lambda **kwargs: (_ for _ in ()).throw(
             AssertionError("empty-state refresh should not synthesize")
         ),
     )
 
-    result = ctx.runtime.working_memory(
+    result = ctx.runtime.context_brief(
         repo_root=live_repo_root,
         project_name="runtime-project",
         force=True,
     )
 
     run_folder = Path(str(result["run_folder"]))
-    paths = working_memory_paths(live_config, ctx.project_id)
+    paths = context_brief_paths(live_config, ctx.project_id)
     _assert_run_folder_layout(
         run_folder,
         live_config.global_data_dir / "workspace",

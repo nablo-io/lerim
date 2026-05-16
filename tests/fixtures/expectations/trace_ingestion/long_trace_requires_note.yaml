@@ -1,0 +1,28 @@
+case: long_trace_requires_note
+summary: A long trace should scan before writing and preserve the durable retry-budget decision.
+
+expected:
+  episode_count: 1
+  durable_count: 1
+  decision_count: 1
+  read_window_count_at_least: 1
+  scan_window_count_at_least: 1
+  must_use_tools:
+    - read_window
+    - scan_window
+    - save_context
+  must_not_use_tools:
+  decision_text_must_include_all:
+    - retry
+    - budget
+    - metadata
+  decision_text_must_include_any:
+    - restart
+    - failover
+    - worker memory
+    - persisted
+  decision_text_must_not_include:
+    - debug log
+    - helper rename
+    - test cleanup
+    - progress message

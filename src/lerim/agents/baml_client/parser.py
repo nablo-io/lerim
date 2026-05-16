@@ -23,29 +23,59 @@ class LlmResponseParser:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
-    def ReviewMaintainCluster(
+    def AnswerFromContext(
         self, llm_response: str, baml_options: BamlCallOptions = {},
-    ) -> types.MaintainActionPlan:
-        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ReviewMaintainCluster", llm_response=llm_response, mode="request")
-        return typing.cast(types.MaintainActionPlan, __result__)
+    ) -> types.ContextAnswer:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="AnswerFromContext", llm_response=llm_response, mode="request")
+        return typing.cast(types.ContextAnswer, __result__)
 
-    def ReviewMaintainHealthBatch(
+    def CompileContextBrief(
         self, llm_response: str, baml_options: BamlCallOptions = {},
-    ) -> types.MaintainActionPlan:
-        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ReviewMaintainHealthBatch", llm_response=llm_response, mode="request")
-        return typing.cast(types.MaintainActionPlan, __result__)
+    ) -> types.ContextBriefDraftOutput:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="CompileContextBrief", llm_response=llm_response, mode="request")
+        return typing.cast(types.ContextBriefDraftOutput, __result__)
 
-    def ScanTraceWindow(
+    def CurateContextCluster(
         self, llm_response: str, baml_options: BamlCallOptions = {},
-    ) -> types.TraceWindowScan:
-        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ScanTraceWindow", llm_response=llm_response, mode="request")
-        return typing.cast(types.TraceWindowScan, __result__)
+    ) -> types.ContextCurationPlan:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="CurateContextCluster", llm_response=llm_response, mode="request")
+        return typing.cast(types.ContextCurationPlan, __result__)
 
-    def SynthesizeExtractRecords(
+    def CurateRecordHealthBatch(
         self, llm_response: str, baml_options: BamlCallOptions = {},
-    ) -> types.SynthesizedExtraction:
-        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="SynthesizeExtractRecords", llm_response=llm_response, mode="request")
-        return typing.cast(types.SynthesizedExtraction, __result__)
+    ) -> types.ContextCurationPlan:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="CurateRecordHealthBatch", llm_response=llm_response, mode="request")
+        return typing.cast(types.ContextCurationPlan, __result__)
+
+    def FilterDurableSignal(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> types.SignalFilterResult:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="FilterDurableSignal", llm_response=llm_response, mode="request")
+        return typing.cast(types.SignalFilterResult, __result__)
+
+    def ObserveSourceWindow(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> types.SourceWindowScan:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ObserveSourceWindow", llm_response=llm_response, mode="request")
+        return typing.cast(types.SourceWindowScan, __result__)
+
+    def PlanContextRetrieval(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> types.ContextRetrievalPlan:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="PlanContextRetrieval", llm_response=llm_response, mode="request")
+        return typing.cast(types.ContextRetrievalPlan, __result__)
+
+    def ReviewSynthesizedContextRecords(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> types.SynthesizedContextRecords:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ReviewSynthesizedContextRecords", llm_response=llm_response, mode="request")
+        return typing.cast(types.SynthesizedContextRecords, __result__)
+
+    def SynthesizeContextRecords(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> types.SynthesizedContextRecords:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="SynthesizeContextRecords", llm_response=llm_response, mode="request")
+        return typing.cast(types.SynthesizedContextRecords, __result__)
 
     
 
@@ -55,28 +85,58 @@ class LlmStreamParser:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
-    def ReviewMaintainCluster(
+    def AnswerFromContext(
         self, llm_response: str, baml_options: BamlCallOptions = {},
-    ) -> stream_types.MaintainActionPlan:
-        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ReviewMaintainCluster", llm_response=llm_response, mode="stream")
-        return typing.cast(stream_types.MaintainActionPlan, __result__)
+    ) -> stream_types.ContextAnswer:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="AnswerFromContext", llm_response=llm_response, mode="stream")
+        return typing.cast(stream_types.ContextAnswer, __result__)
 
-    def ReviewMaintainHealthBatch(
+    def CompileContextBrief(
         self, llm_response: str, baml_options: BamlCallOptions = {},
-    ) -> stream_types.MaintainActionPlan:
-        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ReviewMaintainHealthBatch", llm_response=llm_response, mode="stream")
-        return typing.cast(stream_types.MaintainActionPlan, __result__)
+    ) -> stream_types.ContextBriefDraftOutput:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="CompileContextBrief", llm_response=llm_response, mode="stream")
+        return typing.cast(stream_types.ContextBriefDraftOutput, __result__)
 
-    def ScanTraceWindow(
+    def CurateContextCluster(
         self, llm_response: str, baml_options: BamlCallOptions = {},
-    ) -> stream_types.TraceWindowScan:
-        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ScanTraceWindow", llm_response=llm_response, mode="stream")
-        return typing.cast(stream_types.TraceWindowScan, __result__)
+    ) -> stream_types.ContextCurationPlan:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="CurateContextCluster", llm_response=llm_response, mode="stream")
+        return typing.cast(stream_types.ContextCurationPlan, __result__)
 
-    def SynthesizeExtractRecords(
+    def CurateRecordHealthBatch(
         self, llm_response: str, baml_options: BamlCallOptions = {},
-    ) -> stream_types.SynthesizedExtraction:
-        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="SynthesizeExtractRecords", llm_response=llm_response, mode="stream")
-        return typing.cast(stream_types.SynthesizedExtraction, __result__)
+    ) -> stream_types.ContextCurationPlan:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="CurateRecordHealthBatch", llm_response=llm_response, mode="stream")
+        return typing.cast(stream_types.ContextCurationPlan, __result__)
+
+    def FilterDurableSignal(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> stream_types.SignalFilterResult:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="FilterDurableSignal", llm_response=llm_response, mode="stream")
+        return typing.cast(stream_types.SignalFilterResult, __result__)
+
+    def ObserveSourceWindow(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> stream_types.SourceWindowScan:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ObserveSourceWindow", llm_response=llm_response, mode="stream")
+        return typing.cast(stream_types.SourceWindowScan, __result__)
+
+    def PlanContextRetrieval(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> stream_types.ContextRetrievalPlan:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="PlanContextRetrieval", llm_response=llm_response, mode="stream")
+        return typing.cast(stream_types.ContextRetrievalPlan, __result__)
+
+    def ReviewSynthesizedContextRecords(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> stream_types.SynthesizedContextRecords:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ReviewSynthesizedContextRecords", llm_response=llm_response, mode="stream")
+        return typing.cast(stream_types.SynthesizedContextRecords, __result__)
+
+    def SynthesizeContextRecords(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> stream_types.SynthesizedContextRecords:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="SynthesizeContextRecords", llm_response=llm_response, mode="stream")
+        return typing.cast(stream_types.SynthesizedContextRecords, __result__)
 
     

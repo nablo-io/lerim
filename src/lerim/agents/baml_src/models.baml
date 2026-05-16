@@ -1,4 +1,4 @@
-retry_policy ExtractAgentRetry {
+retry_policy RuntimeAgentRetry {
   max_retries 1
   strategy {
     type exponential_backoff
@@ -10,7 +10,7 @@ retry_policy ExtractAgentRetry {
 
 client<llm> MiniMaxM27 {
   provider "openai-generic"
-  retry_policy ExtractAgentRetry
+  retry_policy RuntimeAgentRetry
   options {
     base_url "https://api.minimax.io/v1"
     api_key env.MINIMAX_API_KEY
@@ -27,7 +27,7 @@ client<llm> MiniMaxM27 {
 
 client<llm> OllamaLocal {
   provider "openai-generic"
-  retry_policy ExtractAgentRetry
+  retry_policy RuntimeAgentRetry
   options {
     base_url "http://127.0.0.1:11434/v1"
     api_key "ollama"

@@ -44,7 +44,7 @@ def queue_case_env(tmp_path, monkeypatch) -> QueueCaseEnv:
         tmp_path,
         **{"roles.agent": {"provider": "openrouter", "model": "integration-test"}},
         projects={repo_root.name: str(repo_root)},
-        server={"sync_window_days": 7, "sync_max_sessions": 10},
+        server={"ingest_window_days": 7, "ingest_max_sessions": 10},
     )
     monkeypatch.setenv("LERIM_CONFIG", str(config_path))
     cfg = reload_config()
@@ -117,22 +117,22 @@ def _set_job_fields(case_env: QueueCaseEnv, run_id: str, **fields: Any) -> None:
 def _patch_fake_runtime(
     monkeypatch: pytest.MonkeyPatch,
     *,
-    sync_behaviors: list[Any] | None = None,
-    maintain_behaviors: list[Any] | None = None,
+    ingest_behaviors: list[Any] | None = None,
+    curate_behaviors: list[Any] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Replace daemon runtime with one scripted fake runtime."""
-    calls: dict[str, list[dict[str, Any]]] = {"sync": [], "maintain": []}
-    sync_queue = list(sync_behaviors or [])
-    maintain_queue = list(maintain_behaviors or [])
+    calls: dict[str, list[dict[str, Any]]] = {"ingest": [], "curate": []}
+    ingest_queue = list(ingest_behaviors or [])
+    curate_queue = list(curate_behaviors or [])
 
     class FakeRuntime:
         def __init__(self, default_cwd: str | None = None, config: Any | None = None) -> None:
             self.default_cwd = default_cwd
             self.config = config
 
-        def sync(self, session_path: Path, **kwargs: Any) -> dict[str, Any]:
-            calls["sync"].append({"default_cwd": self.default_cwd, "session_path": str(session_path), **kwargs})
-            behavior = sync_queue.pop(0) if sync_queue else {
+        def ingest(self, session_path: Path, **kwargs: Any) -> dict[str, Any]:
+            calls["ingest"].append({"default_cwd": self.default_cwd, "session_path": str(session_path), **kwargs})
+            behavior = ingest_queue.pop(0) if ingest_queue else {
                 "records_created": 1,
                 "records_updated": 0,
                 "records_archived": 0,
@@ -142,15 +142,15 @@ def _patch_fake_runtime(
                 raise behavior
             return dict(behavior)
 
-        def maintain(self, repo_root: Path | None = None, session_id: str | None = None) -> dict[str, Any]:
-            calls["maintain"].append(
+        def curate(self, repo_root: Path | None = None, session_id: str | None = None) -> dict[str, Any]:
+            calls["curate"].append(
                 {
                     "default_cwd": self.default_cwd,
                     "repo_root": str(repo_root) if repo_root else None,
                     "session_id": session_id,
                 }
             )
-            behavior = maintain_queue.pop(0) if maintain_queue else {
+            behavior = curate_queue.pop(0) if curate_queue else {
                 "records_created": 0,
                 "records_updated": 0,
                 "records_archived": 0,
@@ -172,7 +172,7 @@ def test_pending_session_completes(queue_case_env: QueueCaseEnv, monkeypatch: py
     session_path = _index_session(queue_case_env, run_id=run_id, summary="pending session ready for extraction")
     calls = _patch_fake_runtime(monkeypatch)
 
-    code, summary = daemon.run_sync_once(
+    code, summary = daemon.run_ingest_once(
         run_id=run_id,
         agent_filter=None,
         no_extract=False,
@@ -191,14 +191,14 @@ def test_pending_session_completes(queue_case_env: QueueCaseEnv, monkeypatch: py
     assert summary.skipped_sessions == 0
     assert job["status"] == catalog.JOB_STATUS_DONE == expectation["final_status"]
     assert int(job["attempts"] or 0) == int(expectation["attempts"])
-    assert len(calls["sync"]) == 1
-    sync_call = calls["sync"][0]
-    assert sync_call["default_cwd"] == str(queue_case_env.repo_root)
-    assert sync_call["session_path"] == session_path
-    assert sync_call["session_id"] == run_id
-    assert sync_call["agent_type"] == "codex"
-    assert sync_call["session_meta"]["cwd"] == str(queue_case_env.repo_root)
-    assert sync_call["session_meta"]["started_at"]
+    assert len(calls["ingest"]) == 1
+    ingest_call = calls["ingest"][0]
+    assert ingest_call["default_cwd"] == str(queue_case_env.repo_root)
+    assert ingest_call["session_path"] == session_path
+    assert ingest_call["session_id"] == run_id
+    assert ingest_call["agent_type"] == "codex"
+    assert ingest_call["session_meta"]["cwd"] == str(queue_case_env.repo_root)
+    assert ingest_call["session_meta"]["started_at"]
 
 
 @pytest.mark.integration
@@ -206,7 +206,7 @@ def test_failed_job_retry_path_completes_on_second_run(
     queue_case_env: QueueCaseEnv,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A failed available job should retry and complete on the next sync run."""
+    """A failed available job should retry and complete on the next ingest run."""
     expectation = load_queue_expectation("failed_job_retry_path_completes_on_second_run")["expected"]
     run_id = "run-retry-after-failure"
     _index_session(queue_case_env, run_id=run_id, summary="session that should fail once then retry")
@@ -224,13 +224,13 @@ def test_failed_job_retry_path_completes_on_second_run(
     monkeypatch.setattr(daemon, "index_new_sessions", lambda **kwargs: [])
     calls = _patch_fake_runtime(
         monkeypatch,
-        sync_behaviors=[
+        ingest_behaviors=[
             RuntimeError("transient extraction failure"),
             {"records_created": 1, "records_updated": 0, "records_archived": 0, "cost_usd": 0.0},
         ],
     )
 
-    first_code, first_summary = daemon.run_sync_once(
+    first_code, first_summary = daemon.run_ingest_once(
         run_id=None,
         agent_filter=None,
         no_extract=False,
@@ -253,7 +253,7 @@ def test_failed_job_retry_path_completes_on_second_run(
         available_at=(_iso_now()),
     )
 
-    second_code, second_summary = daemon.run_sync_once(
+    second_code, second_summary = daemon.run_ingest_once(
         run_id=None,
         agent_filter=None,
         no_extract=False,
@@ -270,7 +270,7 @@ def test_failed_job_retry_path_completes_on_second_run(
     assert second_summary.failed_sessions == 0
     assert second_job["status"] == catalog.JOB_STATUS_DONE == expectation["second_status"]
     assert int(second_job["attempts"] or 0) == int(expectation["attempts"])
-    assert len(calls["sync"]) == 2
+    assert len(calls["ingest"]) == 2
 
 
 @pytest.mark.integration
@@ -331,9 +331,9 @@ def test_skip_leaves_other_jobs_untouched(
 
 
 @pytest.mark.integration
-def test_degraded_queue_reports_cleanly_via_api_sync(queue_case_env: QueueCaseEnv) -> None:
-    """API sync should surface real degraded queue state and human advice."""
-    expectation = load_queue_expectation("degraded_queue_reports_cleanly_via_api_sync")["expected"]
+def test_degraded_queue_reports_cleanly_via_api_ingest(queue_case_env: QueueCaseEnv) -> None:
+    """API ingest should surface real degraded queue state and human advice."""
+    expectation = load_queue_expectation("degraded_queue_reports_cleanly_via_api_ingest")["expected"]
     run_id = "run-degraded-dead-letter"
     _index_session(queue_case_env, run_id=run_id, summary="dead letter should degrade queue")
     queued = catalog.enqueue_session_job(
@@ -356,7 +356,7 @@ def test_degraded_queue_reports_cleanly_via_api_sync(queue_case_env: QueueCaseEn
         error="permanent failure",
     )
 
-    result = api.api_sync(dry_run=True)
+    result = api.api_ingest(dry_run=True)
 
     assert result["code"] == daemon.EXIT_OK
     assert result["queue_health"]["degraded"] is bool(expectation["degraded"])
@@ -367,34 +367,34 @@ def test_degraded_queue_reports_cleanly_via_api_sync(queue_case_env: QueueCaseEn
 
 
 @pytest.mark.integration
-def test_maintain_once_dry_run_short_circuits(
+def test_curate_once_dry_run_short_circuits(
     queue_case_env: QueueCaseEnv,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Dry-run should win over force and skip runtime work entirely."""
-    expectation = load_queue_expectation("maintain_once_dry_run_short_circuits_even_with_force")["expected"]
+    expectation = load_queue_expectation("curate_once_dry_run_short_circuits_even_with_force")["expected"]
     calls = _patch_fake_runtime(monkeypatch)
 
-    code, payload = daemon.run_maintain_once(dry_run=True, trigger="manual")
+    code, payload = daemon.run_curate_once(dry_run=True, trigger="manual")
 
-    service_runs = _service_run_rows(queue_case_env, "maintain")
+    service_runs = _service_run_rows(queue_case_env, "curate")
 
     assert code == daemon.EXIT_OK
     assert payload == {"dry_run": bool(expectation["dry_run"])}
-    assert calls["maintain"] == []
+    assert calls["curate"] == []
     assert len(service_runs) == 1
     assert service_runs[0]["status"] == expectation["service_run_status"]
     assert '"dry_run": true' in str(service_runs[0]["details_json"]).lower()
 
 
 @pytest.mark.integration
-def test_api_job_status_for_long_running_sync(
+def test_api_job_status_for_long_running_ingest(
     queue_case_env: QueueCaseEnv,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """API status should surface running sync work and later the completed result."""
-    expectation = load_queue_expectation("api_job_status_for_long_running_sync")["expected"]
-    run_id = "run-api-status-sync"
+    """API status should surface running ingest work and later the completed result."""
+    expectation = load_queue_expectation("api_job_status_for_long_running_ingest")["expected"]
+    run_id = "run-api-status-ingest"
     _index_session(queue_case_env, run_id=run_id, summary="session that stays running briefly")
     queued = catalog.enqueue_session_job(
         run_id,
@@ -415,7 +415,7 @@ def test_api_job_status_for_long_running_sync(
             self.default_cwd = default_cwd
             self.config = config
 
-        def sync(self, session_path: Path, **kwargs: Any) -> dict[str, Any]:
+        def ingest(self, session_path: Path, **kwargs: Any) -> dict[str, Any]:
             started.set()
             release.wait(timeout=10)
             return {
@@ -425,22 +425,22 @@ def test_api_job_status_for_long_running_sync(
                 "cost_usd": 0.0,
             }
 
-        def maintain(self, repo_root: Path | None = None, session_id: str | None = None) -> dict[str, Any]:
-            raise AssertionError("maintain should not run in this case")
+        def curate(self, repo_root: Path | None = None, session_id: str | None = None) -> dict[str, Any]:
+            raise AssertionError("curate should not run in this case")
 
     monkeypatch.setattr(daemon, "LerimRuntime", BlockingRuntime)
     monkeypatch.setattr(api, "get_config", reload_config)
 
     result_box: dict[str, Any] = {}
 
-    def _run_sync() -> None:
-        result_box["payload"] = api.api_sync(
+    def _run_ingest() -> None:
+        result_box["payload"] = api.api_ingest(
             run_id=run_id,
             max_sessions=5,
             ignore_lock=True,
         )
 
-    thread = Thread(target=_run_sync, daemon=True)
+    thread = Thread(target=_run_ingest, daemon=True)
     thread.start()
     assert started.wait(timeout=10)
 
@@ -455,7 +455,7 @@ def test_api_job_status_for_long_running_sync(
     assert int(result_box["payload"]["code"]) == daemon.EXIT_OK
 
     completed_status = api.api_status(scope="project", project=queue_case_env.repo_root.name)
-    latest_sync = completed_status["latest_sync"]
-    assert latest_sync is not None
-    assert latest_sync["status"] == expectation["completed_status"]
+    latest_ingest = completed_status["latest_ingest"]
+    assert latest_ingest is not None
+    assert latest_ingest["status"] == expectation["completed_status"]
     assert int(completed_status["queue"]["done"] or 0) == expectation["queue_done"]

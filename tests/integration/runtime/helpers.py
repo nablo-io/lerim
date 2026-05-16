@@ -6,16 +6,6 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from pydantic_ai.messages import (
-    ModelRequest,
-    ModelResponse,
-    SystemPromptPart,
-    TextPart,
-    ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
-)
-
 from lerim.context import ContextStore, resolve_project_identity
 from lerim.server.runtime import LerimRuntime
 from tests.integration.common_helpers import seed_session
@@ -57,8 +47,8 @@ def build_runtime_case_context(*, monkeypatch, live_config, live_repo_root: Path
     )
 
 
-def write_sync_trace(repo_root: Path, *, name: str = "runtime-trace.jsonl") -> Path:
-    """Create a tiny sync trace fixture inside the temp repo root."""
+def write_ingest_trace(repo_root: Path, *, name: str = "runtime-trace.jsonl") -> Path:
+    """Create a tiny ingest trace fixture inside the temp repo root."""
     trace_path = repo_root / name
     trace_path.write_text(
         "\n".join(
@@ -93,14 +83,32 @@ def seed_runtime_session(
     )
 
 
-def build_ordered_ask_messages() -> list[ModelRequest | ModelResponse]:
-    """Build an ordered ask trace with two tool turns and a final answer."""
-    long_result = json.dumps({"rows": [{"record_id": "rec_1", "body": "x" * 260}]})
+def build_ordered_answer_messages() -> list[dict[str, object]]:
+    """Build an ordered context-answerer event trace."""
     return [
-        ModelRequest(parts=[SystemPromptPart(content="system prompt"), UserPromptPart(content="What changed recently?")]),
-        ModelResponse(parts=[ToolCallPart(tool_name="list_context", args={"limit": 5, "order_by": "updated_at"}, tool_call_id="call-1")]),
-        ModelRequest(parts=[ToolReturnPart(tool_name="list_context", content=long_result, tool_call_id="call-1")]),
-        ModelResponse(parts=[ToolCallPart(tool_name="get_context", args={"record_ids": ["rec_1"]}, tool_call_id="call-2")]),
-        ModelRequest(parts=[ToolReturnPart(tool_name="get_context", content=json.dumps({"records": [{"record_id": "rec_1", "title": "Recent change"}]}), tool_call_id="call-2")]),
-        ModelResponse(parts=[TextPart(content="The latest change updated the recent record.")]),
+        {
+            "kind": "baml_call",
+            "function": "PlanContextRetrieval",
+            "action_count": 2,
+            "rationale": "Inspect recent context and then search the relevant record.",
+        },
+        {
+            "kind": "retrieval",
+            "index": 1,
+            "action_type": "list",
+            "result_count": 1,
+            "rationale": "Check the most recent context.",
+        },
+        {
+            "kind": "retrieval",
+            "index": 2,
+            "action_type": "search",
+            "result_count": 1,
+            "rationale": "Find the matching context record.",
+        },
+        {
+            "kind": "baml_call",
+            "function": "AnswerFromContext",
+            "supporting_record_ids": ["rec_1"],
+        },
     ]

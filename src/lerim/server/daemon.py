@@ -1,4 +1,4 @@
-"""Sync/maintain daemon orchestration, locking, and service run reporting."""
+"""Ingest/curate daemon orchestration, locking, and service run reporting."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ def log_activity(
 ) -> None:
     """Append one line to the dated activity log.
 
-    Format: ``2026-03-01 14:23:05 | sync | myproject | 3 new, 1 updated | $0.0042 | 4.2s``
+    Format: ``2026-03-01 14:23:05 | ingest | myproject | 3 new, 1 updated | $0.0042 | 4.2s``
     """
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     cost_str = f"${cost_usd:.4f}"
@@ -55,13 +55,13 @@ def log_activity(
 
 @dataclass
 class OperationResult:
-    """Unified result payload for sync and maintain operations."""
+    """Unified result payload for ingest and curate operations."""
 
-    operation: str  # "sync" or "maintain"
+    operation: str  # "ingest" or "curate"
     status: str  # "completed", "partial", "failed", "lock_busy"
     trigger: str  # "daemon", "manual", "api"
 
-    # Sync-specific
+    # Ingest-specific
     indexed_sessions: int = 0
     queued_sessions: int = 0
     extracted_sessions: int = 0
@@ -72,13 +72,13 @@ class OperationResult:
     window_start: str | None = None
     window_end: str | None = None
 
-    # Maintain-specific
+    # Curate-specific
     projects: dict[str, Any] = field(default_factory=dict)
-    maintain_metrics: dict[str, Any] = field(default_factory=dict)
+    curate_metrics: dict[str, Any] = field(default_factory=dict)
 
     # Shared structured telemetry (v1)
     metrics_version: int = 1
-    sync_metrics: dict[str, Any] = field(default_factory=dict)
+    ingest_metrics: dict[str, Any] = field(default_factory=dict)
     projects_metrics: dict[str, Any] = field(default_factory=dict)
     events: list[dict[str, Any]] = field(default_factory=list)
 
@@ -112,8 +112,8 @@ class OperationResult:
                 continue
             if k in (
                 "metrics_version",
-                "sync_metrics",
-                "maintain_metrics",
+                "ingest_metrics",
+                "curate_metrics",
                 "projects_metrics",
                 "events",
             ):
@@ -138,12 +138,12 @@ class OperationResult:
             "status": self.status,
             "trigger": self.trigger,
         }
-        if self.operation == "sync":
+        if self.operation == "ingest":
             attrs["indexed_sessions"] = self.indexed_sessions
             attrs["extracted_sessions"] = self.extracted_sessions
             attrs["skipped_unscoped"] = self.skipped_unscoped
             attrs["failed_sessions"] = self.failed_sessions
-        elif self.operation == "maintain":
+        elif self.operation == "curate":
             attrs["projects_count"] = len(self.projects)
         if self.cost_usd:
             attrs["cost_usd"] = self.cost_usd
@@ -224,9 +224,9 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _empty_sync_summary() -> SyncSummary:
-    """Return an empty sync summary payload."""
-    return SyncSummary(
+def _empty_ingest_summary() -> IngestSummary:
+    """Return an empty ingest summary payload."""
+    return IngestSummary(
         indexed_sessions=0,
         extracted_sessions=0,
         skipped_sessions=0,
@@ -476,8 +476,8 @@ class ServiceLock:
 
 
 @dataclass(frozen=True)
-class SyncSummary:
-    """Summary payload for one sync execution."""
+class IngestSummary:
+    """Summary payload for one ingest execution."""
 
     indexed_sessions: int
     extracted_sessions: int
@@ -495,7 +495,7 @@ def resolve_window_bounds(
     until_raw: str | None,
     parse_duration_to_seconds: Callable[[str], int],
 ) -> tuple[datetime | None, datetime]:
-    """Resolve sync/maintain time window from CLI arguments."""
+    """Resolve the ingest time window from CLI arguments."""
     now = datetime.now(timezone.utc)
     since = _parse_iso(since_raw)
     until = _parse_iso(until_raw) or now
@@ -511,7 +511,7 @@ def resolve_window_bounds(
         return since, until
 
     if not window:
-        days = get_config().sync_window_days
+        days = get_config().ingest_window_days
         seconds = parse_duration_to_seconds(f"{days}d")
         return until - timedelta(seconds=seconds), until
     if window == "all":
@@ -547,7 +547,7 @@ def _new_project_metric() -> dict[str, Any]:
         "records_archived": 0,
         "duration_ms": 0,
         "last_error": None,
-        "maintain_counts": {
+        "curate_counts": {
             "created": 0,
             "updated": 0,
             "archived": 0,
@@ -571,24 +571,24 @@ def _merge_project_metric(target: dict[str, Any], source: dict[str, Any]) -> Non
     if source.get("last_error"):
         target["last_error"] = str(source.get("last_error"))
     t_counts = (
-        target.get("maintain_counts")
-        if isinstance(target.get("maintain_counts"), dict)
+        target.get("curate_counts")
+        if isinstance(target.get("curate_counts"), dict)
         else {}
     )
     s_counts = (
-        source.get("maintain_counts")
-        if isinstance(source.get("maintain_counts"), dict)
+        source.get("curate_counts")
+        if isinstance(source.get("curate_counts"), dict)
         else {}
     )
     for key in ("created", "updated", "archived"):
         t_counts[key] = int(t_counts.get(key) or 0) + int(s_counts.get(key) or 0)
-    target["maintain_counts"] = t_counts
+    target["curate_counts"] = t_counts
 
 
-def _aggregate_sync_totals(
+def _aggregate_ingest_totals(
     projects_metrics: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
-    """Build sync totals across projects for details_json."""
+    """Build ingest totals across projects for details_json."""
     totals = {
         "sessions_analyzed": 0,
         "sessions_extracted": 0,
@@ -613,10 +613,10 @@ def _aggregate_sync_totals(
     return totals
 
 
-def _aggregate_maintain_totals(
+def _aggregate_curate_totals(
     projects_metrics: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
-    """Build maintain totals across projects for details_json."""
+    """Build curate totals across projects for details_json."""
     counts = {"created": 0, "updated": 0, "archived": 0}
     totals = {
         "projects_count": len(projects_metrics),
@@ -629,8 +629,8 @@ def _aggregate_maintain_totals(
         for key in ("records_created", "records_updated", "records_archived"):
             totals[key] += int(metrics.get(key) or 0)
         m_counts = (
-            metrics.get("maintain_counts")
-            if isinstance(metrics.get("maintain_counts"), dict)
+            metrics.get("curate_counts")
+            if isinstance(metrics.get("curate_counts"), dict)
             else {}
         )
         for key in ("created", "updated", "archived"):
@@ -647,18 +647,18 @@ def _record_count_delta(payload: dict[str, Any]) -> int:
     )
 
 
-def run_working_memory_for_project(
+def run_context_brief_for_project(
     *,
     project_name: str,
     project_path: Path,
     trigger: str,
     force: bool = False,
 ) -> dict[str, Any]:
-    """Run one Working Memory refresh and record a service-run row."""
+    """Run one Context Brief refresh and record a service-run row."""
     started = _now_iso()
     try:
         agent = LerimRuntime(default_cwd=str(project_path))
-        result = agent.working_memory(
+        result = agent.context_brief(
             repo_root=project_path,
             project_name=project_name,
             force=force,
@@ -667,7 +667,7 @@ def run_working_memory_for_project(
         status = "skipped" if result.get("status") == "skipped" else "completed"
         _record_service_event(
             record_service_run,
-            job_type="working-memory",
+            job_type="context-brief",
             status=status,
             started_at=started,
             trigger=trigger,
@@ -682,7 +682,7 @@ def run_working_memory_for_project(
         }
         _record_service_event(
             record_service_run,
-            job_type="working-memory",
+            job_type="context-brief",
             status="failed",
             started_at=started,
             trigger=trigger,
@@ -691,15 +691,15 @@ def run_working_memory_for_project(
         return {"status": "failed", **details}
 
 
-def run_working_memory_daily(*, trigger: str = "daemon") -> dict[str, Any]:
-    """Refresh Working Memory for all registered projects, skipping unchanged ones."""
+def run_context_brief_daily(*, trigger: str = "daemon") -> dict[str, Any]:
+    """Refresh Context Brief for all registered projects, skipping unchanged ones."""
     reload_config()
     config = get_config()
     projects = config.projects or {}
     results: dict[str, dict[str, Any]] = {}
     for project_name, project_path_str in projects.items():
         project_path = Path(project_path_str).expanduser().resolve()
-        results[project_name] = run_working_memory_for_project(
+        results[project_name] = run_context_brief_for_project(
             project_name=project_name,
             project_path=project_path,
             trigger=trigger,
@@ -771,7 +771,7 @@ def _process_one_job(job: dict[str, Any]) -> dict[str, Any]:
         agent = LerimRuntime(default_cwd=repo_path)
         heartbeat_stop = _start_job_heartbeat(rid)
         try:
-            result = agent.sync(
+            result = agent.ingest(
                 Path(session_path),
                 session_id=rid,
                 agent_type=str(
@@ -835,8 +835,8 @@ def _process_claimed_jobs(
 ) -> tuple[int, int, int, float, dict[str, dict[str, Any]], list[dict[str, Any]]]:
     """Process claimed jobs sequentially in the queue-selected order.
 
-    Normal sync claims newest-first to improve first-run backlog quality.  A
-    chronological replay caller can still ask the queue for oldest-first jobs.
+    Normal ingest claims newest-first to improve first-run backlog quality.  A
+    chronological replay caller can still request the queue for oldest-first jobs.
 
     Returns
         (extracted, failed, skipped, cost_usd, projects_metrics, events).
@@ -868,7 +868,7 @@ def _process_claimed_jobs(
 
         event = {
             "time": _now_iso(),
-            "op_type": "sync",
+            "op_type": "ingest",
             "status": str(result.get("status") or "unknown"),
             "project": project_name,
             "run_id": str(result.get("run_id") or ""),
@@ -918,7 +918,7 @@ def _process_claimed_jobs(
     return extracted, failed, skipped, cost_usd, projects_metrics, events
 
 
-def run_sync_once(
+def run_ingest_once(
     *,
     run_id: str | None,
     agent_filter: list[str] | None,
@@ -930,8 +930,8 @@ def run_sync_once(
     trigger: str,
     window_start: datetime | None = None,
     window_end: datetime | None = None,
-) -> tuple[int, SyncSummary]:
-    """Run one sync cycle: index sessions, enqueue jobs, process extraction."""
+) -> tuple[int, IngestSummary]:
+    """Run one ingest cycle: index sessions, enqueue jobs, process extraction."""
     t0 = time.monotonic()
     reload_config()
 
@@ -941,28 +941,28 @@ def run_sync_once(
     if not dry_run and not ignore_lock:
         lock = ServiceLock(lock_path(WRITER_LOCK_NAME), stale_seconds=60)
         try:
-            lock.acquire("sync", "lerim sync")
+            lock.acquire("ingest", "lerim ingest")
         except LockBusyError as exc:
             op_result = OperationResult(
-                operation="sync",
+                operation="ingest",
                 status="lock_busy",
                 trigger=trigger,
                 error=str(exc),
             )
             _record_service_event(
                 record_service_run,
-                job_type="sync",
+                job_type="ingest",
                 status="lock_busy",
                 started_at=started,
                 trigger=trigger,
                 details=op_result.to_details_json(),
             )
-            return EXIT_LOCK_BUSY, _empty_sync_summary()
+            return EXIT_LOCK_BUSY, _empty_ingest_summary()
 
     try:
         _record_service_start(
             record_service_run,
-            job_type="sync",
+            job_type="ingest",
             started_at=started,
             trigger=trigger,
         )
@@ -1039,7 +1039,7 @@ def run_sync_once(
         cost_usd = 0.0
         projects: set[str] = set()
         projects_metrics: dict[str, dict[str, Any]] = {}
-        sync_events: list[dict[str, Any]] = []
+        ingest_events: list[dict[str, Any]] = []
         claim_limit = max(max_sessions, 1)
 
         if no_extract:
@@ -1087,10 +1087,10 @@ def run_sync_once(
                         project_name, _new_project_metric()
                     )
                     _merge_project_metric(target, metrics)
-                sync_events.extend(batch_events)
+                ingest_events.extend(batch_events)
                 total_processed += len(claimed)
 
-        summary = SyncSummary(
+        summary = IngestSummary(
             indexed_sessions=indexed_sessions,
             extracted_sessions=extracted,
             skipped_sessions=skipped,
@@ -1108,13 +1108,13 @@ def run_sync_once(
             code = EXIT_FATAL
             status = "failed"
 
-        sync_totals = _aggregate_sync_totals(projects_metrics)
-        sync_totals["indexed_sessions"] = indexed_sessions
-        sync_totals["queued_sessions"] = queued_sessions
-        sync_totals["skipped_unscoped"] = skipped_unscoped
+        ingest_totals = _aggregate_ingest_totals(projects_metrics)
+        ingest_totals["indexed_sessions"] = indexed_sessions
+        ingest_totals["queued_sessions"] = queued_sessions
+        ingest_totals["skipped_unscoped"] = skipped_unscoped
 
         op_result = OperationResult(
-            operation="sync",
+            operation="ingest",
             status=status
             if code == EXIT_OK
             else ("partial" if code == EXIT_PARTIAL else "failed"),
@@ -1130,13 +1130,13 @@ def run_sync_once(
             window_end=window_end.isoformat() if window_end else None,
             dry_run=dry_run,
             cost_usd=cost_usd,
-            sync_metrics=sync_totals,
+            ingest_metrics=ingest_totals,
             projects_metrics=projects_metrics,
-            events=sync_events[-200:],
+            events=ingest_events[-200:],
         )
         _record_service_event(
             record_service_run,
-            job_type="sync",
+            job_type="ingest",
             status=op_result.status,
             started_at=started,
             trigger=trigger,
@@ -1144,7 +1144,7 @@ def run_sync_once(
         )
         if not dry_run and extracted:
             log_activity(
-                "sync",
+                "ingest",
                 ", ".join(sorted(projects)) or "global",
                 f"{extracted} sessions",
                 time.monotonic() - t0,
@@ -1153,31 +1153,31 @@ def run_sync_once(
         return code, summary
     except Exception as exc:
         op_result = OperationResult(
-            operation="sync",
+            operation="ingest",
             status="failed",
             trigger=trigger,
             error=str(exc),
         )
         _record_service_event(
             record_service_run,
-            job_type="sync",
+            job_type="ingest",
             status="failed",
             started_at=started,
             trigger=trigger,
             details=op_result.to_details_json(),
         )
-        return EXIT_FATAL, _empty_sync_summary()
+        return EXIT_FATAL, _empty_ingest_summary()
     finally:
         if lock:
             lock.release()
 
 
-def run_maintain_once(
+def run_curate_once(
     *,
     dry_run: bool,
     trigger: str = "manual",
 ) -> tuple[int, dict]:
-    """Run one maintain cycle with lock handling and service run record."""
+    """Run one curate cycle with lock handling and service run record."""
     t0 = time.monotonic()
     reload_config()
 
@@ -1185,14 +1185,14 @@ def run_maintain_once(
 
     if dry_run:
         op_result = OperationResult(
-            operation="maintain",
+            operation="curate",
             status="completed",
             trigger=trigger,
             dry_run=True,
         )
         _record_service_event(
             record_service_run,
-            job_type="maintain",
+            job_type="curate",
             status="completed",
             started_at=started,
             trigger=trigger,
@@ -1202,17 +1202,17 @@ def run_maintain_once(
 
     writer = ServiceLock(lock_path(WRITER_LOCK_NAME), stale_seconds=60)
     try:
-        writer.acquire("maintain", "lerim maintain")
+            writer.acquire("curate", "lerim curate")
     except LockBusyError as exc:
         op_result = OperationResult(
-            operation="maintain",
+            operation="curate",
             status="lock_busy",
             trigger=trigger,
             error=str(exc),
         )
         _record_service_event(
             record_service_run,
-            job_type="maintain",
+            job_type="curate",
             status="lock_busy",
             started_at=started,
             trigger=trigger,
@@ -1225,7 +1225,7 @@ def run_maintain_once(
         projects = config.projects or {}
         if not projects:
             op_result = OperationResult(
-                operation="maintain",
+                operation="curate",
                 status="completed",
                 trigger=trigger,
                 projects={},
@@ -1236,7 +1236,7 @@ def run_maintain_once(
             )
             _record_service_event(
                 record_service_run,
-                job_type="maintain",
+                job_type="curate",
                 status="completed",
                 started_at=started,
                 trigger=trigger,
@@ -1246,7 +1246,7 @@ def run_maintain_once(
 
         results: dict[str, dict] = {}
         projects_metrics: dict[str, dict[str, Any]] = {}
-        maintain_events: list[dict[str, Any]] = []
+        curate_events: list[dict[str, Any]] = []
         failed_projects: list[str] = []
         for project_name, project_path_str in projects.items():
             project_path = Path(project_path_str).expanduser().resolve()
@@ -1254,16 +1254,16 @@ def run_maintain_once(
             metric_row = _new_project_metric()
             try:
                 agent = LerimRuntime(default_cwd=str(project_path))
-                result = agent.maintain(repo_root=project_path)
+                result = agent.curate(repo_root=project_path)
                 results[project_name] = result
-                maintain_cost = float(result.get("cost_usd") or 0)
-                if maintain_cost:
+                curate_cost = float(result.get("cost_usd") or 0)
+                if curate_cost:
                     log_activity(
-                        "maintain",
+                        "curate",
                         project_name,
-                        "maintenance completed",
+                        "curation completed",
                         time.monotonic() - t0,
-                        cost_usd=maintain_cost,
+                        cost_usd=curate_cost,
                     )
                 metric_row["records_created"] = int(result.get("records_created") or 0)
                 metric_row["records_updated"] = int(result.get("records_updated") or 0)
@@ -1273,19 +1273,19 @@ def run_maintain_once(
                 metric_row["duration_ms"] = int(
                     (time.monotonic() - started_project) * 1000
                 )
-                metric_row["maintain_counts"] = {
+                metric_row["curate_counts"] = {
                     "created": int(result.get("records_created") or 0),
                     "updated": int(result.get("records_updated") or 0),
                     "archived": int(result.get("records_archived") or 0),
                 }
                 if _record_count_delta(metric_row) > 0:
-                    wm_result = run_working_memory_for_project(
+                    wm_result = run_context_brief_for_project(
                         project_name=project_name,
                         project_path=project_path,
-                        trigger="maintain",
+                        trigger="curate",
                         force=False,
                     )
-                    results[project_name]["working_memory"] = wm_result
+                    results[project_name]["context_brief"] = wm_result
             except Exception as exc:
                 failed_projects.append(project_name)
                 results[project_name] = {"error": str(exc)}
@@ -1294,17 +1294,17 @@ def run_maintain_once(
                     (time.monotonic() - started_project) * 1000
                 )
             projects_metrics[project_name] = metric_row
-            maintain_events.append(
+            curate_events.append(
                 {
                     "time": _now_iso(),
-                    "op_type": "maintain",
+                    "op_type": "curate",
                     "status": "failed" if metric_row.get("last_error") else "completed",
                     "project": project_name,
                     "records_created": int(metric_row.get("records_created") or 0),
                     "records_updated": int(metric_row.get("records_updated") or 0),
                     "records_archived": int(metric_row.get("records_archived") or 0),
                     "duration_ms": int(metric_row.get("duration_ms") or 0),
-                    "maintain_counts": metric_row.get("maintain_counts") or {},
+                    "curate_counts": metric_row.get("curate_counts") or {},
                     "error": str(metric_row.get("last_error") or ""),
                 }
             )
@@ -1314,19 +1314,19 @@ def run_maintain_once(
             if failed_projects and not (set(projects) - set(failed_projects))
             else ("partial" if failed_projects else "completed")
         )
-        maintain_totals = _aggregate_maintain_totals(projects_metrics)
+        curate_totals = _aggregate_curate_totals(projects_metrics)
         op_result = OperationResult(
-            operation="maintain",
+            operation="curate",
             status=status,
             trigger=trigger,
             projects=results,
-            maintain_metrics=maintain_totals,
+            curate_metrics=curate_totals,
             projects_metrics=projects_metrics,
-            events=maintain_events[-200:],
+            events=curate_events[-200:],
         )
         _record_service_event(
             record_service_run,
-            job_type="maintain",
+            job_type="curate",
             status=status,
             started_at=started,
             trigger=trigger,
@@ -1340,14 +1340,14 @@ def run_maintain_once(
         return code, op_result.to_response_json()
     except Exception as exc:
         op_result = OperationResult(
-            operation="maintain",
+            operation="curate",
             status="failed",
             trigger=trigger,
             error=str(exc),
         )
         _record_service_event(
             record_service_run,
-            job_type="maintain",
+            job_type="curate",
             status="failed",
             started_at=started,
             trigger=trigger,

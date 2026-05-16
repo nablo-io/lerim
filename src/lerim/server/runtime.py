@@ -1,7 +1,7 @@
-"""Runtime orchestrator for Lerim sync, maintain, and ask.
+"""Runtime orchestrator for Lerim ingest and context agent flows.
 
-Sync and maintain use BAML/LangGraph harnesses. Ask and working-memory synthesis
-still use PydanticAI until those flows are migrated.
+All agent-facing flows use BAML-backed runtime clients over the DB-only context
+store.
 """
 
 from __future__ import annotations
@@ -10,39 +10,36 @@ import json
 import logging
 import secrets
 import time
-from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any
 
-from lerim.agents.ask import run_ask
+from lerim.agents.context_answerer import run_context_answerer
 from lerim.agents.contracts import (
-    MaintainResultContract,
-    SyncResultContract,
-    WorkingMemoryResultContract,
+    ContextCuratorResultContract,
+    IngestResultContract,
+    ContextBriefResultContract,
 )
-from lerim.agents.extract import ExtractionResult, ExtractionRunDetails, run_extraction
-from lerim.agents.maintain import run_maintain
+from lerim.agents.trace_ingestion import TraceIngestionResult, TraceIngestionRunDetails, run_trace_ingestion
+from lerim.agents.context_curator import run_context_curator
 from lerim.agents.mlflow_observability import finish_mlflow_run, lerim_mlflow_run
-from lerim.agents.working_memory import run_working_memory_synthesis
-from lerim.config.providers import build_pydantic_model
+from lerim.agents.context_brief import compile_context_brief
 from lerim.config.settings import Config, get_config
-from lerim.context import ProjectIdentity, resolve_project_identity
-from lerim.working_memory import (
-    WORKING_MEMORY_FILENAME,
-    WORKING_MEMORY_OPERATION,
+from lerim.context import ProjectIdentity, ScopeIdentity, resolve_project_identity, scope_from_project
+from lerim.context_brief import (
+    CONTEXT_BRIEF_FILENAME,
+    CONTEXT_BRIEF_OPERATION,
     build_manifest,
     count_changed_records_since,
-    empty_working_memory_draft,
+    empty_context_brief_draft,
     included_record_ids,
     load_candidate_records,
-    render_working_memory_markdown,
+    render_context_brief_markdown,
     utc_now_iso,
     validate_draft,
-    WorkingMemoryProject,
-    working_memory_paths,
+    ContextBriefProject,
+    context_brief_paths,
 )
-from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 
 logger = logging.getLogger("lerim.runtime")
 
@@ -145,14 +142,13 @@ def _write_text_with_newline(path: Path, content: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def _write_agent_trace(path: Path, messages: list[ModelMessage]) -> None:
-    """Serialize PydanticAI message history to a stable JSON artifact."""
-    trace_data = ModelMessagesTypeAdapter.dump_python(messages, mode="json")
-    path.write_text(json.dumps(trace_data, indent=2), encoding="utf-8")
+def _write_agent_trace(path: Path, messages: list[Any]) -> None:
+    """Serialize agent message or event history to a stable JSON artifact."""
+    path.write_text(json.dumps(messages, ensure_ascii=True, indent=2), encoding="utf-8")
 
 
-def _write_extract_agent_trace(path: Path, details: ExtractionRunDetails) -> None:
-    """Serialize BAML/LangGraph extract events to a stable JSON artifact."""
+def _write_trace_ingestion_agent_trace(path: Path, details: TraceIngestionRunDetails) -> None:
+    """Serialize BAML/LangGraph trace-ingestion events to a stable JSON artifact."""
     payload = [event.model_dump(mode="json") for event in details.events]
     path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
 
@@ -203,214 +199,39 @@ def _mark_run_failed(
         artifact_paths["agent_trace"].write_text("[]", encoding="utf-8")
 
 
-@contextmanager
-def _mlflow_run_span(
-    *,
-    enabled: bool,
-    operation: str,
-    run_id: str,
-    session_id: str,
-    project_id: str,
-    project_name: str,
-    run_folder: Path,
-) -> Iterator[None]:
-    """Create an MLflow trace wrapper tagged with Lerim's run identity."""
-    if not enabled:
-        yield
-        return
-    try:
-        import mlflow
-    except Exception as exc:
-        logger.warning(f"[{operation}] MLflow run span unavailable: {exc}")
-        yield
-        return
-
-    span_cm = mlflow.start_span(
-        name=f"lerim.{operation}",
-        span_type="CHAIN",
-        attributes={
-            "lerim.run_id": run_id,
-            "lerim.operation": operation,
-            "lerim.session_id": session_id,
-            "lerim.project_id": project_id,
-            "lerim.project": project_name,
-            "lerim.run_folder": str(run_folder),
-        },
-    )
-    try:
-        span_cm.__enter__()
-        mlflow.update_current_trace(
-            client_request_id=run_id,
-            tags={
-                "lerim.run_id": run_id,
-                "lerim.operation": operation,
-                "lerim.session_id": session_id,
-                "lerim.project_id": project_id,
-                "lerim.project": project_name,
-            },
-            metadata={"lerim.run_folder": str(run_folder)},
-            request_preview=f"{operation}:{session_id}",
-        )
-    except Exception as exc:
-        try:
-            span_cm.__exit__(type(exc), exc, exc.__traceback__)
-        except Exception:
-            pass
-        logger.warning(f"[{operation}] MLflow run span unavailable: {exc}")
-        yield
-        return
-
-    try:
-        yield
-    except BaseException as exc:
-        span_cm.__exit__(type(exc), exc, exc.__traceback__)
-        raise
-    else:
-        span_cm.__exit__(None, None, None)
-
-
-def _build_ask_debug(messages: list[ModelMessage]) -> dict[str, Any]:
-    """Build a sanitized ask debug payload from message history."""
-    trace_data = ModelMessagesTypeAdapter.dump_python(messages, mode="json")
-    tool_calls: list[dict[str, Any]] = []
-    tool_results: list[dict[str, Any]] = []
-    assistant_texts: list[str] = []
-    ordered_messages: list[dict[str, Any]] = []
-
-    for message_index, message in enumerate(trace_data):
-        sanitized_parts: list[dict[str, Any]] = []
-        for part in message.get("parts", []) or []:
-            part_kind = str(part.get("part_kind") or "")
-            if part_kind == "tool-call":
-                entry = {
-                    "part_kind": part_kind,
-                    "tool_name": str(part.get("tool_name") or ""),
-                    "args": part.get("args"),
-                    "tool_call_id": part.get("tool_call_id"),
-                }
-                sanitized_parts.append(entry)
-                tool_calls.append(
-                    {
-                        "tool_name": entry["tool_name"],
-                        "args": entry["args"],
-                        "tool_call_id": entry["tool_call_id"],
-                    }
-                )
-                continue
-            if part_kind == "tool-return":
-                content = part.get("content")
-                text = (
-                    content
-                    if isinstance(content, str)
-                    else json.dumps(content, ensure_ascii=True)
-                )
-                entry = {
-                    "part_kind": part_kind,
-                    "tool_name": str(part.get("tool_name") or ""),
-                    "tool_call_id": part.get("tool_call_id"),
-                    "is_error": bool(part.get("is_error")),
-                    "content_preview": text[:200],
-                }
-                sanitized_parts.append(entry)
-                tool_results.append(
-                    {
-                        "tool_name": entry["tool_name"],
-                        "tool_call_id": entry["tool_call_id"],
-                        "is_error": entry["is_error"],
-                        "content_preview": entry["content_preview"],
-                    }
-                )
-                continue
-            if part_kind == "system-prompt":
-                sanitized_parts.append(
-                    {
-                        "part_kind": part_kind,
-                        "char_count": len(str(part.get("content") or "")),
-                    }
-                )
-                continue
-            if part_kind == "user-prompt":
-                sanitized_parts.append(
-                    {
-                        "part_kind": part_kind,
-                        "content": str(part.get("content") or ""),
-                    }
-                )
-                continue
-            if part_kind == "text":
-                text = str(part.get("content") or "").strip()
-                if text:
-                    assistant_texts.append(text)
-                    sanitized_parts.append(
-                        {
-                            "part_kind": part_kind,
-                            "content": text,
-                        }
-                    )
-                continue
-            if part_kind == "thinking":
-                continue
-            sanitized_parts.append(
+def _build_answer_debug(events: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build a sanitized context-answerer debug payload from BAML/retrieval events."""
+    retrieval_actions = [
+        event for event in events if str(event.get("kind") or "") == "retrieval"
+    ]
+    messages = [
+        {
+            "message_index": index,
+            "kind": str(event.get("kind") or "event"),
+            "parts": [
                 {
-                    "part_kind": part_kind,
-                    "content": str(part)[:1000],
+                    "part_kind": str(
+                        event.get("function")
+                        or event.get("action_type")
+                        or event.get("kind")
+                        or "event"
+                    ),
+                    "content": event,
                 }
-            )
-
-        ordered_messages.append(
-            {
-                "message_index": message_index,
-                "kind": str(message.get("kind") or ""),
-                "parts": sanitized_parts,
-            }
-        )
-
+            ],
+        }
+        for index, event in enumerate(events)
+    ]
     return {
-        "tool_calls": tool_calls,
-        "tool_results": tool_results,
-        "assistant_texts": assistant_texts,
-        "message_count": len(trace_data),
-        "messages": ordered_messages,
+        "events": events,
+        "retrieval_actions": retrieval_actions,
+        "message_count": len(events),
+        "messages": messages,
     }
 
 
-# ---------------------------------------------------------------------------
-# Quota error detection (PydanticAI path)
-# ---------------------------------------------------------------------------
-
-
-def _is_quota_error_pydantic(exc: Exception) -> bool:
-    """Detect rate-limit / quota errors across PydanticAI provider backends."""
-    try:
-        from openai import APIStatusError, RateLimitError
-    except ImportError:
-        RateLimitError = APIStatusError = None
-    try:
-        from httpx import HTTPStatusError
-    except ImportError:
-        HTTPStatusError = None
-
-    if RateLimitError is not None and isinstance(exc, RateLimitError):
-        return True
-    if (
-        APIStatusError is not None
-        and isinstance(exc, APIStatusError)
-        and getattr(exc, "status_code", None) == 429
-    ):
-        return True
-    if HTTPStatusError is not None and isinstance(exc, HTTPStatusError):
-        try:
-            if exc.response.status_code == 429:
-                return True
-        except Exception:
-            pass
-
-    msg = str(exc).lower()
-    return "429" in msg or "rate limit" in msg or "quota" in msg
-
-
 class LerimRuntime:
-    """Runtime orchestrator for sync, maintain, ask, and working memory."""
+    """Runtime orchestrator for ingest and context agent flows."""
 
     def __init__(
         self,
@@ -428,146 +249,136 @@ class LerimRuntime:
 
     @staticmethod
     def generate_session_id() -> str:
-        """Generate a unique session ID for ask mode."""
+        """Generate a unique session ID for interactive context answering."""
         return f"lerim-{secrets.token_hex(6)}"
 
-    def _run_with_fallback(
-        self,
-        *,
-        flow: str,
-        callable_fn: Callable[[Any], Any],
-        model_builders: list[Callable[[], Any]],
-        max_attempts: int = 3,
-    ) -> Any:
-        """Run a PydanticAI callable with retry + model-builder fallback support."""
-        from pydantic_ai.exceptions import UsageLimitExceeded
-
-        last_exc: Exception | None = None
-        for model_idx, builder in enumerate(model_builders):
-            model_label = (
-                self.config.agent_role.model
-                if model_idx == 0
-                else f"fallback-{model_idx}"
-            )
-            for attempt in range(1, max_attempts + 1):
-                try:
-                    logger.info(
-                        f"[{flow}] pydantic-ai attempt {attempt}/{max_attempts} "
-                        f"(model={model_label})"
-                    )
-                    model = builder()
-                    return callable_fn(model)
-                except UsageLimitExceeded as exc:
-                    logger.warning(
-                        f"[{flow}] usage limit exceeded, short-circuiting: {exc}"
-                    )
-                    raise
-                except Exception as exc:
-                    last_exc = exc
-                    if isinstance(exc, ValueError):
-                        logger.error(
-                            f"[{flow}] non-retryable agent/store error: {str(exc)[:100]}"
-                        )
-                        raise
-                    if _is_quota_error_pydantic(exc):
-                        logger.warning(
-                            f"[{flow}] quota error on {model_label}: {str(exc)[:100]}"
-                        )
-                        break
-                    if attempt < max_attempts:
-                        wait_time = min(2**attempt, 8)
-                        logger.warning(
-                            f"[{flow}] transient error on attempt {attempt}/{max_attempts} "
-                            f"({type(exc).__name__}): {str(exc)[:100]}; retrying in {wait_time}s..."
-                        )
-                        time.sleep(wait_time)
-                        continue
-                    logger.error(
-                        f"[{flow}] exhausted retries on {model_label}: {str(exc)[:100]}"
-                    )
-                    break
-
-        raise RuntimeError(
-            f"[{flow}] Failed after trying {len(model_builders)} model(s). "
-            f"Last error: {last_exc}"
-        ) from last_exc
-
     # ------------------------------------------------------------------
-    # Sync flow
+    # Trace-ingestion flow
     # ------------------------------------------------------------------
 
-    def sync(
+    def ingest(
         self,
         trace_path: str | Path,
         session_id: str | None = None,
         agent_type: str = "unknown",
         session_meta: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Run record-write sync flow and return stable contract payload."""
+        """Run record-write trace ingestion and return stable contract payload."""
         trace_file = Path(trace_path).expanduser().resolve()
         if not trace_file.exists() or not trace_file.is_file():
             raise FileNotFoundError(f"trace_path_missing:{trace_file}")
 
         repo_root = Path(self._default_cwd or Path.cwd()).expanduser().resolve()
-        return self._sync_inner(
+        return self._ingest_inner(
             trace_file,
-            repo_root,
+            repo_root=repo_root,
             session_id=session_id,
             agent_type=agent_type,
             session_meta=session_meta or {},
         )
 
-    def _sync_inner(
+    def ingest_imported_trace(
+        self,
+        trace_path: str | Path,
+        *,
+        scope_identity: ScopeIdentity,
+        session_id: str | None = None,
+        agent_type: str = "generic",
+        source_name: str | None = None,
+        source_profile: str | None = None,
+        session_meta: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Ingest one user-imported trace into a non-project or project scope."""
+        trace_file = Path(trace_path).expanduser().resolve()
+        if not trace_file.exists() or not trace_file.is_file():
+            raise FileNotFoundError(f"trace_path_missing:{trace_file}")
+        repo_root = scope_identity.repo_path if scope_identity.scope_type == "project" else None
+        return self._ingest_inner(
+            trace_file,
+            repo_root=repo_root,
+            session_id=session_id,
+            agent_type=agent_type,
+            session_meta=session_meta or {},
+            scope_identity=scope_identity,
+            source_name=source_name,
+            source_profile=source_profile,
+        )
+
+    def _ingest_inner(
         self,
         trace_file: Path,
-        repo_root: Path,
         *,
+        repo_root: Path | None,
         session_id: str | None,
         agent_type: str,
         session_meta: dict[str, Any],
+        scope_identity: ScopeIdentity | None = None,
+        source_name: str | None = None,
+        source_profile: str | None = None,
     ) -> dict[str, Any]:
-        """Inner sync logic called by sync()."""
-        project_identity = resolve_project_identity(repo_root)
+        """Inner trace-ingestion logic called by ingest()."""
+        project_identity = resolve_project_identity(repo_root) if repo_root is not None else None
+        resolved_scope = scope_identity or (
+            scope_from_project(project_identity) if project_identity is not None else None
+        )
+        if resolved_scope is None:
+            raise ValueError("scope_identity_required")
         resolved_workspace_root = _resolve_runtime_roots(config=self.config)
         store = _store_for_config(self.config)
-        store.register_project(project_identity)
+        if project_identity is not None:
+            store.register_project(project_identity)
+        else:
+            store.register_scope(
+                resolved_scope,
+                source_name=source_name or agent_type,
+                source_profile=source_profile or agent_type,
+            )
         resolved_session_id = session_id or trace_file.stem
         store.upsert_session(
-            project_id=project_identity.project_id,
+            project_id=project_identity.project_id if project_identity else None,
             session_id=resolved_session_id,
             agent_type=agent_type,
             source_trace_ref=str(trace_file),
-            repo_path=str(project_identity.repo_path),
-            cwd=str(session_meta.get("cwd") or project_identity.repo_path),
+            repo_path=str(project_identity.repo_path) if project_identity else None,
+            cwd=str(session_meta.get("cwd") or (project_identity.repo_path if project_identity else "")) or None,
             started_at=str(session_meta.get("started_at") or ""),
             model_name=str(self.config.agent_role.model),
             instructions_text=str(session_meta.get("instructions_text") or "")[:4000]
             or None,
             prompt_text=str(session_meta.get("prompt_text") or "")[:4000] or None,
+            scope_identity=resolved_scope,
+            source_name=source_name or agent_type,
+            source_profile=source_profile or agent_type,
             metadata=session_meta,
         )
 
-        run_id, run_folder = _new_run_folder(resolved_workspace_root, "sync")
+        run_id, run_folder = _new_run_folder(resolved_workspace_root, "ingest")
         artifact_paths = _build_artifact_paths(run_folder, include_session_log=True)
         metadata = {
             "run_id": run_id,
             "trace_path": str(trace_file),
-            "repo_name": repo_root.name,
+            "repo_name": repo_root.name if repo_root is not None else "",
+            "scope_type": resolved_scope.scope_type,
+            "scope_id": resolved_scope.scope_id,
+            "scope_label": resolved_scope.label,
         }
         _write_json_artifact(artifact_paths["session_log"], metadata)
         artifact_paths["subagents_log"].write_text("", encoding="utf-8")
         manifest = {
             "run_id": run_id,
-            "operation": "sync",
+            "operation": "ingest",
             "status": "running",
             "started_at": datetime.now(timezone.utc).isoformat(),
             "mlflow_client_request_id": run_id,
             "session_id": resolved_session_id,
             "agent_type": agent_type,
             "trace_path": str(trace_file),
-            "project_id": project_identity.project_id,
-            "project": project_identity.project_slug,
-            "repo_path": str(project_identity.repo_path),
+            "project_id": project_identity.project_id if project_identity else None,
+            "project": project_identity.project_slug if project_identity else resolved_scope.scope_slug,
+            "repo_path": str(project_identity.repo_path) if project_identity else None,
+            "scope_type": resolved_scope.scope_type,
+            "scope_id": resolved_scope.scope_id,
+            "scope_label": resolved_scope.label,
             "workspace_root": str(resolved_workspace_root),
             "run_folder": str(run_folder),
             "artifacts": {key: str(path) for key, path in artifact_paths.items()},
@@ -581,28 +392,31 @@ class LerimRuntime:
         try:
             with lerim_mlflow_run(
                 enabled=self.config.mlflow_enabled,
-                operation="sync",
+                operation="ingest",
                 run_id=run_id,
                 session_id=resolved_session_id,
-                project_id=project_identity.project_id,
-                project_name=project_identity.project_slug,
+                project_id=project_identity.project_id if project_identity else resolved_scope.scope_id,
+                project_name=project_identity.project_slug if project_identity else resolved_scope.scope_slug,
                 run_folder=run_folder,
-                request_preview=f"sync:{resolved_session_id}",
+                request_preview=f"ingest:{resolved_session_id}",
             ) as mlflow_run:
-                result, details = self._run_sync_extraction(
+                result, details = self._run_trace_ingestion(
                     project_identity=project_identity,
+                    scope_identity=resolved_scope,
                     session_id=resolved_session_id,
                     trace_path=trace_file,
                     session_started_at=str(session_meta.get("started_at") or ""),
+                    source_name=source_name or agent_type,
+                    source_profile=source_profile or agent_type,
                 )
 
                 response_text = (result.completion_summary or "").strip() or "(no response)"
                 _write_text_with_newline(artifact_paths["agent_log"], response_text)
 
                 try:
-                    _write_extract_agent_trace(artifact_paths["agent_trace"], details)
+                    _write_trace_ingestion_agent_trace(artifact_paths["agent_trace"], details)
                 except Exception as exc:
-                    logger.warning(f"[sync] Failed to write agent trace: {exc}")
+                    logger.warning(f"[ingest] Failed to write agent trace: {exc}")
                     artifact_paths["agent_trace"].write_text("[]", encoding="utf-8")
 
                 counts = _record_change_counts(self.config, resolved_session_id)
@@ -646,7 +460,10 @@ class LerimRuntime:
                 payload = {
                     "trace_path": str(trace_file),
                     "context_db_path": str(self.config.context_db_path),
-                    "project_id": project_identity.project_id,
+                    "project_id": project_identity.project_id if project_identity else None,
+                    "scope_type": resolved_scope.scope_type,
+                    "scope_id": resolved_scope.scope_id,
+                    "scope_label": resolved_scope.label,
                     "workspace_root": str(resolved_workspace_root),
                     "run_folder": str(run_folder),
                     "artifacts": {key: str(path) for key, path in artifact_paths.items()},
@@ -655,7 +472,9 @@ class LerimRuntime:
                     "records_archived": manifest["records_archived"],
                     "cost_usd": 0.0,
                 }
-                return SyncResultContract.model_validate(payload).model_dump(mode="json")
+                return IngestResultContract.model_validate(payload).model_dump(
+                    mode="json"
+                )
         except Exception as exc:
             _mark_run_failed(
                 artifact_paths=artifact_paths,
@@ -664,25 +483,31 @@ class LerimRuntime:
             )
             raise
 
-    def _run_sync_extraction(
+    def _run_trace_ingestion(
         self,
         *,
-        project_identity: ProjectIdentity,
+        project_identity: ProjectIdentity | None,
+        scope_identity: ScopeIdentity,
         session_id: str,
         trace_path: Path,
         session_started_at: str,
+        source_name: str | None = None,
+        source_profile: str | None = None,
         max_attempts: int = 3,
-    ) -> tuple[ExtractionResult, ExtractionRunDetails]:
-        """Run extraction with bounded retry before any session mutation is written."""
+    ) -> tuple[TraceIngestionResult, TraceIngestionRunDetails]:
+        """Run trace ingestion with bounded retry before any session mutation is written."""
         for attempt in range(1, max_attempts + 1):
             try:
-                return run_extraction(
+                return run_trace_ingestion(
                     context_db_path=self.config.context_db_path,
                     project_identity=project_identity,
+                    scope_identity=scope_identity,
                     session_id=session_id,
                     trace_path=trace_path,
                     config=self.config,
                     session_started_at=session_started_at,
+                    source_name=source_name,
+                    source_profile=source_profile,
                     return_details=True,
                 )
             except Exception:
@@ -693,40 +518,40 @@ class LerimRuntime:
                     raise
                 wait_time = min(2**attempt, 8)
                 logger.warning(
-                    f"[sync] transient extraction failure before writes on attempt "
+                    f"[ingest] transient trace-ingestion failure before writes on attempt "
                     f"{attempt}/{max_attempts}; retrying in {wait_time}s..."
                 )
                 time.sleep(wait_time)
 
-        raise RuntimeError("sync_extraction_retry_exhausted")
+        raise RuntimeError("trace_ingestion_retry_exhausted")
 
     # ------------------------------------------------------------------
-    # Maintain flow
+    # Context-curator flow
     # ------------------------------------------------------------------
 
-    def maintain(
+    def curate(
         self,
         repo_root: str | Path | None = None,
         session_id: str | None = None,
     ) -> dict[str, Any]:
-        """Run context-store maintenance flow and return stable contract payload."""
+        """Run context-curation flow and return stable contract payload."""
         resolved_repo_root = (
             Path(repo_root).expanduser().resolve()
             if repo_root
             else Path(self._default_cwd or Path.cwd()).expanduser().resolve()
         )
-        return self._maintain_inner(
+        return self._curate_inner(
             resolved_repo_root,
             session_id=session_id or self.generate_session_id(),
         )
 
-    def _maintain_inner(
+    def _curate_inner(
         self,
         repo_root: Path,
         *,
         session_id: str,
     ) -> dict[str, Any]:
-        """Inner maintain logic called by maintain()."""
+        """Inner context-curation logic called by curate()."""
         project_identity = resolve_project_identity(repo_root)
         resolved_workspace_root = _resolve_runtime_roots(config=self.config)
         store = _store_for_config(self.config)
@@ -734,8 +559,8 @@ class LerimRuntime:
         store.upsert_session(
             project_id=project_identity.project_id,
             session_id=session_id,
-            agent_type="maintain",
-            source_trace_ref=f"maintain:{project_identity.project_id}",
+            agent_type="context_curator",
+            source_trace_ref=f"context_curator:{project_identity.project_id}",
             repo_path=str(project_identity.repo_path),
             cwd=str(project_identity.repo_path),
             started_at=datetime.now(timezone.utc).isoformat(),
@@ -745,17 +570,17 @@ class LerimRuntime:
             metadata={},
         )
 
-        run_id, run_folder = _new_run_folder(resolved_workspace_root, "maintain")
+        run_id, run_folder = _new_run_folder(resolved_workspace_root, "curate")
         artifact_paths = _build_artifact_paths(run_folder, include_session_log=False)
         artifact_paths["subagents_log"].write_text("", encoding="utf-8")
         manifest = {
             "run_id": run_id,
-            "operation": "maintain",
+            "operation": "curate",
             "status": "running",
             "started_at": datetime.now(timezone.utc).isoformat(),
             "mlflow_client_request_id": run_id,
             "session_id": session_id,
-            "agent_type": "maintain",
+            "agent_type": "context_curator",
             "project_id": project_identity.project_id,
             "project": project_identity.project_slug,
             "repo_path": str(project_identity.repo_path),
@@ -772,21 +597,21 @@ class LerimRuntime:
         try:
             with lerim_mlflow_run(
                 enabled=self.config.mlflow_enabled,
-                operation="maintain",
+                operation="curate",
                 run_id=run_id,
                 session_id=session_id,
                 project_id=project_identity.project_id,
                 project_name=project_identity.project_slug,
                 run_folder=run_folder,
-                request_preview=f"maintain:{session_id}",
+                request_preview=f"curate:{session_id}",
             ) as mlflow_run:
-                result, details = run_maintain(
+                result, details = run_context_curator(
                     context_db_path=self.config.context_db_path,
                     project_identity=project_identity,
                     session_id=session_id,
                     config=self.config,
                     return_details=True,
-                    max_llm_calls=self.config.agent_role.max_iters_maintain,
+                    max_llm_calls=self.config.agent_role.curate_max_llm_calls,
                 )
 
                 response_text = (result.completion_summary or "").strip() or "(no response)"
@@ -795,7 +620,7 @@ class LerimRuntime:
                 try:
                     _write_graph_agent_trace(artifact_paths["agent_trace"], details)
                 except Exception as exc:
-                    logger.warning(f"[maintain] Failed to write agent trace: {exc}")
+                    logger.warning(f"[context-curator] Failed to write agent trace: {exc}")
                     artifact_paths["agent_trace"].write_text("[]", encoding="utf-8")
 
                 counts = _record_change_counts(self.config, session_id)
@@ -846,7 +671,7 @@ class LerimRuntime:
                     "records_archived": manifest["records_archived"],
                     "cost_usd": 0.0,
                 }
-                return MaintainResultContract.model_validate(payload).model_dump(
+                return ContextCuratorResultContract.model_validate(payload).model_dump(
                     mode="json"
                 )
         except Exception as exc:
@@ -858,10 +683,10 @@ class LerimRuntime:
             raise
 
     # ------------------------------------------------------------------
-    # Working Memory flow
+    # Context-brief flow
     # ------------------------------------------------------------------
 
-    def working_memory(
+    def context_brief(
         self,
         repo_root: str | Path | None = None,
         *,
@@ -869,7 +694,7 @@ class LerimRuntime:
         force: bool = False,
         trigger: str = "manual",
     ) -> dict[str, Any]:
-        """Generate or skip one project's derived Working Memory artifact."""
+        """Generate or skip one project's derived context brief artifact."""
         resolved_repo_root = (
             Path(repo_root).expanduser().resolve()
             if repo_root
@@ -880,7 +705,7 @@ class LerimRuntime:
         resolved_workspace_root = _resolve_runtime_roots(config=self.config)
         store = _store_for_config(self.config)
         store.register_project(project_identity)
-        current_paths = working_memory_paths(
+        current_paths = context_brief_paths(
             self.config,
             project_identity.project_id,
         )
@@ -920,21 +745,21 @@ class LerimRuntime:
                 "skip_reason": "no_records_changed_since_previous_generation",
                 "cost_usd": 0.0,
             }
-            return WorkingMemoryResultContract.model_validate(payload).model_dump(
+            return ContextBriefResultContract.model_validate(payload).model_dump(
                 mode="json"
             )
 
         run_id, run_folder = _new_run_folder(
             resolved_workspace_root,
-            WORKING_MEMORY_OPERATION,
+            CONTEXT_BRIEF_OPERATION,
         )
         artifact_paths = _build_artifact_paths(run_folder, include_session_log=False)
-        artifact_paths["working_memory"] = run_folder / WORKING_MEMORY_FILENAME
+        artifact_paths["context_brief"] = run_folder / CONTEXT_BRIEF_FILENAME
         artifact_paths["subagents_log"].write_text("", encoding="utf-8")
         started_at = utc_now_iso()
         manifest = {
             "run_id": run_id,
-            "operation": WORKING_MEMORY_OPERATION,
+            "operation": CONTEXT_BRIEF_OPERATION,
             "status": "running",
             "started_at": started_at,
             "mlflow_client_request_id": run_id,
@@ -952,121 +777,140 @@ class LerimRuntime:
         )
 
         try:
-            candidates = load_candidate_records(
-                store,
+            with lerim_mlflow_run(
+                enabled=self.config.mlflow_enabled,
+                operation=CONTEXT_BRIEF_OPERATION,
+                run_id=run_id,
+                session_id=run_id,
                 project_id=project_identity.project_id,
-            )
-            messages: list[ModelMessage] = []
-            if candidates:
-                def _primary_builder() -> Any:
-                    return build_pydantic_model("agent", config=self.config)
-
-                def _call(model: Any) -> tuple[Any, list[ModelMessage]]:
-                    return run_working_memory_synthesis(
-                        model=model,
+                project_name=display_name,
+                run_folder=run_folder,
+                request_preview=f"{CONTEXT_BRIEF_OPERATION}:{project_identity.project_id}",
+            ) as mlflow_run:
+                candidates = load_candidate_records(
+                    store,
+                    project_id=project_identity.project_id,
+                )
+                messages: list[Any] = []
+                if candidates:
+                    draft, messages = compile_context_brief(
+                        config=self.config,
                         candidates=candidates,
                         return_messages=True,
                     )
-
-                draft, messages = self._run_with_fallback(
-                    flow=WORKING_MEMORY_OPERATION,
-                    callable_fn=_call,
-                    model_builders=[_primary_builder],
+                    if not draft.summary and not draft.sections:
+                        raise ValueError("context_brief_empty")
+                else:
+                    draft = empty_context_brief_draft()
+                allowed_ids = {str(record.get("record_id") or "") for record in candidates}
+                record_kinds = {
+                    str(record.get("record_id") or ""): str(record.get("kind") or "")
+                    for record in candidates
+                }
+                validate_draft(
+                    draft,
+                    allowed_record_ids=allowed_ids,
+                    record_kinds=record_kinds,
                 )
-                if not draft.summary and not draft.sections:
-                    raise ValueError("working_memory_synthesis_empty")
-            else:
-                draft = empty_working_memory_draft()
-            allowed_ids = {str(record.get("record_id") or "") for record in candidates}
-            validate_draft(draft, allowed_record_ids=allowed_ids)
-            record_ids = included_record_ids(draft)
-            generated_at = utc_now_iso()
-            project = WorkingMemoryProject(
-                name=display_name,
-                identity=project_identity,
-            )
-            markdown = render_working_memory_markdown(
-                project=project,
-                generated_at=generated_at,
-                previous_generated_at=previous_generated_at or None,
-                generation_trigger=trigger,
-                records_considered=len(candidates),
-                records_included=len(record_ids),
-                db_records_changed_since_previous=changed_since_previous,
-                draft=draft,
-                candidate_records=candidates,
-                current_file=current_paths.current_file,
-                run_folder=run_folder,
-            )
-            _write_text_with_newline(artifact_paths["working_memory"], markdown)
-            response_text = (
-                f"Working Memory generated with {len(record_ids)} cited record(s)."
-            )
-            _write_text_with_newline(artifact_paths["agent_log"], response_text)
-            try:
-                _write_agent_trace(artifact_paths["agent_trace"], messages)
-            except Exception as exc:
-                logger.warning(f"[working-memory] Failed to write agent trace: {exc}")
-                artifact_paths["agent_trace"].write_text("[]", encoding="utf-8")
+                record_ids = included_record_ids(draft)
+                generated_at = utc_now_iso()
+                project = ContextBriefProject(
+                    name=display_name,
+                    identity=project_identity,
+                )
+                markdown = render_context_brief_markdown(
+                    project=project,
+                    generated_at=generated_at,
+                    previous_generated_at=previous_generated_at or None,
+                    generation_trigger=trigger,
+                    records_considered=len(candidates),
+                    records_included=len(record_ids),
+                    db_records_changed_since_previous=changed_since_previous,
+                    draft=draft,
+                    candidate_records=candidates,
+                    current_file=current_paths.current_file,
+                    run_folder=run_folder,
+                )
+                _write_text_with_newline(artifact_paths["context_brief"], markdown)
+                response_text = (
+                    f"Context brief generated with {len(record_ids)} cited record(s)."
+                )
+                _write_text_with_newline(artifact_paths["agent_log"], response_text)
+                try:
+                    _write_agent_trace(artifact_paths["agent_trace"], messages)
+                except Exception as exc:
+                    logger.warning(f"[context-brief] Failed to write agent trace: {exc}")
+                    artifact_paths["agent_trace"].write_text("[]", encoding="utf-8")
 
-            manifest = build_manifest(
-                run_id=run_id,
-                status="succeeded",
-                generated_at=generated_at,
-                project=project,
-                records_considered=len(candidates),
-                records_included=len(record_ids),
-                included_record_ids_value=record_ids,
-                changed_records_since_previous=changed_since_previous,
-                trigger=trigger,
-                current_file=current_paths.current_file,
-                run_folder=run_folder,
-            )
-            manifest["completed_at"] = utc_now_iso()
-            manifest["workspace_root"] = str(resolved_workspace_root)
-            manifest["artifacts"] = {
-                key: str(path) for key, path in artifact_paths.items()
-            }
-            _write_json_artifact(artifact_paths["manifest"], manifest)
-            _append_jsonl_artifact(
-                artifact_paths["events"],
-                {
-                    "ts": manifest["completed_at"],
-                    "event": "succeeded",
-                    "run_id": run_id,
+                manifest = build_manifest(
+                    run_id=run_id,
+                    status="succeeded",
+                    generated_at=generated_at,
+                    project=project,
+                    records_considered=len(candidates),
+                    records_included=len(record_ids),
+                    included_record_ids_value=record_ids,
+                    changed_records_since_previous=changed_since_previous,
+                    trigger=trigger,
+                    current_file=current_paths.current_file,
+                    run_folder=run_folder,
+                )
+                manifest["completed_at"] = utc_now_iso()
+                manifest["workspace_root"] = str(resolved_workspace_root)
+                manifest["artifacts"] = {
+                    key: str(path) for key, path in artifact_paths.items()
+                }
+                _write_json_artifact(artifact_paths["manifest"], manifest)
+                _append_jsonl_artifact(
+                    artifact_paths["events"],
+                    {
+                        "ts": manifest["completed_at"],
+                        "event": "succeeded",
+                        "run_id": run_id,
+                        "records_considered": len(candidates),
+                        "records_included": len(record_ids),
+                        "records_changed_since_previous": changed_since_previous,
+                    },
+                )
+                from lerim.context_brief import write_current_artifacts
+
+                write_current_artifacts(
+                    paths=current_paths,
+                    run_markdown=artifact_paths["context_brief"],
+                    run_manifest=artifact_paths["manifest"],
+                )
+                payload = {
+                    "status": "generated",
+                    "project": display_name,
+                    "project_id": project_identity.project_id,
+                    "trigger": trigger,
+                    "generated_at": generated_at,
+                    "context_db_path": str(self.config.context_db_path),
+                    "workspace_root": str(resolved_workspace_root),
+                    "run_folder": str(run_folder),
+                    "current_file": str(current_paths.current_file),
+                    "current_manifest": str(current_paths.current_manifest),
                     "records_considered": len(candidates),
                     "records_included": len(record_ids),
                     "records_changed_since_previous": changed_since_previous,
-                },
-            )
-            from lerim.working_memory import write_current_artifacts
-
-            write_current_artifacts(
-                paths=current_paths,
-                run_markdown=artifact_paths["working_memory"],
-                run_manifest=artifact_paths["manifest"],
-            )
-            payload = {
-                "status": "generated",
-                "project": display_name,
-                "project_id": project_identity.project_id,
-                "trigger": trigger,
-                "generated_at": generated_at,
-                "context_db_path": str(self.config.context_db_path),
-                "workspace_root": str(resolved_workspace_root),
-                "run_folder": str(run_folder),
-                "current_file": str(current_paths.current_file),
-                "current_manifest": str(current_paths.current_manifest),
-                "records_considered": len(candidates),
-                "records_included": len(record_ids),
-                "records_changed_since_previous": changed_since_previous,
-                "included_record_ids": list(record_ids),
-                "skip_reason": None,
-                "cost_usd": 0.0,
-            }
-            return WorkingMemoryResultContract.model_validate(payload).model_dump(
-                mode="json"
-            )
+                    "included_record_ids": list(record_ids),
+                    "skip_reason": None,
+                    "cost_usd": 0.0,
+                }
+                finish_mlflow_run(
+                    mlflow_run,
+                    final_status="succeeded",
+                    response_preview=response_text,
+                    outputs={
+                        "status": "generated",
+                        "records_considered": len(candidates),
+                        "records_included": len(record_ids),
+                        "records_changed_since_previous": changed_since_previous,
+                    },
+                )
+                return ContextBriefResultContract.model_validate(payload).model_dump(
+                    mode="json"
+                )
         except Exception as exc:
             _mark_run_failed(
                 artifact_paths=artifact_paths,
@@ -1076,10 +920,10 @@ class LerimRuntime:
             raise
 
     # ------------------------------------------------------------------
-    # Ask flow
+    # Context-answerer flow
     # ------------------------------------------------------------------
 
-    def ask(
+    def answer(
         self,
         prompt: str,
         session_id: str | None = None,
@@ -1087,7 +931,7 @@ class LerimRuntime:
         repo_root: str | Path | None = None,
         include_debug: bool = False,
     ) -> tuple[str, str, float, dict[str, Any] | None]:
-        """Run one ask prompt. Returns (response, session_id, cost_usd, debug)."""
+        """Answer one prompt from persisted context records."""
         resolved_session_id = session_id or self.generate_session_id()
         resolved_repo_root = (
             Path(repo_root).expanduser().resolve()
@@ -1097,43 +941,32 @@ class LerimRuntime:
         project_identity = resolve_project_identity(resolved_repo_root)
         resolved_project_ids = project_ids or [project_identity.project_id]
         now = datetime.now(timezone.utc)
-        run_id = f"ask-{now.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}"
-
-        def _primary_builder() -> Any:
-            return build_pydantic_model("agent", config=self.config)
-
-        def _call(model: Any) -> Any:
-            return run_ask(
-                context_db_path=self.config.context_db_path,
-                project_identity=project_identity,
-                project_ids=resolved_project_ids,
-                session_id=resolved_session_id,
-                model=model,
-                question=prompt,
-                request_limit=self.config.agent_role.max_iters_ask,
-                return_messages=include_debug,
-            )
+        run_id = f"answer-{now.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}"
 
         with lerim_mlflow_run(
             enabled=self.config.mlflow_enabled,
-            operation="ask",
+            operation="answer",
             run_id=run_id,
             session_id=resolved_session_id,
             project_id=project_identity.project_id,
             project_name=project_identity.project_slug,
             project_ids=resolved_project_ids,
-            request_preview=prompt.strip()[:240] or f"ask:{resolved_session_id}",
+            request_preview=prompt.strip()[:240] or f"answer:{resolved_session_id}",
         ) as mlflow_run:
-            result = self._run_with_fallback(
-                flow="ask",
-                callable_fn=_call,
-                model_builders=[_primary_builder],
+            result = run_context_answerer(
+                context_db_path=self.config.context_db_path,
+                project_identity=project_identity,
+                project_ids=resolved_project_ids,
+                session_id=resolved_session_id,
+                question=prompt,
+                config=self.config,
+                return_messages=include_debug,
             )
             debug: dict[str, Any] | None = None
             if include_debug:
-                result_obj, messages = result
+                result_obj, events = result
                 result = result_obj
-                debug = _build_ask_debug(messages)
+                debug = _build_answer_debug(events)
             response_text = (result.answer or "").strip() or "(no response)"
             finish_mlflow_run(
                 mlflow_run,

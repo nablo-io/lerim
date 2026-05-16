@@ -116,20 +116,20 @@ def _format_schedule_item(item: dict[str, Any]) -> str:
 
 
 def _render_activity_line(item: dict[str, Any]) -> str:
-    """Render one compact activity line for sync or maintain."""
+    """Render one compact activity line for ingest or curate."""
     when = _parse_iso(str(item.get("time") or item.get("started_at") or ""))
     when_txt = (
         when.astimezone(timezone.utc).strftime("%H:%M:%SZ") if when else "unknown-time"
     )
-    op = str(item.get("op_type") or item.get("type") or "sync").strip().lower()
+    op = str(item.get("op_type") or item.get("type") or "ingest").strip().lower()
     status = str(item.get("status") or "unknown").strip().lower()
     project = str(item.get("project_label") or "global").strip()
     err = str(item.get("error") or "").strip()
     if len(err) > 72:
         err = f"{err[:69]}..."
 
-    if op == "maintain":
-        counts = item.get("maintain_counts") or {}
+    if op == "curate":
+        counts = item.get("curate_counts") or {}
         created = int(counts.get("created") or 0)
         updated = int(counts.get("updated") or 0)
         archived = int(counts.get("archived") or 0)
@@ -137,7 +137,7 @@ def _render_activity_line(item: dict[str, Any]) -> str:
         upd = int(item.get("records_updated") or 0)
         arc = int(item.get("records_archived") or 0)
         base = (
-            f"{when_txt} {project} | maintain/{status} | "
+            f"{when_txt} {project} | curate/{status} | "
             f"created {created}, updated {updated}, archived {archived} | "
             f"+{new} ~{upd} -{arc}"
         )
@@ -149,7 +149,7 @@ def _render_activity_line(item: dict[str, Any]) -> str:
         upd = int(item.get("records_updated") or 0)
         arc = int(item.get("records_archived") or 0)
         base = (
-            f"{when_txt} {project} | sync/{status} | "
+            f"{when_txt} {project} | ingest/{status} | "
             f"{analyzed} analyzed, {extracted} extracted, {failed} failed | "
             f"+{new} ~{upd} -{arc}"
         )
@@ -184,20 +184,22 @@ def render_status_output(payload: dict[str, Any], *, refreshed_at: str) -> Group
     summary.add_row(
         "Indexed sessions", str(int(payload.get("sessions_indexed_count") or 0))
     )
-    sync_window_days = payload.get("sync_window_days")
+    ingest_window_days = payload.get("ingest_window_days")
     sync_window_text = (
-        f"last {int(sync_window_days)}d (discovery + queueing)"
-        if sync_window_days is not None
+        f"last {int(ingest_window_days)}d (discovery + queueing)"
+        if ingest_window_days is not None
         else "unknown (restart daemon after upgrade)"
     )
     summary.add_row(
-        "Sync window",
+        "Ingest window",
         sync_window_text,
     )
-    summary.add_row("Sync interval", _format_schedule_item(schedule.get("sync") or {}))
     summary.add_row(
-        "Maintain interval",
-        _format_schedule_item(schedule.get("maintain") or {}),
+        "Ingest interval", _format_schedule_item(schedule.get("ingest") or {})
+    )
+    summary.add_row(
+        "Curate interval",
+        _format_schedule_item(schedule.get("curate") or {}),
     )
     summary.add_row("Queue", _format_queue_counts(queue))
     summary.add_row(
@@ -205,7 +207,7 @@ def render_status_output(payload: dict[str, Any], *, refreshed_at: str) -> Group
         f"{int(unscoped.get('total') or 0)} ({json.dumps(unscoped.get('by_agent') or {}, ensure_ascii=True)})",
     )
     summary.add_row(
-        "Skipped unscoped (last sync)",
+        "Skipped unscoped (last ingest)",
         str(int(scope_data.get("skipped_unscoped") or 0)),
     )
     summary.add_row(
@@ -260,7 +262,7 @@ def render_status_output(payload: dict[str, Any], *, refreshed_at: str) -> Group
     meaning.add_row("queued", "Jobs are waiting; stream is not blocked.")
     meaning.add_row("quiet", "Past in-scope sessions exist; no queued work right now.")
     meaning.add_row(
-        "idle", "No indexed sessions in the current sync window for this project."
+        "idle", "No indexed sessions in the current ingest window for this project."
     )
     meaning.add_row(
         "unscoped", "Indexed sessions with no registered project match (not extracted)."
@@ -294,7 +296,7 @@ def render_status_output(payload: dict[str, Any], *, refreshed_at: str) -> Group
         if isinstance(item, dict)
     ]
     if not activity_lines:
-        activity_lines = ["No recent sync/maintain activity yet."]
+        activity_lines = ["No recent ingest/curate activity yet."]
 
     header = Text(f"Lerim Status ({refreshed_at})", style="bold blue")
     blocked_table: Table | None = None
@@ -323,7 +325,7 @@ def render_status_output(payload: dict[str, Any], *, refreshed_at: str) -> Group
     parts.append(
         Panel(
             "\n".join(activity_lines),
-            title="Activity (Sync + Maintain)",
+            title="Activity (Ingest + Curate)",
             border_style="cyan",
         )
     )

@@ -9,43 +9,22 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
-import httpx
 import pytest
-from openai import RateLimitError
-from pydantic_ai.exceptions import UsageLimitExceeded
-from pydantic_ai.messages import (
-    ModelRequest,
-    ModelResponse,
-    SystemPromptPart,
-    ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
-)
 
-from lerim.agents.ask import AskResult
-from lerim.agents.extract import ExtractionEvent, ExtractionResult, ExtractionRunDetails
-from lerim.agents.maintain import MaintainEvent, MaintainRunDetails
+from lerim.agents.context_answerer import ContextAnswerResult
+from lerim.agents.trace_ingestion import TraceIngestionEvent, TraceIngestionResult, TraceIngestionRunDetails
+from lerim.agents.context_curator import ContextCuratorEvent, ContextCuratorRunDetails
+from lerim.agents.mlflow_observability import mlflow_span
+from lerim.context import ContextStore, resolve_project_identity
 from lerim.server.runtime import (
     LerimRuntime,
     _resolve_runtime_roots,
     _write_agent_trace,
-    _mlflow_run_span,
     _write_json_artifact,
     _write_text_with_newline,
 )
+from lerim.context_brief import MemoryLine, ContextBriefDraft
 from tests.helpers import make_config
-
-
-def _make_rate_limit_error() -> RateLimitError:
-    """Build a real OpenAI RateLimitError for retry/fallback tests."""
-    return RateLimitError(
-        message="rate limited",
-        response=httpx.Response(
-            429,
-            request=httpx.Request("POST", "https://test.local"),
-        ),
-        body=None,
-    )
 
 
 def _build_runtime(tmp_path, monkeypatch):
@@ -58,11 +37,11 @@ def _build_runtime(tmp_path, monkeypatch):
     return LerimRuntime(default_cwd=str(tmp_path), config=cfg)
 
 
-def _extract_details(tmp_path) -> ExtractionRunDetails:
-    """Return minimal fake extract details for sync unit tests."""
-    return ExtractionRunDetails(
+def _extract_details(tmp_path) -> TraceIngestionRunDetails:
+    """Return minimal fake extract details for ingest unit tests."""
+    return TraceIngestionRunDetails(
         events=[
-            ExtractionEvent(
+            TraceIngestionEvent(
                 action="read_window",
                 ok=True,
                 content="read",
@@ -99,180 +78,143 @@ class TestHelpers:
 
     def test_write_agent_trace_serializes_messages(self, tmp_path):
         path = tmp_path / "agent_trace.json"
-        messages = [ModelRequest(parts=[SystemPromptPart(content="system")])]
+        messages = [{"kind": "baml_call", "function": "PlanContextRetrieval"}]
         _write_agent_trace(path, messages)
         data = json.loads(path.read_text(encoding="utf-8"))
         assert isinstance(data, list)
         assert len(data) == 1
 
-    def test_mlflow_run_span_preserves_body_exception(self, tmp_path, monkeypatch):
+
+class TestContextBriefFlow:
+    def test_context_brief_creates_mlflow_root_and_context_brief_span(
+        self, tmp_path, monkeypatch
+    ):
+        rt = _build_runtime(tmp_path, monkeypatch)
+        rt.config = replace(rt.config, mlflow_enabled=True)
+        project = resolve_project_identity(tmp_path)
+        store = ContextStore(rt.config.context_db_path)
+        store.initialize()
+        store.register_project(project)
+        record = store.create_record(
+            project_id=project.project_id,
+            session_id=None,
+            kind="fact",
+            title="Context Brief uses durable records",
+            body="Context Brief should be generated from durable records.",
+            change_reason="test_seed",
+        )
+
         class FakeSpan:
-            def __init__(self):
-                self.exit_type = None
+            def __init__(self, name, span_type, attributes):
+                self.name = name
+                self.span_type = span_type
+                self.attributes = dict(attributes)
+                self.inputs = None
+                self.outputs = None
+                self.status = None
+
+            def set_inputs(self, inputs):
+                self.inputs = inputs
+
+            def set_outputs(self, outputs):
+                self.outputs = outputs
+
+            def set_attributes(self, attrs):
+                self.attributes.update(attrs)
+
+            def set_status(self, status):
+                self.status = status
+
+        class FakeSpanContext:
+            def __init__(self, fake_mlflow, name, span_type, attributes):
+                self.fake_mlflow = fake_mlflow
+                self.span = FakeSpan(name, span_type, attributes)
 
             def __enter__(self):
-                return self
+                self.fake_mlflow.spans.append(self.span)
+                return self.span
 
             def __exit__(self, exc_type, exc, tb):
-                self.exit_type = exc_type
+                self.span.exit_type = exc_type
                 return False
 
-        span = FakeSpan()
-        fake_mlflow = SimpleNamespace(
-            start_span=lambda **kwargs: span,
-            update_current_trace=lambda **kwargs: None,
-        )
+        class FakeMlflow:
+            def __init__(self):
+                self.spans = []
+                self.trace_updates = []
+
+            def start_span(self, name="span", span_type="UNKNOWN", attributes=None):
+                return FakeSpanContext(self, name, span_type, attributes or {})
+
+            def update_current_trace(self, **kwargs):
+                self.trace_updates.append(kwargs)
+
+        fake_mlflow = FakeMlflow()
         monkeypatch.setitem(sys.modules, "mlflow", fake_mlflow)
 
-        with pytest.raises(ValueError, match="body failed"):
-            with _mlflow_run_span(
-                enabled=True,
-                operation="sync",
-                run_id="sync-run",
-                session_id="session",
-                project_id="proj",
-                project_name="project",
-                run_folder=tmp_path,
+        def _fake_context_brief(**kwargs):
+            with mlflow_span(
+                "lerim.agent.context_brief_compiler",
+                span_type="AGENT",
+                attributes={"lerim.agent_name": "context_brief_compiler"},
+                inputs={"candidate_count": len(kwargs["candidates"])},
             ):
-                raise ValueError("body failed")
-
-        assert span.exit_type is ValueError
-
-
-class TestRunWithFallback:
-    def test_success_primary(self, tmp_path, monkeypatch):
-        rt = _build_runtime(tmp_path, monkeypatch)
-        seen = []
-
-        def call(model):
-            seen.append(model)
-            return "ok"
-
-        result = rt._run_with_fallback(
-            flow="test",
-            callable_fn=call,
-            model_builders=[lambda: "primary", lambda: "fallback"],
-        )
-        assert result == "ok"
-        assert seen == ["primary"]
-
-    def test_retry_transient_error_same_model(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(time, "sleep", lambda *_: None)
-        rt = _build_runtime(tmp_path, monkeypatch)
-        attempts = 0
-
-        def call(_model):
-            nonlocal attempts
-            attempts += 1
-            if attempts < 3:
-                raise RuntimeError("500 temporary")
-            return "recovered"
-
-        result = rt._run_with_fallback(
-            flow="test",
-            callable_fn=call,
-            model_builders=[lambda: "primary"],
-            max_attempts=3,
-        )
-        assert result == "recovered"
-        assert attempts == 3
-
-    def test_quota_switches_to_fallback(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(time, "sleep", lambda *_: None)
-        rt = _build_runtime(tmp_path, monkeypatch)
-        seen = []
-
-        def call(model):
-            seen.append(model)
-            if model == "primary":
-                raise _make_rate_limit_error()
-            return "fallback-ok"
-
-        result = rt._run_with_fallback(
-            flow="test",
-            callable_fn=call,
-            model_builders=[lambda: "primary", lambda: "fallback"],
-        )
-        assert result == "fallback-ok"
-        assert seen == ["primary", "fallback"]
-
-    def test_usage_limit_short_circuit(self, tmp_path, monkeypatch):
-        rt = _build_runtime(tmp_path, monkeypatch)
-        count = 0
-
-        def call(_model):
-            nonlocal count
-            count += 1
-            raise UsageLimitExceeded("request_limit")
-
-        with pytest.raises(UsageLimitExceeded):
-            rt._run_with_fallback(
-                flow="test",
-                callable_fn=call,
-                model_builders=[lambda: "primary", lambda: "fallback"],
-            )
-        assert count == 1
-
-    def test_value_error_is_non_retryable(self, tmp_path, monkeypatch):
-        rt = _build_runtime(tmp_path, monkeypatch)
-        count = 0
-
-        def call(_model):
-            nonlocal count
-            count += 1
-            raise ValueError("decision_requires_decision_and_why")
-
-        with pytest.raises(ValueError, match="decision_requires_decision_and_why"):
-            rt._run_with_fallback(
-                flow="test",
-                callable_fn=call,
-                model_builders=[lambda: "primary"],
-                max_attempts=3,
-            )
-        assert count == 1
-
-    def test_exhausted_models_raises_runtime_error(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(time, "sleep", lambda *_: None)
-        rt = _build_runtime(tmp_path, monkeypatch)
-
-        def call(_model):
-            raise RuntimeError("still broken")
-
-        with pytest.raises(RuntimeError, match="Failed after trying"):
-            rt._run_with_fallback(
-                flow="test",
-                callable_fn=call,
-                model_builders=[lambda: "primary"],
-                max_attempts=2,
+                pass
+            return (
+                ContextBriefDraft(
+                    summary=(
+                        MemoryLine(
+                            "Context Brief should be generated from durable records.",
+                            (str(record["record_id"]),),
+                        ),
+                    ),
+                ),
+                [{"kind": "baml_call", "function": "CompileContextBrief"}],
             )
 
+        monkeypatch.setattr("lerim.server.runtime.compile_context_brief", _fake_context_brief)
 
-class TestSyncFlow:
-    def test_sync_missing_trace_file(self, tmp_path, monkeypatch):
+        result = rt.context_brief(repo_root=tmp_path, force=True)
+
+        assert result["status"] == "generated"
+        assert fake_mlflow.spans[0].name == "lerim.context-brief"
+        child = next(
+            span
+            for span in fake_mlflow.spans
+            if span.name == "lerim.agent.context_brief_compiler"
+        )
+        assert child.span_type == "AGENT"
+        assert child.attributes["lerim.agent_name"] == "context_brief_compiler"
+        assert child.inputs == {"candidate_count": 1}
+        assert fake_mlflow.spans[0].outputs["records_included"] == 1
+
+
+class TestIngestFlow:
+    def test_ingest_missing_trace_file(self, tmp_path, monkeypatch):
         rt = _build_runtime(tmp_path, monkeypatch)
         with pytest.raises(FileNotFoundError, match="trace_path_missing"):
-            rt.sync(trace_path=tmp_path / "missing.jsonl")
+            rt.ingest(trace_path=tmp_path / "missing.jsonl")
 
-    def test_sync_happy_path(self, tmp_path, monkeypatch):
+    def test_ingest_happy_path(self, tmp_path, monkeypatch):
         rt = _build_runtime(tmp_path, monkeypatch)
 
         trace = tmp_path / "trace.jsonl"
         trace.write_text('{"role":"user","content":"hello"}\n', encoding="utf-8")
 
         monkeypatch.setattr(
-            "lerim.server.runtime.run_extraction",
+            "lerim.server.runtime.run_trace_ingestion",
             lambda **kwargs: (
-                ExtractionResult(completion_summary="extracted"),
+                TraceIngestionResult(completion_summary="extracted"),
                 _extract_details(tmp_path),
             ),
         )
 
-        result = rt.sync(trace_path=trace)
+        result = rt.ingest(trace_path=trace)
 
         run_folder = Path(result["run_folder"])
         assert run_folder.exists()
-        assert run_folder.parent.name == "sync"
-        assert run_folder.name.startswith("sync-")
+        assert run_folder.parent.name == "ingest"
+        assert run_folder.name.startswith("ingest-")
         assert (run_folder / "agent.log").read_text(
             encoding="utf-8"
         ).strip() == "extracted"
@@ -295,7 +237,7 @@ class TestSyncFlow:
         assert result["context_db_path"] == str(rt.config.context_db_path)
         assert result["project_id"].startswith("proj_")
 
-    def test_sync_retries_failure_before_record_changes(self, tmp_path, monkeypatch):
+    def test_ingest_retries_failure_before_record_changes(self, tmp_path, monkeypatch):
         rt = _build_runtime(tmp_path, monkeypatch)
         trace = tmp_path / "trace.jsonl"
         trace.write_text('{"role":"user","content":"hello"}\n', encoding="utf-8")
@@ -307,20 +249,20 @@ class TestSyncFlow:
             if attempts["count"] == 1:
                 raise RuntimeError("temporary extract")
             return (
-                ExtractionResult(completion_summary="recovered"),
+                TraceIngestionResult(completion_summary="recovered"),
                 _extract_details(tmp_path),
             )
 
-        monkeypatch.setattr("lerim.server.runtime.run_extraction", _flaky_extraction)
+        monkeypatch.setattr("lerim.server.runtime.run_trace_ingestion", _flaky_extraction)
 
-        result = rt.sync(trace_path=trace)
+        result = rt.ingest(trace_path=trace)
 
         assert attempts["count"] == 2
         assert Path(result["run_folder"], "agent.log").read_text(
             encoding="utf-8"
         ).strip() == "recovered"
 
-    def test_sync_does_not_retry_after_record_changes(self, tmp_path, monkeypatch):
+    def test_ingest_does_not_retry_after_record_changes(self, tmp_path, monkeypatch):
         rt = _build_runtime(tmp_path, monkeypatch)
         trace = tmp_path / "trace.jsonl"
         trace.write_text('{"role":"user","content":"hello"}\n', encoding="utf-8")
@@ -335,14 +277,14 @@ class TestSyncFlow:
             attempts["count"] += 1
             raise RuntimeError("failed after write")
 
-        monkeypatch.setattr("lerim.server.runtime.run_extraction", _partial_failure)
+        monkeypatch.setattr("lerim.server.runtime.run_trace_ingestion", _partial_failure)
 
         with pytest.raises(RuntimeError, match="failed after write"):
-            rt.sync(trace_path=trace)
+            rt.ingest(trace_path=trace)
 
         assert attempts["count"] == 1
 
-    def test_sync_failure_writes_structured_error_artifacts(
+    def test_ingest_failure_writes_structured_error_artifacts(
         self, tmp_path, monkeypatch
     ):
         rt = _build_runtime(tmp_path, monkeypatch)
@@ -350,15 +292,15 @@ class TestSyncFlow:
         trace.write_text('{"role":"user","content":"hello"}\n', encoding="utf-8")
         monkeypatch.setattr(time, "sleep", lambda *_: None)
         monkeypatch.setattr(
-            "lerim.server.runtime.run_extraction",
+            "lerim.server.runtime.run_trace_ingestion",
             lambda **kwargs: (_ for _ in ()).throw(RuntimeError("broken extract")),
         )
 
         with pytest.raises(RuntimeError, match="broken extract"):
-            rt.sync(trace_path=trace)
+            rt.ingest(trace_path=trace)
 
         run_folders = list(
-            (rt.config.global_data_dir / "workspace").glob("*/*/*/sync/*")
+            (rt.config.global_data_dir / "workspace").glob("*/*/*/ingest/*")
         )
         run_folder = run_folders[0]
         manifest = json.loads(
@@ -369,14 +311,14 @@ class TestSyncFlow:
         assert error["type"] == "RuntimeError"
         assert "broken extract" in error["message"]
 
-    def test_sync_postprocessing_failure_marks_run_failed(self, tmp_path, monkeypatch):
+    def test_ingest_postprocessing_failure_marks_run_failed(self, tmp_path, monkeypatch):
         rt = _build_runtime(tmp_path, monkeypatch)
         trace = tmp_path / "trace.jsonl"
         trace.write_text('{"role":"user","content":"hello"}\n', encoding="utf-8")
         monkeypatch.setattr(
-            "lerim.server.runtime.run_extraction",
+            "lerim.server.runtime.run_trace_ingestion",
             lambda **kwargs: (
-                ExtractionResult(completion_summary="extracted"),
+                TraceIngestionResult(completion_summary="extracted"),
                 _extract_details(tmp_path),
             ),
         )
@@ -386,10 +328,10 @@ class TestSyncFlow:
         )
 
         with pytest.raises(RuntimeError, match="count failed"):
-            rt.sync(trace_path=trace)
+            rt.ingest(trace_path=trace)
 
         run_folder = list(
-            (rt.config.global_data_dir / "workspace").glob("*/*/*/sync/*")
+            (rt.config.global_data_dir / "workspace").glob("*/*/*/ingest/*")
         )[0]
         manifest = json.loads(
             (run_folder / "manifest.json").read_text(encoding="utf-8")
@@ -399,24 +341,24 @@ class TestSyncFlow:
         assert error["message"] == "count failed"
 
 
-class TestMaintainFlow:
-    def test_maintain_happy_path_and_trace_write(self, tmp_path, monkeypatch):
+class TestCurateFlow:
+    def test_curate_happy_path_and_trace_write(self, tmp_path, monkeypatch):
         rt = _build_runtime(tmp_path, monkeypatch)
 
         captured: dict[str, object] = {}
 
-        def _fake_run_maintain(**kwargs):
+        def _fake_run_context_curator(**kwargs):
             captured["max_llm_calls"] = kwargs["max_llm_calls"]
             return (
-                SimpleNamespace(completion_summary="maintenance complete"),
-                MaintainRunDetails(
+                SimpleNamespace(completion_summary="curation complete"),
+                ContextCuratorRunDetails(
                     events=[
-                        MaintainEvent(
+                        ContextCuratorEvent(
                             action="final_result",
                             ok=True,
-                            content="maintenance complete",
+                            content="curation complete",
                             done=True,
-                            completion_summary="maintenance complete",
+                            completion_summary="curation complete",
                         )
                     ],
                     llm_calls=1,
@@ -428,15 +370,15 @@ class TestMaintainFlow:
                 ),
             )
 
-        monkeypatch.setattr("lerim.server.runtime.run_maintain", _fake_run_maintain)
+        monkeypatch.setattr("lerim.server.runtime.run_context_curator", _fake_run_context_curator)
 
-        result = rt.maintain(repo_root=tmp_path)
+        result = rt.curate(repo_root=tmp_path)
         run_folder = Path(result["run_folder"])
-        assert run_folder.parent.name == "maintain"
-        assert run_folder.name.startswith("maintain-")
+        assert run_folder.parent.name == "curate"
+        assert run_folder.name.startswith("curate-")
         assert (run_folder / "agent.log").read_text(
             encoding="utf-8"
-        ).strip() == "maintenance complete"
+        ).strip() == "curation complete"
         trace_data = json.loads(
             (run_folder / "agent_trace.json").read_text(encoding="utf-8")
         )
@@ -447,114 +389,79 @@ class TestMaintainFlow:
         assert manifest["run_id"] == run_folder.name
         assert manifest["mlflow_client_request_id"] == run_folder.name
         assert manifest["status"] == "succeeded"
-        assert captured["max_llm_calls"] == rt.config.agent_role.max_iters_maintain
+        assert captured["max_llm_calls"] == rt.config.agent_role.curate_max_llm_calls
         assert result["context_db_path"] == str(rt.config.context_db_path)
 
 
-class TestAskFlow:
-    def test_ask_happy_path(self, tmp_path, monkeypatch):
+class TestAnswerFlow:
+    def test_answer_happy_path(self, tmp_path, monkeypatch):
         rt = _build_runtime(tmp_path, monkeypatch)
         captured: dict[str, object] = {}
-        monkeypatch.setattr(
-            "lerim.server.runtime.build_pydantic_model",
-            lambda *args, **kwargs: "fake-model",
-        )
 
-        def _fake_run_ask(**kwargs):
-            captured["request_limit"] = kwargs["request_limit"]
+        def _fake_run_context_answerer(**kwargs):
             captured["question"] = kwargs["question"]
-            return AskResult(answer="answer text")
+            return ContextAnswerResult(answer="answer text")
 
-        monkeypatch.setattr("lerim.server.runtime.run_ask", _fake_run_ask)
-        answer, session_id, cost, debug = rt.ask("what changed?", repo_root=tmp_path)
+        monkeypatch.setattr("lerim.server.runtime.run_context_answerer", _fake_run_context_answerer)
+        answer, session_id, cost, debug = rt.answer("what changed?", repo_root=tmp_path)
         assert answer == "answer text"
         assert session_id.startswith("lerim-")
         assert cost == 0.0
         assert debug is None
         assert captured["question"] == "what changed?"
-        assert captured["request_limit"] == rt.config.agent_role.max_iters_ask
 
-    def test_ask_uses_provided_session_id(self, tmp_path, monkeypatch):
+    def test_answer_uses_provided_session_id(self, tmp_path, monkeypatch):
         rt = _build_runtime(tmp_path, monkeypatch)
         monkeypatch.setattr(
-            "lerim.server.runtime.build_pydantic_model",
-            lambda *args, **kwargs: "fake-model",
+            "lerim.server.runtime.run_context_answerer",
+            lambda **kwargs: ContextAnswerResult(answer="ok"),
         )
-        monkeypatch.setattr(
-            "lerim.server.runtime.run_ask",
-            lambda **kwargs: AskResult(answer="ok"),
-        )
-        _, session_id, _, _ = rt.ask("hello", session_id="fixed-id", repo_root=tmp_path)
+        _, session_id, _, _ = rt.answer("hello", session_id="fixed-id", repo_root=tmp_path)
         assert session_id == "fixed-id"
 
-    def test_ask_does_not_short_circuit_known_phrases(self, tmp_path, monkeypatch):
+    def test_answer_does_not_short_circuit_known_phrases(self, tmp_path, monkeypatch):
         rt = _build_runtime(tmp_path, monkeypatch)
         captured: dict[str, object] = {}
-        monkeypatch.setattr(
-            "lerim.server.runtime.build_pydantic_model",
-            lambda *args, **kwargs: "fake-model",
-        )
 
-        def _fake_run_ask(**kwargs):
+        def _fake_run_context_answerer(**kwargs):
             captured["question"] = kwargs["question"]
-            return AskResult(answer="agent answered")
+            return ContextAnswerResult(answer="agent answered")
 
-        monkeypatch.setattr("lerim.server.runtime.run_ask", _fake_run_ask)
-        answer, _, _, _ = rt.ask("what is the last memory", repo_root=tmp_path)
+        monkeypatch.setattr("lerim.server.runtime.run_context_answerer", _fake_run_context_answerer)
+        answer, _, _, _ = rt.answer("what is the last memory", repo_root=tmp_path)
         assert answer == "agent answered"
         assert captured["question"] == "what is the last memory"
 
-    def test_ask_can_return_debug_payload(self, tmp_path, monkeypatch):
+    def test_answer_can_return_debug_payload(self, tmp_path, monkeypatch):
         rt = _build_runtime(tmp_path, monkeypatch)
-        monkeypatch.setattr(
-            "lerim.server.runtime.build_pydantic_model",
-            lambda *args, **kwargs: "fake-model",
-        )
 
-        def _fake_run_ask(**kwargs):
+        def _fake_run_context_answerer(**kwargs):
             assert kwargs["return_messages"] is True
             return (
-                AskResult(answer="answer text"),
+                ContextAnswerResult(answer="answer text"),
                 [
-                    ModelRequest(
-                        parts=[
-                            SystemPromptPart(content="system"),
-                            UserPromptPart(content="how many records?"),
-                        ]
-                    ),
-                    ModelResponse(
-                        parts=[
-                            ToolCallPart(
-                                tool_name="count_context",
-                                args={},
-                                tool_call_id="call-1",
-                            )
-                        ]
-                    ),
-                    ModelRequest(
-                        parts=[
-                            ToolReturnPart(
-                                tool_name="count_context",
-                                content='{"count": 3}',
-                                tool_call_id="call-1",
-                            )
-                        ]
-                    ),
+                    {"kind": "baml_call", "function": "PlanContextRetrieval"},
+                    {
+                        "kind": "retrieval",
+                        "action_type": "count",
+                        "result_count": 3,
+                    },
+                    {"kind": "baml_call", "function": "AnswerFromContext"},
                 ],
             )
 
-        monkeypatch.setattr("lerim.server.runtime.run_ask", _fake_run_ask)
-        answer, _, _, debug = rt.ask(
+        monkeypatch.setattr("lerim.server.runtime.run_context_answerer", _fake_run_context_answerer)
+        answer, _, _, debug = rt.answer(
             "how many records?", repo_root=tmp_path, include_debug=True
         )
         assert answer == "answer text"
         assert debug is not None
-        assert debug["tool_calls"][0]["tool_name"] == "count_context"
-        assert debug["tool_results"][0]["tool_name"] == "count_context"
-        assert debug["messages"][0]["parts"][0]["part_kind"] == "system-prompt"
-        assert debug["messages"][1]["parts"][0]["part_kind"] == "tool-call"
+        assert debug["retrieval_actions"][0]["action_type"] == "count"
+        assert debug["retrieval_actions"][0]["result_count"] == 3
+        assert debug["messages"][0]["parts"][0]["part_kind"] == "PlanContextRetrieval"
+        assert debug["messages"][1]["parts"][0]["part_kind"] == "count"
 
-    def test_ask_creates_mlflow_root_trace_without_changing_contract(
+    def test_answer_creates_mlflow_root_trace_without_changing_contract(
         self, tmp_path, monkeypatch
     ):
         rt = _build_runtime(tmp_path, monkeypatch)
@@ -607,24 +514,20 @@ class TestAskFlow:
         fake_mlflow = FakeMlflow()
         monkeypatch.setitem(sys.modules, "mlflow", fake_mlflow)
         monkeypatch.setattr(
-            "lerim.server.runtime.build_pydantic_model",
-            lambda *args, **kwargs: "fake-model",
-        )
-        monkeypatch.setattr(
-            "lerim.server.runtime.run_ask",
-            lambda **kwargs: AskResult(answer="observed answer"),
+            "lerim.server.runtime.run_context_answerer",
+            lambda **kwargs: ContextAnswerResult(answer="observed answer"),
         )
 
-        answer, session_id, cost, debug = rt.ask("hello", repo_root=tmp_path)
+        answer, session_id, cost, debug = rt.answer("hello", repo_root=tmp_path)
 
         assert answer == "observed answer"
         assert session_id.startswith("lerim-")
         assert cost == 0.0
         assert debug is None
         root_span = fake_mlflow.spans[0]
-        assert root_span.name == "lerim.ask"
-        assert root_span.attributes["lerim.operation"] == "ask"
+        assert root_span.name == "lerim.answer"
+        assert root_span.attributes["lerim.operation"] == "answer"
         assert root_span.attributes["lerim.final_status"] == "succeeded"
         assert root_span.status == "OK"
         assert root_span.outputs == {"answer": "observed answer"}
-        assert fake_mlflow.trace_updates[0]["client_request_id"].startswith("ask-")
+        assert fake_mlflow.trace_updates[0]["client_request_id"].startswith("answer-")

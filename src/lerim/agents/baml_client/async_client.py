@@ -82,66 +82,141 @@ class BamlAsyncClient:
     def parse_stream(self):
       return self.__llm_stream_parser
 
-    async def ReviewMaintainCluster(self, run_instruction: str,cluster_id: str,records_json: str,
+    async def AnswerFromContext(self, question: str,current_utc: str,hints: str,retrieval_json: str,
         baml_options: BamlCallOptions = {},
-    ) -> types.MaintainActionPlan:
+    ) -> types.ContextAnswer:
         # Check if on_tick is provided
         if 'on_tick' in baml_options:
             # Use streaming internally when on_tick is provided
-            __stream__ = self.stream.ReviewMaintainCluster(run_instruction=run_instruction,cluster_id=cluster_id,records_json=records_json,
+            __stream__ = self.stream.AnswerFromContext(question=question,current_utc=current_utc,hints=hints,retrieval_json=retrieval_json,
                 baml_options=baml_options)
             return await __stream__.get_final_response()
         else:
             # Original non-streaming code
-            __result__ = await self.__options.merge_options(baml_options).call_function_async(function_name="ReviewMaintainCluster", args={
+            __result__ = await self.__options.merge_options(baml_options).call_function_async(function_name="AnswerFromContext", args={
+                "question": question,"current_utc": current_utc,"hints": hints,"retrieval_json": retrieval_json,
+            })
+            return typing.cast(types.ContextAnswer, __result__.cast_to(types, types, stream_types, False, __runtime__))
+    async def CompileContextBrief(self, candidate_profile_json: str,candidate_records_json: str,
+        baml_options: BamlCallOptions = {},
+    ) -> types.ContextBriefDraftOutput:
+        # Check if on_tick is provided
+        if 'on_tick' in baml_options:
+            # Use streaming internally when on_tick is provided
+            __stream__ = self.stream.CompileContextBrief(candidate_profile_json=candidate_profile_json,candidate_records_json=candidate_records_json,
+                baml_options=baml_options)
+            return await __stream__.get_final_response()
+        else:
+            # Original non-streaming code
+            __result__ = await self.__options.merge_options(baml_options).call_function_async(function_name="CompileContextBrief", args={
+                "candidate_profile_json": candidate_profile_json,"candidate_records_json": candidate_records_json,
+            })
+            return typing.cast(types.ContextBriefDraftOutput, __result__.cast_to(types, types, stream_types, False, __runtime__))
+    async def CurateContextCluster(self, run_instruction: str,cluster_id: str,records_json: str,
+        baml_options: BamlCallOptions = {},
+    ) -> types.ContextCurationPlan:
+        # Check if on_tick is provided
+        if 'on_tick' in baml_options:
+            # Use streaming internally when on_tick is provided
+            __stream__ = self.stream.CurateContextCluster(run_instruction=run_instruction,cluster_id=cluster_id,records_json=records_json,
+                baml_options=baml_options)
+            return await __stream__.get_final_response()
+        else:
+            # Original non-streaming code
+            __result__ = await self.__options.merge_options(baml_options).call_function_async(function_name="CurateContextCluster", args={
                 "run_instruction": run_instruction,"cluster_id": cluster_id,"records_json": records_json,
             })
-            return typing.cast(types.MaintainActionPlan, __result__.cast_to(types, types, stream_types, False, __runtime__))
-    async def ReviewMaintainHealthBatch(self, run_instruction: str,batch_id: str,records_json: str,
+            return typing.cast(types.ContextCurationPlan, __result__.cast_to(types, types, stream_types, False, __runtime__))
+    async def CurateRecordHealthBatch(self, run_instruction: str,batch_id: str,records_json: str,
         baml_options: BamlCallOptions = {},
-    ) -> types.MaintainActionPlan:
+    ) -> types.ContextCurationPlan:
         # Check if on_tick is provided
         if 'on_tick' in baml_options:
             # Use streaming internally when on_tick is provided
-            __stream__ = self.stream.ReviewMaintainHealthBatch(run_instruction=run_instruction,batch_id=batch_id,records_json=records_json,
+            __stream__ = self.stream.CurateRecordHealthBatch(run_instruction=run_instruction,batch_id=batch_id,records_json=records_json,
                 baml_options=baml_options)
             return await __stream__.get_final_response()
         else:
             # Original non-streaming code
-            __result__ = await self.__options.merge_options(baml_options).call_function_async(function_name="ReviewMaintainHealthBatch", args={
+            __result__ = await self.__options.merge_options(baml_options).call_function_async(function_name="CurateRecordHealthBatch", args={
                 "run_instruction": run_instruction,"batch_id": batch_id,"records_json": records_json,
             })
-            return typing.cast(types.MaintainActionPlan, __result__.cast_to(types, types, stream_types, False, __runtime__))
-    async def ScanTraceWindow(self, run_instruction: str,prior_episode_summary: str,prior_findings_summary: str,trace_window: str,
+            return typing.cast(types.ContextCurationPlan, __result__.cast_to(types, types, stream_types, False, __runtime__))
+    async def FilterDurableSignal(self, run_instruction: str,episode_summary: str,durable_findings_summary: str,implementation_summary: str,existing_record_manifest: str,
         baml_options: BamlCallOptions = {},
-    ) -> types.TraceWindowScan:
+    ) -> types.SignalFilterResult:
         # Check if on_tick is provided
         if 'on_tick' in baml_options:
             # Use streaming internally when on_tick is provided
-            __stream__ = self.stream.ScanTraceWindow(run_instruction=run_instruction,prior_episode_summary=prior_episode_summary,prior_findings_summary=prior_findings_summary,trace_window=trace_window,
+            __stream__ = self.stream.FilterDurableSignal(run_instruction=run_instruction,episode_summary=episode_summary,durable_findings_summary=durable_findings_summary,implementation_summary=implementation_summary,existing_record_manifest=existing_record_manifest,
                 baml_options=baml_options)
             return await __stream__.get_final_response()
         else:
             # Original non-streaming code
-            __result__ = await self.__options.merge_options(baml_options).call_function_async(function_name="ScanTraceWindow", args={
-                "run_instruction": run_instruction,"prior_episode_summary": prior_episode_summary,"prior_findings_summary": prior_findings_summary,"trace_window": trace_window,
+            __result__ = await self.__options.merge_options(baml_options).call_function_async(function_name="FilterDurableSignal", args={
+                "run_instruction": run_instruction,"episode_summary": episode_summary,"durable_findings_summary": durable_findings_summary,"implementation_summary": implementation_summary,"existing_record_manifest": existing_record_manifest,
             })
-            return typing.cast(types.TraceWindowScan, __result__.cast_to(types, types, stream_types, False, __runtime__))
-    async def SynthesizeExtractRecords(self, run_instruction: str,episode_summary: str,durable_findings_summary: str,existing_record_manifest: str,
+            return typing.cast(types.SignalFilterResult, __result__.cast_to(types, types, stream_types, False, __runtime__))
+    async def ObserveSourceWindow(self, run_instruction: str,prior_episode_summary: str,prior_findings_summary: str,source_window: str,
         baml_options: BamlCallOptions = {},
-    ) -> types.SynthesizedExtraction:
+    ) -> types.SourceWindowScan:
         # Check if on_tick is provided
         if 'on_tick' in baml_options:
             # Use streaming internally when on_tick is provided
-            __stream__ = self.stream.SynthesizeExtractRecords(run_instruction=run_instruction,episode_summary=episode_summary,durable_findings_summary=durable_findings_summary,existing_record_manifest=existing_record_manifest,
+            __stream__ = self.stream.ObserveSourceWindow(run_instruction=run_instruction,prior_episode_summary=prior_episode_summary,prior_findings_summary=prior_findings_summary,source_window=source_window,
                 baml_options=baml_options)
             return await __stream__.get_final_response()
         else:
             # Original non-streaming code
-            __result__ = await self.__options.merge_options(baml_options).call_function_async(function_name="SynthesizeExtractRecords", args={
+            __result__ = await self.__options.merge_options(baml_options).call_function_async(function_name="ObserveSourceWindow", args={
+                "run_instruction": run_instruction,"prior_episode_summary": prior_episode_summary,"prior_findings_summary": prior_findings_summary,"source_window": source_window,
+            })
+            return typing.cast(types.SourceWindowScan, __result__.cast_to(types, types, stream_types, False, __runtime__))
+    async def PlanContextRetrieval(self, question: str,current_utc: str,hints: str,
+        baml_options: BamlCallOptions = {},
+    ) -> types.ContextRetrievalPlan:
+        # Check if on_tick is provided
+        if 'on_tick' in baml_options:
+            # Use streaming internally when on_tick is provided
+            __stream__ = self.stream.PlanContextRetrieval(question=question,current_utc=current_utc,hints=hints,
+                baml_options=baml_options)
+            return await __stream__.get_final_response()
+        else:
+            # Original non-streaming code
+            __result__ = await self.__options.merge_options(baml_options).call_function_async(function_name="PlanContextRetrieval", args={
+                "question": question,"current_utc": current_utc,"hints": hints,
+            })
+            return typing.cast(types.ContextRetrievalPlan, __result__.cast_to(types, types, stream_types, False, __runtime__))
+    async def ReviewSynthesizedContextRecords(self, run_instruction: str,durable_findings_summary: str,existing_record_manifest: str,synthesized_records_json: str,
+        baml_options: BamlCallOptions = {},
+    ) -> types.SynthesizedContextRecords:
+        # Check if on_tick is provided
+        if 'on_tick' in baml_options:
+            # Use streaming internally when on_tick is provided
+            __stream__ = self.stream.ReviewSynthesizedContextRecords(run_instruction=run_instruction,durable_findings_summary=durable_findings_summary,existing_record_manifest=existing_record_manifest,synthesized_records_json=synthesized_records_json,
+                baml_options=baml_options)
+            return await __stream__.get_final_response()
+        else:
+            # Original non-streaming code
+            __result__ = await self.__options.merge_options(baml_options).call_function_async(function_name="ReviewSynthesizedContextRecords", args={
+                "run_instruction": run_instruction,"durable_findings_summary": durable_findings_summary,"existing_record_manifest": existing_record_manifest,"synthesized_records_json": synthesized_records_json,
+            })
+            return typing.cast(types.SynthesizedContextRecords, __result__.cast_to(types, types, stream_types, False, __runtime__))
+    async def SynthesizeContextRecords(self, run_instruction: str,episode_summary: str,durable_findings_summary: str,existing_record_manifest: str,
+        baml_options: BamlCallOptions = {},
+    ) -> types.SynthesizedContextRecords:
+        # Check if on_tick is provided
+        if 'on_tick' in baml_options:
+            # Use streaming internally when on_tick is provided
+            __stream__ = self.stream.SynthesizeContextRecords(run_instruction=run_instruction,episode_summary=episode_summary,durable_findings_summary=durable_findings_summary,existing_record_manifest=existing_record_manifest,
+                baml_options=baml_options)
+            return await __stream__.get_final_response()
+        else:
+            # Original non-streaming code
+            __result__ = await self.__options.merge_options(baml_options).call_function_async(function_name="SynthesizeContextRecords", args={
                 "run_instruction": run_instruction,"episode_summary": episode_summary,"durable_findings_summary": durable_findings_summary,"existing_record_manifest": existing_record_manifest,
             })
-            return typing.cast(types.SynthesizedExtraction, __result__.cast_to(types, types, stream_types, False, __runtime__))
+            return typing.cast(types.SynthesizedContextRecords, __result__.cast_to(types, types, stream_types, False, __runtime__))
     
 
 
@@ -151,52 +226,112 @@ class BamlStreamClient:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
-    def ReviewMaintainCluster(self, run_instruction: str,cluster_id: str,records_json: str,
+    def AnswerFromContext(self, question: str,current_utc: str,hints: str,retrieval_json: str,
         baml_options: BamlCallOptions = {},
-    ) -> baml_py.BamlStream[stream_types.MaintainActionPlan, types.MaintainActionPlan]:
-        __ctx__, __result__ = self.__options.merge_options(baml_options).create_async_stream(function_name="ReviewMaintainCluster", args={
+    ) -> baml_py.BamlStream[stream_types.ContextAnswer, types.ContextAnswer]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_async_stream(function_name="AnswerFromContext", args={
+            "question": question,"current_utc": current_utc,"hints": hints,"retrieval_json": retrieval_json,
+        })
+        return baml_py.BamlStream[stream_types.ContextAnswer, types.ContextAnswer](
+          __result__,
+          lambda x: typing.cast(stream_types.ContextAnswer, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(types.ContextAnswer, x.cast_to(types, types, stream_types, False, __runtime__)),
+          __ctx__,
+        )
+    def CompileContextBrief(self, candidate_profile_json: str,candidate_records_json: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.BamlStream[stream_types.ContextBriefDraftOutput, types.ContextBriefDraftOutput]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_async_stream(function_name="CompileContextBrief", args={
+            "candidate_profile_json": candidate_profile_json,"candidate_records_json": candidate_records_json,
+        })
+        return baml_py.BamlStream[stream_types.ContextBriefDraftOutput, types.ContextBriefDraftOutput](
+          __result__,
+          lambda x: typing.cast(stream_types.ContextBriefDraftOutput, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(types.ContextBriefDraftOutput, x.cast_to(types, types, stream_types, False, __runtime__)),
+          __ctx__,
+        )
+    def CurateContextCluster(self, run_instruction: str,cluster_id: str,records_json: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.BamlStream[stream_types.ContextCurationPlan, types.ContextCurationPlan]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_async_stream(function_name="CurateContextCluster", args={
             "run_instruction": run_instruction,"cluster_id": cluster_id,"records_json": records_json,
         })
-        return baml_py.BamlStream[stream_types.MaintainActionPlan, types.MaintainActionPlan](
+        return baml_py.BamlStream[stream_types.ContextCurationPlan, types.ContextCurationPlan](
           __result__,
-          lambda x: typing.cast(stream_types.MaintainActionPlan, x.cast_to(types, types, stream_types, True, __runtime__)),
-          lambda x: typing.cast(types.MaintainActionPlan, x.cast_to(types, types, stream_types, False, __runtime__)),
+          lambda x: typing.cast(stream_types.ContextCurationPlan, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(types.ContextCurationPlan, x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
-    def ReviewMaintainHealthBatch(self, run_instruction: str,batch_id: str,records_json: str,
+    def CurateRecordHealthBatch(self, run_instruction: str,batch_id: str,records_json: str,
         baml_options: BamlCallOptions = {},
-    ) -> baml_py.BamlStream[stream_types.MaintainActionPlan, types.MaintainActionPlan]:
-        __ctx__, __result__ = self.__options.merge_options(baml_options).create_async_stream(function_name="ReviewMaintainHealthBatch", args={
+    ) -> baml_py.BamlStream[stream_types.ContextCurationPlan, types.ContextCurationPlan]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_async_stream(function_name="CurateRecordHealthBatch", args={
             "run_instruction": run_instruction,"batch_id": batch_id,"records_json": records_json,
         })
-        return baml_py.BamlStream[stream_types.MaintainActionPlan, types.MaintainActionPlan](
+        return baml_py.BamlStream[stream_types.ContextCurationPlan, types.ContextCurationPlan](
           __result__,
-          lambda x: typing.cast(stream_types.MaintainActionPlan, x.cast_to(types, types, stream_types, True, __runtime__)),
-          lambda x: typing.cast(types.MaintainActionPlan, x.cast_to(types, types, stream_types, False, __runtime__)),
+          lambda x: typing.cast(stream_types.ContextCurationPlan, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(types.ContextCurationPlan, x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
-    def ScanTraceWindow(self, run_instruction: str,prior_episode_summary: str,prior_findings_summary: str,trace_window: str,
+    def FilterDurableSignal(self, run_instruction: str,episode_summary: str,durable_findings_summary: str,implementation_summary: str,existing_record_manifest: str,
         baml_options: BamlCallOptions = {},
-    ) -> baml_py.BamlStream[stream_types.TraceWindowScan, types.TraceWindowScan]:
-        __ctx__, __result__ = self.__options.merge_options(baml_options).create_async_stream(function_name="ScanTraceWindow", args={
-            "run_instruction": run_instruction,"prior_episode_summary": prior_episode_summary,"prior_findings_summary": prior_findings_summary,"trace_window": trace_window,
+    ) -> baml_py.BamlStream[stream_types.SignalFilterResult, types.SignalFilterResult]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_async_stream(function_name="FilterDurableSignal", args={
+            "run_instruction": run_instruction,"episode_summary": episode_summary,"durable_findings_summary": durable_findings_summary,"implementation_summary": implementation_summary,"existing_record_manifest": existing_record_manifest,
         })
-        return baml_py.BamlStream[stream_types.TraceWindowScan, types.TraceWindowScan](
+        return baml_py.BamlStream[stream_types.SignalFilterResult, types.SignalFilterResult](
           __result__,
-          lambda x: typing.cast(stream_types.TraceWindowScan, x.cast_to(types, types, stream_types, True, __runtime__)),
-          lambda x: typing.cast(types.TraceWindowScan, x.cast_to(types, types, stream_types, False, __runtime__)),
+          lambda x: typing.cast(stream_types.SignalFilterResult, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(types.SignalFilterResult, x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
-    def SynthesizeExtractRecords(self, run_instruction: str,episode_summary: str,durable_findings_summary: str,existing_record_manifest: str,
+    def ObserveSourceWindow(self, run_instruction: str,prior_episode_summary: str,prior_findings_summary: str,source_window: str,
         baml_options: BamlCallOptions = {},
-    ) -> baml_py.BamlStream[stream_types.SynthesizedExtraction, types.SynthesizedExtraction]:
-        __ctx__, __result__ = self.__options.merge_options(baml_options).create_async_stream(function_name="SynthesizeExtractRecords", args={
+    ) -> baml_py.BamlStream[stream_types.SourceWindowScan, types.SourceWindowScan]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_async_stream(function_name="ObserveSourceWindow", args={
+            "run_instruction": run_instruction,"prior_episode_summary": prior_episode_summary,"prior_findings_summary": prior_findings_summary,"source_window": source_window,
+        })
+        return baml_py.BamlStream[stream_types.SourceWindowScan, types.SourceWindowScan](
+          __result__,
+          lambda x: typing.cast(stream_types.SourceWindowScan, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(types.SourceWindowScan, x.cast_to(types, types, stream_types, False, __runtime__)),
+          __ctx__,
+        )
+    def PlanContextRetrieval(self, question: str,current_utc: str,hints: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.BamlStream[stream_types.ContextRetrievalPlan, types.ContextRetrievalPlan]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_async_stream(function_name="PlanContextRetrieval", args={
+            "question": question,"current_utc": current_utc,"hints": hints,
+        })
+        return baml_py.BamlStream[stream_types.ContextRetrievalPlan, types.ContextRetrievalPlan](
+          __result__,
+          lambda x: typing.cast(stream_types.ContextRetrievalPlan, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(types.ContextRetrievalPlan, x.cast_to(types, types, stream_types, False, __runtime__)),
+          __ctx__,
+        )
+    def ReviewSynthesizedContextRecords(self, run_instruction: str,durable_findings_summary: str,existing_record_manifest: str,synthesized_records_json: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.BamlStream[stream_types.SynthesizedContextRecords, types.SynthesizedContextRecords]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_async_stream(function_name="ReviewSynthesizedContextRecords", args={
+            "run_instruction": run_instruction,"durable_findings_summary": durable_findings_summary,"existing_record_manifest": existing_record_manifest,"synthesized_records_json": synthesized_records_json,
+        })
+        return baml_py.BamlStream[stream_types.SynthesizedContextRecords, types.SynthesizedContextRecords](
+          __result__,
+          lambda x: typing.cast(stream_types.SynthesizedContextRecords, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(types.SynthesizedContextRecords, x.cast_to(types, types, stream_types, False, __runtime__)),
+          __ctx__,
+        )
+    def SynthesizeContextRecords(self, run_instruction: str,episode_summary: str,durable_findings_summary: str,existing_record_manifest: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.BamlStream[stream_types.SynthesizedContextRecords, types.SynthesizedContextRecords]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_async_stream(function_name="SynthesizeContextRecords", args={
             "run_instruction": run_instruction,"episode_summary": episode_summary,"durable_findings_summary": durable_findings_summary,"existing_record_manifest": existing_record_manifest,
         })
-        return baml_py.BamlStream[stream_types.SynthesizedExtraction, types.SynthesizedExtraction](
+        return baml_py.BamlStream[stream_types.SynthesizedContextRecords, types.SynthesizedContextRecords](
           __result__,
-          lambda x: typing.cast(stream_types.SynthesizedExtraction, x.cast_to(types, types, stream_types, True, __runtime__)),
-          lambda x: typing.cast(types.SynthesizedExtraction, x.cast_to(types, types, stream_types, False, __runtime__)),
+          lambda x: typing.cast(stream_types.SynthesizedContextRecords, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(types.SynthesizedContextRecords, x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
     
@@ -207,31 +342,66 @@ class BamlHttpRequestClient:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
-    async def ReviewMaintainCluster(self, run_instruction: str,cluster_id: str,records_json: str,
+    async def AnswerFromContext(self, question: str,current_utc: str,hints: str,retrieval_json: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
-        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="ReviewMaintainCluster", args={
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="AnswerFromContext", args={
+            "question": question,"current_utc": current_utc,"hints": hints,"retrieval_json": retrieval_json,
+        }, mode="request")
+        return __result__
+    async def CompileContextBrief(self, candidate_profile_json: str,candidate_records_json: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="CompileContextBrief", args={
+            "candidate_profile_json": candidate_profile_json,"candidate_records_json": candidate_records_json,
+        }, mode="request")
+        return __result__
+    async def CurateContextCluster(self, run_instruction: str,cluster_id: str,records_json: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="CurateContextCluster", args={
             "run_instruction": run_instruction,"cluster_id": cluster_id,"records_json": records_json,
         }, mode="request")
         return __result__
-    async def ReviewMaintainHealthBatch(self, run_instruction: str,batch_id: str,records_json: str,
+    async def CurateRecordHealthBatch(self, run_instruction: str,batch_id: str,records_json: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
-        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="ReviewMaintainHealthBatch", args={
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="CurateRecordHealthBatch", args={
             "run_instruction": run_instruction,"batch_id": batch_id,"records_json": records_json,
         }, mode="request")
         return __result__
-    async def ScanTraceWindow(self, run_instruction: str,prior_episode_summary: str,prior_findings_summary: str,trace_window: str,
+    async def FilterDurableSignal(self, run_instruction: str,episode_summary: str,durable_findings_summary: str,implementation_summary: str,existing_record_manifest: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
-        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="ScanTraceWindow", args={
-            "run_instruction": run_instruction,"prior_episode_summary": prior_episode_summary,"prior_findings_summary": prior_findings_summary,"trace_window": trace_window,
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="FilterDurableSignal", args={
+            "run_instruction": run_instruction,"episode_summary": episode_summary,"durable_findings_summary": durable_findings_summary,"implementation_summary": implementation_summary,"existing_record_manifest": existing_record_manifest,
         }, mode="request")
         return __result__
-    async def SynthesizeExtractRecords(self, run_instruction: str,episode_summary: str,durable_findings_summary: str,existing_record_manifest: str,
+    async def ObserveSourceWindow(self, run_instruction: str,prior_episode_summary: str,prior_findings_summary: str,source_window: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
-        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="SynthesizeExtractRecords", args={
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="ObserveSourceWindow", args={
+            "run_instruction": run_instruction,"prior_episode_summary": prior_episode_summary,"prior_findings_summary": prior_findings_summary,"source_window": source_window,
+        }, mode="request")
+        return __result__
+    async def PlanContextRetrieval(self, question: str,current_utc: str,hints: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="PlanContextRetrieval", args={
+            "question": question,"current_utc": current_utc,"hints": hints,
+        }, mode="request")
+        return __result__
+    async def ReviewSynthesizedContextRecords(self, run_instruction: str,durable_findings_summary: str,existing_record_manifest: str,synthesized_records_json: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="ReviewSynthesizedContextRecords", args={
+            "run_instruction": run_instruction,"durable_findings_summary": durable_findings_summary,"existing_record_manifest": existing_record_manifest,"synthesized_records_json": synthesized_records_json,
+        }, mode="request")
+        return __result__
+    async def SynthesizeContextRecords(self, run_instruction: str,episode_summary: str,durable_findings_summary: str,existing_record_manifest: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="SynthesizeContextRecords", args={
             "run_instruction": run_instruction,"episode_summary": episode_summary,"durable_findings_summary": durable_findings_summary,"existing_record_manifest": existing_record_manifest,
         }, mode="request")
         return __result__
@@ -243,31 +413,66 @@ class BamlHttpStreamRequestClient:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
-    async def ReviewMaintainCluster(self, run_instruction: str,cluster_id: str,records_json: str,
+    async def AnswerFromContext(self, question: str,current_utc: str,hints: str,retrieval_json: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
-        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="ReviewMaintainCluster", args={
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="AnswerFromContext", args={
+            "question": question,"current_utc": current_utc,"hints": hints,"retrieval_json": retrieval_json,
+        }, mode="stream")
+        return __result__
+    async def CompileContextBrief(self, candidate_profile_json: str,candidate_records_json: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="CompileContextBrief", args={
+            "candidate_profile_json": candidate_profile_json,"candidate_records_json": candidate_records_json,
+        }, mode="stream")
+        return __result__
+    async def CurateContextCluster(self, run_instruction: str,cluster_id: str,records_json: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="CurateContextCluster", args={
             "run_instruction": run_instruction,"cluster_id": cluster_id,"records_json": records_json,
         }, mode="stream")
         return __result__
-    async def ReviewMaintainHealthBatch(self, run_instruction: str,batch_id: str,records_json: str,
+    async def CurateRecordHealthBatch(self, run_instruction: str,batch_id: str,records_json: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
-        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="ReviewMaintainHealthBatch", args={
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="CurateRecordHealthBatch", args={
             "run_instruction": run_instruction,"batch_id": batch_id,"records_json": records_json,
         }, mode="stream")
         return __result__
-    async def ScanTraceWindow(self, run_instruction: str,prior_episode_summary: str,prior_findings_summary: str,trace_window: str,
+    async def FilterDurableSignal(self, run_instruction: str,episode_summary: str,durable_findings_summary: str,implementation_summary: str,existing_record_manifest: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
-        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="ScanTraceWindow", args={
-            "run_instruction": run_instruction,"prior_episode_summary": prior_episode_summary,"prior_findings_summary": prior_findings_summary,"trace_window": trace_window,
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="FilterDurableSignal", args={
+            "run_instruction": run_instruction,"episode_summary": episode_summary,"durable_findings_summary": durable_findings_summary,"implementation_summary": implementation_summary,"existing_record_manifest": existing_record_manifest,
         }, mode="stream")
         return __result__
-    async def SynthesizeExtractRecords(self, run_instruction: str,episode_summary: str,durable_findings_summary: str,existing_record_manifest: str,
+    async def ObserveSourceWindow(self, run_instruction: str,prior_episode_summary: str,prior_findings_summary: str,source_window: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
-        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="SynthesizeExtractRecords", args={
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="ObserveSourceWindow", args={
+            "run_instruction": run_instruction,"prior_episode_summary": prior_episode_summary,"prior_findings_summary": prior_findings_summary,"source_window": source_window,
+        }, mode="stream")
+        return __result__
+    async def PlanContextRetrieval(self, question: str,current_utc: str,hints: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="PlanContextRetrieval", args={
+            "question": question,"current_utc": current_utc,"hints": hints,
+        }, mode="stream")
+        return __result__
+    async def ReviewSynthesizedContextRecords(self, run_instruction: str,durable_findings_summary: str,existing_record_manifest: str,synthesized_records_json: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="ReviewSynthesizedContextRecords", args={
+            "run_instruction": run_instruction,"durable_findings_summary": durable_findings_summary,"existing_record_manifest": existing_record_manifest,"synthesized_records_json": synthesized_records_json,
+        }, mode="stream")
+        return __result__
+    async def SynthesizeContextRecords(self, run_instruction: str,episode_summary: str,durable_findings_summary: str,existing_record_manifest: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="SynthesizeContextRecords", args={
             "run_instruction": run_instruction,"episode_summary": episode_summary,"durable_findings_summary": durable_findings_summary,"existing_record_manifest": existing_record_manifest,
         }, mode="stream")
         return __result__

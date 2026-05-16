@@ -189,14 +189,14 @@ def _seed_service_runs(db_path: Path) -> None:
 		conn.execute(
 			"""INSERT INTO service_runs (job_type, status, started_at, completed_at, details)
 			VALUES (?, ?, ?, ?, ?)""",
-			("sync", "completed", "2026-03-20T10:00:00Z", "2026-03-20T10:01:00Z",
+			("ingest", "completed", "2026-03-20T10:00:00Z", "2026-03-20T10:01:00Z",
 			 json.dumps({"indexed": 5, "sessions_processed": 3})),
 		)
 		conn.execute(
 			"""INSERT INTO service_runs (job_type, status, started_at, completed_at, details)
 			VALUES (?, ?, ?, ?, ?)""",
-			("maintain", "completed", "2026-03-20T11:00:00Z", "2026-03-20T11:02:00Z",
-			 json.dumps({"maintain_metrics": {
+			("curate", "completed", "2026-03-20T11:00:00Z", "2026-03-20T11:02:00Z",
+			 json.dumps({"curate_metrics": {
 				 "counts": {"created": 1, "updated": 0, "archived": 0},
 				 "records_created": 1,
 				 "records_updated": 0,
@@ -281,8 +281,8 @@ def test_server(tmp_path, monkeypatch):
 		"record_count": 3,
 		"sessions_indexed_count": 100,
 		"queue": {"pending": 1, "dead_letter": 1},
-		"latest_sync": {"status": "completed"},
-		"latest_maintain": {"status": "completed"},
+		"latest_ingest": {"status": "completed"},
+		"latest_curate": {"status": "completed"},
 	})
 	monkeypatch.setattr("lerim.server.httpd.api_connect_list", lambda: [
 		{"name": "claude", "path": "~/.claude/projects"},
@@ -319,18 +319,18 @@ def test_server(tmp_path, monkeypatch):
 	monkeypatch.setattr("lerim.server.httpd.list_provider_models", lambda provider: ["model-a", "model-b"])
 
 	# POST action mocks
-	monkeypatch.setattr("lerim.server.httpd.api_ask", lambda question, **kwargs: {
+	monkeypatch.setattr("lerim.server.httpd.api_answer", lambda question, **kwargs: {
 		"answer": f"Mocked answer for: {question}",
 		"agent_session_id": "test-session-001",
 		"projects_used": [],
 		"error": False,
 		"cost_usd": 0.001,
 	})
-	monkeypatch.setattr("lerim.server.httpd.api_sync", lambda **kw: {
+	monkeypatch.setattr("lerim.server.httpd.api_ingest", lambda **kw: {
 		"code": 0, "indexed": 5,
 	})
-	monkeypatch.setattr("lerim.server.httpd.api_maintain", lambda **kw: {
-		"code": 0, "maintain_counts": {"created": 1},
+	monkeypatch.setattr("lerim.server.httpd.api_curate", lambda **kw: {
+		"code": 0, "curate_counts": {"created": 1},
 	})
 	monkeypatch.setattr("lerim.server.httpd.api_connect", lambda platform, path=None: {
 		"name": platform,
@@ -496,8 +496,8 @@ def test_get_refine_status(test_server):
 	status, body = _api_get(port, "/api/refine/status")
 	assert status == 200
 	assert "queue" in body
-	assert "sync" in body
-	assert "maintain" in body
+	assert "ingest" in body
+	assert "curate" in body
 
 
 def test_get_live(test_server):
@@ -506,8 +506,8 @@ def test_get_live(test_server):
 	status, body = _api_get(port, "/api/live")
 	assert status == 200
 	assert "timestamp" in body
-	assert "sync_active" in body
-	assert "maintain_active" in body
+	assert "ingest_active" in body
+	assert "curate_active" in body
 	assert "queue" in body
 
 
@@ -574,21 +574,21 @@ def test_get_session_redirect(test_server):
 # ── POST route tests ─────────────────────────────────────────────────
 
 
-def test_post_ask(test_server):
-	"""POST /api/ask returns mocked answer."""
+def test_post_answer(test_server):
+	"""POST /api/answer returns mocked answer."""
 	port, _, _ = test_server
-	status, body = _api_post(port, "/api/ask", {"question": "What is Lerim?"})
+	status, body = _api_post(port, "/api/answer", {"question": "What is Lerim?"})
 	assert status == 200
 	assert "answer" in body
 	assert "Mocked answer" in body["answer"]
 
 
-def test_post_ask_rejects_unknown_field(test_server):
-	"""POST /api/ask rejects unsupported request fields."""
+def test_post_answer_rejects_unknown_field(test_server):
+	"""POST /api/answer rejects unsupported request fields."""
 	port, _, _ = test_server
 	status, body = _api_post_error(
 		port,
-		"/api/ask",
+		"/api/answer",
 		{"question": "What is Lerim?", "limit": 5},
 	)
 	assert status == 400
@@ -596,66 +596,66 @@ def test_post_ask_rejects_unknown_field(test_server):
 	assert "Unsupported field" in body["error"]
 
 
-def test_post_ask_missing_question(test_server):
-	"""POST /api/ask without question returns 400."""
+def test_post_answer_missing_question(test_server):
+	"""POST /api/answer without question returns 400."""
 	port, _, _ = test_server
-	status, body = _api_post_error(port, "/api/ask", {"question": ""})
+	status, body = _api_post_error(port, "/api/answer", {"question": ""})
 	assert status == 400
 	assert "error" in body
 
 
-def test_post_sync(test_server):
-	"""POST /api/sync starts a sync job and returns started status."""
+def test_post_ingest(test_server):
+	"""POST /api/ingest starts a ingest job and returns started status."""
 	port, _, _ = test_server
-	status, body = _api_post(port, "/api/sync", {"window": "7d"})
+	status, body = _api_post(port, "/api/ingest", {"window": "7d"})
 	assert status == 200
 	assert body["status"] == "started"
 	assert "job_id" in body
 	assert body["mode"] == "async"
 
 
-def test_post_sync_blocking(test_server):
-	"""POST /api/sync with blocking=true returns the completed sync payload."""
+def test_post_ingest_blocking(test_server):
+	"""POST /api/ingest with blocking=true returns the completed ingest payload."""
 	port, _, _ = test_server
-	status, body = _api_post(port, "/api/sync", {"window": "7d", "blocking": True})
+	status, body = _api_post(port, "/api/ingest", {"window": "7d", "blocking": True})
 	assert status == 200
 	assert body["code"] == 0
 	assert body["indexed"] == 5
 	assert "job_id" not in body
 
 
-def test_post_sync_rejects_ignore_lock(test_server):
-	"""POST /api/sync rejects unsupported ignore_lock payloads."""
+def test_post_ingest_rejects_ignore_lock(test_server):
+	"""POST /api/ingest rejects unsupported ignore_lock payloads."""
 	port, _, _ = test_server
-	status, body = _api_post_error(port, "/api/sync", {"ignore_lock": True})
+	status, body = _api_post_error(port, "/api/ingest", {"ignore_lock": True})
 	assert status == 400
 	assert "ignore_lock" in body["error"]
 
 
-def test_post_maintain(test_server):
-	"""POST /api/maintain starts a maintain job and returns started status."""
+def test_post_curate(test_server):
+	"""POST /api/curate starts a curate job and returns started status."""
 	port, _, _ = test_server
-	status, body = _api_post(port, "/api/maintain", {})
+	status, body = _api_post(port, "/api/curate", {})
 	assert status == 200
 	assert body["status"] == "started"
 	assert "job_id" in body
 	assert body["mode"] == "async"
 
 
-def test_post_maintain_blocking(test_server):
-	"""POST /api/maintain with blocking=true returns the completed payload."""
+def test_post_curate_blocking(test_server):
+	"""POST /api/curate with blocking=true returns the completed payload."""
 	port, _, _ = test_server
-	status, body = _api_post(port, "/api/maintain", {"blocking": True})
+	status, body = _api_post(port, "/api/curate", {"blocking": True})
 	assert status == 200
 	assert body["code"] == 0
-	assert body["maintain_counts"]["created"] == 1
+	assert body["curate_counts"]["created"] == 1
 	assert "job_id" not in body
 
 
-def test_post_maintain_rejects_force(test_server):
-	"""POST /api/maintain rejects unsupported force rather than ignoring it."""
+def test_post_curate_rejects_force(test_server):
+	"""POST /api/curate rejects unsupported force rather than ignoring it."""
 	port, _, _ = test_server
-	status, body = _api_post_error(port, "/api/maintain", {"force": True})
+	status, body = _api_post_error(port, "/api/curate", {"force": True})
 	assert status == 400
 	assert "force" in body["error"]
 
@@ -911,9 +911,9 @@ def test_search_with_fts_query(test_server):
 
 
 def test_post_empty_body(test_server):
-	"""POST /api/ask with empty body returns 400."""
+	"""POST /api/answer with empty body returns 400."""
 	port, _, _ = test_server
-	url = f"http://127.0.0.1:{port}/api/ask"
+	url = f"http://127.0.0.1:{port}/api/answer"
 	req = urllib.request.Request(
 		url, data=b"", method="POST",
 		headers={"Content-Type": "application/json", "Content-Length": "0"},
@@ -929,9 +929,9 @@ def test_post_empty_body(test_server):
 
 
 def test_post_invalid_json(test_server):
-	"""POST /api/ask with invalid JSON returns 400."""
+	"""POST /api/answer with invalid JSON returns 400."""
 	port, _, _ = test_server
-	url = f"http://127.0.0.1:{port}/api/ask"
+	url = f"http://127.0.0.1:{port}/api/answer"
 	req = urllib.request.Request(
 		url, data=b"not json at all", method="POST",
 		headers={"Content-Type": "application/json", "Content-Length": "15"},

@@ -22,6 +22,7 @@ import sqlite_vec
 
 from lerim.context.embedding import get_embedding_provider
 from lerim.context.project_identity import ProjectIdentity
+from lerim.context.scope_identity import ScopeIdentity, scope_from_project
 from lerim.context.query_spec import (
     QUERY_ENTITIES as QUERY_ENTITIES,
     QUERY_MODES as QUERY_MODES,
@@ -37,9 +38,10 @@ from lerim.context.spec import (
 if TYPE_CHECKING:
     from lerim.context.retrieval import SearchHit
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
 LOGGER = logging.getLogger(__name__)
 TIMESTAMP_COLUMNS = {
+    "scopes": ("created_at", "updated_at"),
     "projects": ("created_at", "updated_at"),
     "sessions": ("started_at", "created_at"),
     "records": ("created_at", "updated_at", "valid_from", "valid_until"),
@@ -131,6 +133,11 @@ def _normalize_optional_text(value: Any) -> str | None:
     return text or None
 
 
+def _row_value(row: sqlite3.Row, key: str, default: Any = None) -> Any:
+    """Read a row field, returning default when older schema rows lack it."""
+    return row[key] if key in row.keys() else default
+
+
 class ContextStore:
     """Canonical global SQLite context store."""
 
@@ -182,9 +189,27 @@ class ContextStore:
                     updated_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS scopes (
+                    scope_type TEXT NOT NULL,
+                    scope_id TEXT NOT NULL,
+                    scope_label TEXT NOT NULL,
+                    scope_slug TEXT NOT NULL,
+                    source_name TEXT,
+                    source_profile TEXT,
+                    repo_path TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(scope_type, scope_id)
+                );
+
                 CREATE TABLE IF NOT EXISTS sessions (
                     session_id TEXT PRIMARY KEY,
-                    project_id TEXT NOT NULL,
+                    project_id TEXT,
+                    scope_type TEXT NOT NULL DEFAULT 'project',
+                    scope_id TEXT NOT NULL,
+                    scope_label TEXT,
+                    source_name TEXT,
+                    source_profile TEXT,
                     agent_type TEXT NOT NULL,
                     source_trace_ref TEXT NOT NULL,
                     repo_path TEXT,
@@ -194,12 +219,18 @@ class ContextStore:
                     instructions_text TEXT,
                     prompt_text TEXT,
                     created_at TEXT NOT NULL,
-                    FOREIGN KEY(project_id) REFERENCES projects(project_id)
+                    FOREIGN KEY(project_id) REFERENCES projects(project_id),
+                    FOREIGN KEY(scope_type, scope_id) REFERENCES scopes(scope_type, scope_id)
                 );
 
                 CREATE TABLE IF NOT EXISTS records (
                     record_id TEXT PRIMARY KEY,
-                    project_id TEXT NOT NULL,
+                    project_id TEXT,
+                    scope_type TEXT NOT NULL DEFAULT 'project',
+                    scope_id TEXT NOT NULL,
+                    scope_label TEXT,
+                    source_name TEXT,
+                    source_profile TEXT,
                     kind TEXT NOT NULL,
                     title TEXT NOT NULL,
                     body TEXT NOT NULL,
@@ -218,6 +249,7 @@ class ContextStore:
                     what_happened TEXT,
                     outcomes TEXT,
                     FOREIGN KEY(project_id) REFERENCES projects(project_id),
+                    FOREIGN KEY(scope_type, scope_id) REFERENCES scopes(scope_type, scope_id),
                     FOREIGN KEY(source_session_id) REFERENCES sessions(session_id),
                     FOREIGN KEY(superseded_by_record_id) REFERENCES records(record_id),
                     CHECK (length(trim(title)) > 0),
@@ -226,7 +258,12 @@ class ContextStore:
 
                 CREATE TABLE IF NOT EXISTS record_versions (
                     version_id TEXT PRIMARY KEY,
-                    project_id TEXT NOT NULL,
+                    project_id TEXT,
+                    scope_type TEXT NOT NULL DEFAULT 'project',
+                    scope_id TEXT NOT NULL,
+                    scope_label TEXT,
+                    source_name TEXT,
+                    source_profile TEXT,
                     record_id TEXT NOT NULL,
                     version_no INTEGER NOT NULL,
                     kind TEXT NOT NULL,
@@ -251,6 +288,7 @@ class ContextStore:
                     changed_at TEXT NOT NULL,
                     changed_by_session_id TEXT,
                     FOREIGN KEY(project_id) REFERENCES projects(project_id),
+                    FOREIGN KEY(scope_type, scope_id) REFERENCES scopes(scope_type, scope_id),
                     FOREIGN KEY(record_id) REFERENCES records(record_id),
                     FOREIGN KEY(source_session_id) REFERENCES sessions(session_id),
                     FOREIGN KEY(superseded_by_record_id) REFERENCES records(record_id),
@@ -260,6 +298,8 @@ class ContextStore:
                 CREATE VIRTUAL TABLE IF NOT EXISTS records_fts USING fts5(
                     record_id UNINDEXED,
                     project_id UNINDEXED,
+                    scope_type UNINDEXED,
+                    scope_id UNINDEXED,
                     updated_at UNINDEXED,
                     title,
                     body,
@@ -269,19 +309,10 @@ class ContextStore:
                     what_happened
                 );
 
-                CREATE INDEX IF NOT EXISTS idx_projects_repo_path ON projects(repo_path);
-                CREATE INDEX IF NOT EXISTS idx_sessions_project_id ON sessions(project_id);
-                CREATE INDEX IF NOT EXISTS idx_records_project_id ON records(project_id);
-                CREATE INDEX IF NOT EXISTS idx_records_kind ON records(kind);
-                CREATE INDEX IF NOT EXISTS idx_records_status ON records(status);
-                CREATE INDEX IF NOT EXISTS idx_records_created_at ON records(created_at);
-                CREATE INDEX IF NOT EXISTS idx_records_updated_at ON records(updated_at);
-                CREATE INDEX IF NOT EXISTS idx_records_valid_from ON records(valid_from);
-                CREATE INDEX IF NOT EXISTS idx_records_source_session_id ON records(source_session_id);
-                CREATE INDEX IF NOT EXISTS idx_record_versions_record_id ON record_versions(record_id);
-                CREATE INDEX IF NOT EXISTS idx_record_versions_changed_at ON record_versions(changed_at);
                 """
             )
+            self._migrate_scope_schema(conn)
+            self._ensure_secondary_indexes(conn)
             self._validate_schema(conn)
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_records_valid_until ON records(valid_until)"
@@ -296,16 +327,505 @@ class ContextStore:
                 (SCHEMA_VERSION,),
             )
 
+    def _migrate_scope_schema(self, conn: sqlite3.Connection) -> None:
+        """Upgrade pre-scope databases to schema v3 in place."""
+        rebuild_needed = any(
+            self._needs_scope_rebuild(conn, table_name)
+            for table_name in ("sessions", "records", "record_versions")
+        )
+        if rebuild_needed:
+            with self._foreign_keys_disabled_for_rebuild(conn):
+                self._refresh_project_scopes(conn)
+                if self._needs_scope_rebuild(conn, "sessions"):
+                    self._rebuild_sessions_table(conn)
+                if self._needs_scope_rebuild(conn, "records"):
+                    self._rebuild_records_table(conn)
+                if self._needs_scope_rebuild(conn, "record_versions"):
+                    self._rebuild_record_versions_table(conn)
+                self._refresh_project_scopes(conn)
+                self._refresh_existing_record_scopes(conn)
+                self._ensure_records_fts_schema(conn)
+            return
+
+        self._refresh_project_scopes(conn)
+        self._refresh_existing_record_scopes(conn)
+        self._ensure_records_fts_schema(conn)
+
+    @contextmanager
+    def _foreign_keys_disabled_for_rebuild(self, conn: sqlite3.Connection) -> Any:
+        """Temporarily disable FK enforcement for table rebuild migrations."""
+        was_enabled = int(conn.execute("PRAGMA foreign_keys").fetchone()[0] or 0)
+        conn.commit()
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute("BEGIN")
+        try:
+            yield
+            violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+            if violations:
+                first = violations[0]
+                raise sqlite3.IntegrityError(
+                    "context schema migration violated foreign keys: "
+                    f"{tuple(first)}"
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            if was_enabled:
+                conn.execute("PRAGMA foreign_keys = ON")
+
+    def _ensure_secondary_indexes(self, conn: sqlite3.Connection) -> None:
+        """Create secondary indexes that may be lost during table rebuilds."""
+        conn.executescript(
+            """
+            CREATE INDEX IF NOT EXISTS idx_projects_repo_path ON projects(repo_path);
+            CREATE INDEX IF NOT EXISTS idx_scopes_type_id ON scopes(scope_type, scope_id);
+            CREATE INDEX IF NOT EXISTS idx_sessions_project_id ON sessions(project_id);
+            CREATE INDEX IF NOT EXISTS idx_sessions_scope ON sessions(scope_type, scope_id);
+            CREATE INDEX IF NOT EXISTS idx_records_project_id ON records(project_id);
+            CREATE INDEX IF NOT EXISTS idx_records_scope ON records(scope_type, scope_id);
+            CREATE INDEX IF NOT EXISTS idx_records_kind ON records(kind);
+            CREATE INDEX IF NOT EXISTS idx_records_status ON records(status);
+            CREATE INDEX IF NOT EXISTS idx_records_created_at ON records(created_at);
+            CREATE INDEX IF NOT EXISTS idx_records_updated_at ON records(updated_at);
+            CREATE INDEX IF NOT EXISTS idx_records_valid_from ON records(valid_from);
+            CREATE INDEX IF NOT EXISTS idx_records_source_session_id ON records(source_session_id);
+            CREATE INDEX IF NOT EXISTS idx_record_versions_record_id ON record_versions(record_id);
+            CREATE INDEX IF NOT EXISTS idx_record_versions_changed_at ON record_versions(changed_at);
+            """
+        )
+
+    def _needs_scope_rebuild(self, conn: sqlite3.Connection, table_name: str) -> bool:
+        """Return whether a table lacks nullable project scope columns."""
+        rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        if not rows:
+            return False
+        columns = {str(row["name"]): row for row in rows}
+        required = {"scope_type", "scope_id", "scope_label", "source_name", "source_profile"}
+        if required - set(columns):
+            return True
+        project = columns.get("project_id")
+        return bool(project and int(project["notnull"] or 0))
+
+    def _refresh_project_scopes(self, conn: sqlite3.Connection) -> None:
+        """Ensure every project also has a project scope row."""
+        now = _utc_now()
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO scopes(
+                scope_type, scope_id, scope_label, scope_slug, source_name,
+                source_profile, repo_path, created_at, updated_at
+            )
+            SELECT
+                'project',
+                project_id,
+                project_slug,
+                project_slug,
+                'project',
+                'coding-agent',
+                repo_path,
+                ?,
+                ?
+            FROM projects
+            """,
+            (now, now),
+        )
+
+    def _refresh_existing_record_scopes(self, conn: sqlite3.Connection) -> None:
+        """Backfill scope registry rows referenced by existing sessions or records."""
+        now = _utc_now()
+        for table_name in ("sessions", "records"):
+            columns = self._table_columns(conn, table_name)
+            if not {"scope_type", "scope_id"} <= columns:
+                continue
+            label_expr = "COALESCE(scope_label, scope_id)"
+            source_name_expr = "source_name" if "source_name" in columns else "NULL"
+            source_profile_expr = "source_profile" if "source_profile" in columns else "NULL"
+            repo_path_expr = "repo_path" if "repo_path" in columns else "NULL"
+            conn.execute(
+                f"""
+                INSERT OR IGNORE INTO scopes(
+                    scope_type, scope_id, scope_label, scope_slug, source_name,
+                    source_profile, repo_path, created_at, updated_at
+                )
+                SELECT DISTINCT
+                    COALESCE(scope_type, 'project'),
+                    COALESCE(scope_id, project_id),
+                    {label_expr},
+                    {label_expr},
+                    {source_name_expr},
+                    {source_profile_expr},
+                    {repo_path_expr},
+                    ?,
+                    ?
+                FROM {table_name}
+                WHERE COALESCE(scope_id, project_id) IS NOT NULL
+                """,
+                (now, now),
+            )
+
+    def _ensure_records_fts_schema(self, conn: sqlite3.Connection) -> None:
+        """Ensure the FTS table has scope columns, rebuilding from records if needed."""
+        columns = self._table_columns(conn, "records_fts")
+        if columns and {"scope_type", "scope_id"} <= columns:
+            return
+        conn.execute("DROP TABLE IF EXISTS records_fts")
+        conn.execute(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS records_fts USING fts5(
+                record_id UNINDEXED,
+                project_id UNINDEXED,
+                scope_type UNINDEXED,
+                scope_id UNINDEXED,
+                updated_at UNINDEXED,
+                title,
+                body,
+                decision,
+                why,
+                user_intent,
+                what_happened
+            )
+            """
+        )
+        if self._table_exists(conn, "records"):
+            rows = conn.execute("SELECT * FROM records ORDER BY created_at ASC, record_id ASC").fetchall()
+            for row in rows:
+                self._upsert_fts(
+                    conn,
+                    project_id=_row_value(row, "project_id"),
+                    record_id=str(row["record_id"]),
+                    payload=self._record_row_to_dict(row),
+                )
+
+    def _table_columns(self, conn: sqlite3.Connection, table_name: str) -> set[str]:
+        """Return the column names for a table or virtual table."""
+        rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        return {str(row["name"]) for row in rows}
+
+    def _column_expr(self, columns: set[str], name: str, default_sql: str) -> str:
+        """Return a SELECT expression for an existing column or SQL default."""
+        return name if name in columns else default_sql
+
+    def _require_rebuild_columns(
+        self,
+        *,
+        table_name: str,
+        columns: set[str],
+        required: set[str],
+    ) -> None:
+        """Raise a canonical schema error when a table cannot be migrated."""
+        missing = required - columns
+        if missing:
+            missing_list = ", ".join(sorted(missing))
+            raise sqlite3.OperationalError(
+                f"context schema incompatible: table {table_name} missing columns {missing_list}"
+            )
+
+    def _rebuild_sessions_table(self, conn: sqlite3.Connection) -> None:
+        """Rebuild sessions with nullable project IDs and scope metadata."""
+        old_name = "sessions_scope_migration_old"
+        columns = self._table_columns(conn, "sessions")
+        self._require_rebuild_columns(
+            table_name="sessions",
+            columns=columns,
+            required={
+                "session_id",
+                "project_id",
+                "agent_type",
+                "source_trace_ref",
+                "repo_path",
+                "cwd",
+                "started_at",
+                "model_name",
+                "instructions_text",
+                "prompt_text",
+                "created_at",
+            },
+        )
+        conn.execute(f"DROP TABLE IF EXISTS {old_name}")
+        conn.execute(f"ALTER TABLE sessions RENAME TO {old_name}")
+        conn.execute(
+            """
+            CREATE TABLE sessions (
+                session_id TEXT PRIMARY KEY,
+                project_id TEXT,
+                scope_type TEXT NOT NULL DEFAULT 'project',
+                scope_id TEXT NOT NULL,
+                scope_label TEXT,
+                source_name TEXT,
+                source_profile TEXT,
+                agent_type TEXT NOT NULL,
+                source_trace_ref TEXT NOT NULL,
+                repo_path TEXT,
+                cwd TEXT,
+                started_at TEXT,
+                model_name TEXT,
+                instructions_text TEXT,
+                prompt_text TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES projects(project_id),
+                FOREIGN KEY(scope_type, scope_id) REFERENCES scopes(scope_type, scope_id)
+            )
+            """
+        )
+        scope_type = self._column_expr(columns, "scope_type", "'project'")
+        scope_id = self._column_expr(columns, "scope_id", "COALESCE(project_id, session_id)")
+        scope_label = self._column_expr(columns, "scope_label", "COALESCE(project_id, session_id)")
+        source_name = self._column_expr(columns, "source_name", "agent_type")
+        source_profile = self._column_expr(columns, "source_profile", "agent_type")
+        conn.execute(
+            f"""
+            INSERT INTO sessions(
+                session_id, project_id, scope_type, scope_id, scope_label,
+                source_name, source_profile, agent_type, source_trace_ref,
+                repo_path, cwd, started_at, model_name, instructions_text,
+                prompt_text, created_at
+            )
+            SELECT
+                session_id, project_id, {scope_type}, {scope_id}, {scope_label},
+                {source_name}, {source_profile}, agent_type, source_trace_ref,
+                repo_path, cwd, started_at, model_name, instructions_text,
+                prompt_text, created_at
+            FROM {old_name}
+            """
+        )
+        conn.execute(f"DROP TABLE {old_name}")
+
+    def _rebuild_records_table(self, conn: sqlite3.Connection) -> None:
+        """Rebuild records with nullable project IDs and scope metadata."""
+        old_name = "records_scope_migration_old"
+        columns = self._table_columns(conn, "records")
+        self._require_rebuild_columns(
+            table_name="records",
+            columns=columns,
+            required={
+                "record_id",
+                "project_id",
+                "kind",
+                "title",
+                "body",
+                "status",
+                "source_session_id",
+                "created_at",
+                "updated_at",
+                "valid_from",
+                "valid_until",
+                "superseded_by_record_id",
+                "decision",
+                "why",
+                "alternatives",
+                "consequences",
+                "user_intent",
+                "what_happened",
+                "outcomes",
+            },
+        )
+        conn.execute(f"DROP TABLE IF EXISTS {old_name}")
+        conn.execute(f"ALTER TABLE records RENAME TO {old_name}")
+        conn.execute(
+            """
+            CREATE TABLE records (
+                record_id TEXT PRIMARY KEY,
+                project_id TEXT,
+                scope_type TEXT NOT NULL DEFAULT 'project',
+                scope_id TEXT NOT NULL,
+                scope_label TEXT,
+                source_name TEXT,
+                source_profile TEXT,
+                kind TEXT NOT NULL,
+                title TEXT NOT NULL,
+                body TEXT NOT NULL,
+                status TEXT NOT NULL,
+                source_session_id TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                valid_from TEXT NOT NULL,
+                valid_until TEXT,
+                superseded_by_record_id TEXT,
+                decision TEXT,
+                why TEXT,
+                alternatives TEXT,
+                consequences TEXT,
+                user_intent TEXT,
+                what_happened TEXT,
+                outcomes TEXT,
+                FOREIGN KEY(project_id) REFERENCES projects(project_id),
+                FOREIGN KEY(scope_type, scope_id) REFERENCES scopes(scope_type, scope_id),
+                FOREIGN KEY(source_session_id) REFERENCES sessions(session_id),
+                FOREIGN KEY(superseded_by_record_id) REFERENCES records(record_id),
+                CHECK (length(trim(title)) > 0),
+                CHECK (length(trim(body)) > 0)
+            )
+            """
+        )
+        scope_type = self._column_expr(columns, "scope_type", "'project'")
+        scope_id = self._column_expr(columns, "scope_id", "COALESCE(project_id, record_id)")
+        scope_label = self._column_expr(columns, "scope_label", "COALESCE(project_id, record_id)")
+        source_name = self._column_expr(columns, "source_name", "NULL")
+        source_profile = self._column_expr(columns, "source_profile", "NULL")
+        conn.execute(
+            f"""
+            INSERT INTO records(
+                record_id, project_id, scope_type, scope_id, scope_label,
+                source_name, source_profile, kind, title, body, status,
+                source_session_id, created_at, updated_at, valid_from,
+                valid_until, superseded_by_record_id, decision, why,
+                alternatives, consequences, user_intent, what_happened, outcomes
+            )
+            SELECT
+                record_id, project_id, {scope_type}, {scope_id}, {scope_label},
+                {source_name}, {source_profile}, kind, title, body, status,
+                source_session_id, created_at, updated_at, valid_from,
+                valid_until, superseded_by_record_id, decision, why,
+                alternatives, consequences, user_intent, what_happened, outcomes
+            FROM {old_name}
+            """
+        )
+        conn.execute(f"DROP TABLE {old_name}")
+
+    def _rebuild_record_versions_table(self, conn: sqlite3.Connection) -> None:
+        """Rebuild record_versions with nullable project IDs and scope metadata."""
+        old_name = "record_versions_scope_migration_old"
+        columns = self._table_columns(conn, "record_versions")
+        self._require_rebuild_columns(
+            table_name="record_versions",
+            columns=columns,
+            required={
+                "version_id",
+                "project_id",
+                "record_id",
+                "version_no",
+                "kind",
+                "title",
+                "body",
+                "status",
+                "source_session_id",
+                "created_at",
+                "updated_at",
+                "valid_from",
+                "valid_until",
+                "superseded_by_record_id",
+                "decision",
+                "why",
+                "alternatives",
+                "consequences",
+                "user_intent",
+                "what_happened",
+                "outcomes",
+                "change_kind",
+                "change_reason",
+                "changed_at",
+                "changed_by_session_id",
+            },
+        )
+        conn.execute(f"DROP TABLE IF EXISTS {old_name}")
+        conn.execute(f"ALTER TABLE record_versions RENAME TO {old_name}")
+        conn.execute(
+            """
+            CREATE TABLE record_versions (
+                version_id TEXT PRIMARY KEY,
+                project_id TEXT,
+                scope_type TEXT NOT NULL DEFAULT 'project',
+                scope_id TEXT NOT NULL,
+                scope_label TEXT,
+                source_name TEXT,
+                source_profile TEXT,
+                record_id TEXT NOT NULL,
+                version_no INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                title TEXT NOT NULL,
+                body TEXT NOT NULL,
+                status TEXT NOT NULL,
+                source_session_id TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                valid_from TEXT NOT NULL,
+                valid_until TEXT,
+                superseded_by_record_id TEXT,
+                decision TEXT,
+                why TEXT,
+                alternatives TEXT,
+                consequences TEXT,
+                user_intent TEXT,
+                what_happened TEXT,
+                outcomes TEXT,
+                change_kind TEXT NOT NULL,
+                change_reason TEXT,
+                changed_at TEXT NOT NULL,
+                changed_by_session_id TEXT,
+                FOREIGN KEY(project_id) REFERENCES projects(project_id),
+                FOREIGN KEY(scope_type, scope_id) REFERENCES scopes(scope_type, scope_id),
+                FOREIGN KEY(record_id) REFERENCES records(record_id),
+                FOREIGN KEY(source_session_id) REFERENCES sessions(session_id),
+                FOREIGN KEY(superseded_by_record_id) REFERENCES records(record_id),
+                FOREIGN KEY(changed_by_session_id) REFERENCES sessions(session_id)
+            )
+            """
+        )
+        scope_type = self._column_expr(columns, "scope_type", "'project'")
+        scope_id = self._column_expr(columns, "scope_id", "COALESCE(project_id, record_id)")
+        scope_label = self._column_expr(columns, "scope_label", "COALESCE(project_id, record_id)")
+        source_name = self._column_expr(columns, "source_name", "NULL")
+        source_profile = self._column_expr(columns, "source_profile", "NULL")
+        conn.execute(
+            f"""
+            INSERT INTO record_versions(
+                version_id, project_id, scope_type, scope_id, scope_label,
+                source_name, source_profile, record_id, version_no, kind,
+                title, body, status, source_session_id, created_at, updated_at,
+                valid_from, valid_until, superseded_by_record_id, decision, why,
+                alternatives, consequences, user_intent, what_happened, outcomes,
+                change_kind, change_reason, changed_at, changed_by_session_id
+            )
+            SELECT
+                version_id, project_id, {scope_type}, {scope_id}, {scope_label},
+                {source_name}, {source_profile}, record_id, version_no, kind,
+                title, body, status, source_session_id, created_at, updated_at,
+                valid_from, valid_until, superseded_by_record_id, decision, why,
+                alternatives, consequences, user_intent, what_happened, outcomes,
+                change_kind, change_reason, changed_at, changed_by_session_id
+            FROM {old_name}
+            """
+        )
+        conn.execute(f"DROP TABLE {old_name}")
+
     def _validate_schema(self, conn: sqlite3.Connection) -> None:
         """Ensure the on-disk DB matches the simplified canonical schema."""
         required_columns = {
             "projects": {"project_id", "project_slug", "repo_path"},
-            "sessions": {"session_id", "project_id", "agent_type", "source_trace_ref"},
-            "records": {"record_id", "project_id", "kind", "title", "body", "status"},
-            "record_versions": {"version_id", "record_id", "version_no", "change_kind"},
+            "scopes": {"scope_type", "scope_id", "scope_label", "scope_slug"},
+            "sessions": {
+                "session_id",
+                "project_id",
+                "scope_type",
+                "scope_id",
+                "agent_type",
+                "source_trace_ref",
+            },
+            "records": {
+                "record_id",
+                "project_id",
+                "scope_type",
+                "scope_id",
+                "kind",
+                "title",
+                "body",
+                "status",
+            },
+            "record_versions": {
+                "version_id",
+                "record_id",
+                "scope_type",
+                "scope_id",
+                "version_no",
+                "change_kind",
+            },
             "records_fts": {
                 "record_id",
                 "project_id",
+                "scope_type",
+                "scope_id",
                 "updated_at",
                 "title",
                 "body",
@@ -430,10 +950,82 @@ class ContextStore:
                     now,
                 ),
             )
+            project_scope = scope_from_project(identity)
+            conn.execute(
+                """
+                INSERT INTO scopes(
+                    scope_type, scope_id, scope_label, scope_slug, source_name,
+                    source_profile, repo_path, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(scope_type, scope_id) DO UPDATE SET
+                    scope_label=excluded.scope_label,
+                    scope_slug=excluded.scope_slug,
+                    repo_path=excluded.repo_path,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    project_scope.scope_type,
+                    project_scope.scope_id,
+                    project_scope.label,
+                    project_scope.scope_slug,
+                    "project",
+                    "coding-agent",
+                    str(identity.repo_path),
+                    now,
+                    now,
+                ),
+            )
         return {
             "project_id": identity.project_id,
             "project_slug": identity.project_slug,
             "repo_path": str(identity.repo_path),
+        }
+
+    def register_scope(
+        self,
+        identity: ScopeIdentity,
+        *,
+        source_name: str | None = None,
+        source_profile: str | None = None,
+    ) -> dict[str, Any]:
+        """Upsert one generic or project scope row."""
+        self.initialize()
+        now = _utc_now()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO scopes(
+                    scope_type, scope_id, scope_label, scope_slug, source_name,
+                    source_profile, repo_path, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(scope_type, scope_id) DO UPDATE SET
+                    scope_label=excluded.scope_label,
+                    scope_slug=excluded.scope_slug,
+                    source_name=COALESCE(excluded.source_name, scopes.source_name),
+                    source_profile=COALESCE(excluded.source_profile, scopes.source_profile),
+                    repo_path=COALESCE(excluded.repo_path, scopes.repo_path),
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    identity.scope_type,
+                    identity.scope_id,
+                    identity.label,
+                    identity.scope_slug,
+                    _normalize_optional_text(source_name),
+                    _normalize_optional_text(source_profile),
+                    str(identity.repo_path) if identity.repo_path is not None else None,
+                    now,
+                    now,
+                ),
+            )
+        return {
+            "scope_type": identity.scope_type,
+            "scope_id": identity.scope_id,
+            "scope_label": identity.label,
+            "scope_slug": identity.scope_slug,
+            "repo_path": str(identity.repo_path) if identity.repo_path is not None else None,
         }
 
     def reset_project_memory(self, project_id: str) -> dict[str, int]:
@@ -532,10 +1124,96 @@ class ContextStore:
         ).fetchone()
         return row is not None
 
+    def _resolve_scope_fields(
+        self,
+        *,
+        project_id: str | None,
+        scope_identity: ScopeIdentity | None = None,
+        scope_type: str | None = None,
+        scope_id: str | None = None,
+        scope_label: str | None = None,
+        source_name: str | None = None,
+        source_profile: str | None = None,
+        repo_path: str | None = None,
+    ) -> dict[str, Any]:
+        """Resolve optional scope/source inputs into persisted fields."""
+        if scope_identity is not None:
+            return {
+                "scope_type": scope_identity.scope_type,
+                "scope_id": scope_identity.scope_id,
+                "scope_label": scope_label or scope_identity.label,
+                "scope_slug": scope_identity.scope_slug,
+                "source_name": _normalize_optional_text(source_name),
+                "source_profile": _normalize_optional_text(source_profile),
+                "repo_path": (
+                    str(scope_identity.repo_path)
+                    if scope_identity.repo_path is not None
+                    else repo_path
+                ),
+            }
+        if scope_type and scope_id:
+            label = str(scope_label or scope_id).strip()
+            return {
+                "scope_type": str(scope_type).strip().lower(),
+                "scope_id": str(scope_id).strip(),
+                "scope_label": label,
+                "scope_slug": label,
+                "source_name": _normalize_optional_text(source_name),
+                "source_profile": _normalize_optional_text(source_profile),
+                "repo_path": repo_path,
+            }
+        if project_id:
+            return {
+                "scope_type": "project",
+                "scope_id": str(project_id),
+                "scope_label": str(scope_label or project_id),
+                "scope_slug": str(scope_label or project_id),
+                "source_name": _normalize_optional_text(source_name),
+                "source_profile": _normalize_optional_text(source_profile),
+                "repo_path": repo_path,
+            }
+        raise ValueError("scope_required")
+
+    def _upsert_scope_in_conn(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        scope_fields: dict[str, Any],
+    ) -> None:
+        """Upsert the scope row referenced by a session or record."""
+        now = _utc_now()
+        conn.execute(
+            """
+            INSERT INTO scopes(
+                scope_type, scope_id, scope_label, scope_slug, source_name,
+                source_profile, repo_path, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(scope_type, scope_id) DO UPDATE SET
+                scope_label=excluded.scope_label,
+                scope_slug=excluded.scope_slug,
+                source_name=COALESCE(excluded.source_name, scopes.source_name),
+                source_profile=COALESCE(excluded.source_profile, scopes.source_profile),
+                repo_path=COALESCE(excluded.repo_path, scopes.repo_path),
+                updated_at=excluded.updated_at
+            """,
+            (
+                scope_fields["scope_type"],
+                scope_fields["scope_id"],
+                scope_fields["scope_label"],
+                scope_fields["scope_slug"],
+                scope_fields["source_name"],
+                scope_fields["source_profile"],
+                scope_fields["repo_path"],
+                now,
+                now,
+            ),
+        )
+
     def upsert_session(
         self,
         *,
-        project_id: str,
+        project_id: str | None,
         session_id: str,
         agent_type: str,
         source_trace_ref: str,
@@ -545,6 +1223,12 @@ class ContextStore:
         model_name: str | None,
         instructions_text: str | None,
         prompt_text: str | None,
+        scope_identity: ScopeIdentity | None = None,
+        scope_type: str | None = None,
+        scope_id: str | None = None,
+        scope_label: str | None = None,
+        source_name: str | None = None,
+        source_profile: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Insert or update one session provenance row."""
@@ -552,16 +1236,34 @@ class ContextStore:
         self.initialize()
         now = _utc_now()
         started_at_text = _normalize_datetime_utc(started_at)
+        scope_fields = self._resolve_scope_fields(
+            project_id=project_id,
+            scope_identity=scope_identity,
+            scope_type=scope_type,
+            scope_id=scope_id,
+            scope_label=scope_label,
+            source_name=source_name or agent_type,
+            source_profile=source_profile or agent_type,
+            repo_path=repo_path,
+        )
         with self.connect() as conn:
+            self._upsert_scope_in_conn(conn, scope_fields=scope_fields)
             conn.execute(
                 """
                 INSERT INTO sessions(
-                    session_id, project_id, agent_type, source_trace_ref, repo_path, cwd,
-                    started_at, model_name, instructions_text, prompt_text, created_at
+                    session_id, project_id, scope_type, scope_id, scope_label,
+                    source_name, source_profile, agent_type, source_trace_ref,
+                    repo_path, cwd, started_at, model_name, instructions_text,
+                    prompt_text, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(session_id) DO UPDATE SET
                     project_id=excluded.project_id,
+                    scope_type=excluded.scope_type,
+                    scope_id=excluded.scope_id,
+                    scope_label=excluded.scope_label,
+                    source_name=excluded.source_name,
+                    source_profile=excluded.source_profile,
                     agent_type=excluded.agent_type,
                     source_trace_ref=excluded.source_trace_ref,
                     repo_path=excluded.repo_path,
@@ -574,6 +1276,11 @@ class ContextStore:
                 (
                     session_id,
                     project_id,
+                    scope_fields["scope_type"],
+                    scope_fields["scope_id"],
+                    scope_fields["scope_label"],
+                    scope_fields["source_name"],
+                    scope_fields["source_profile"],
                     agent_type,
                     source_trace_ref,
                     repo_path,
@@ -585,7 +1292,12 @@ class ContextStore:
                     now,
                 ),
             )
-        return {"session_id": session_id, "project_id": project_id}
+        return {
+            "session_id": session_id,
+            "project_id": project_id,
+            "scope_type": scope_fields["scope_type"],
+            "scope_id": scope_fields["scope_id"],
+        }
 
     def fetch_record(
         self,
@@ -633,7 +1345,7 @@ class ContextStore:
     def create_record(
         self,
         *,
-        project_id: str,
+        project_id: str | None,
         session_id: str | None,
         kind: str,
         title: str,
@@ -653,6 +1365,12 @@ class ContextStore:
         what_happened: str | None = None,
         outcomes: str | None = None,
         change_reason: str | None = None,
+        scope_identity: ScopeIdentity | None = None,
+        scope_type: str | None = None,
+        scope_id: str | None = None,
+        scope_label: str | None = None,
+        source_name: str | None = None,
+        source_profile: str | None = None,
     ) -> dict[str, Any]:
         """Create a new canonical record and its first version."""
         self.initialize()
@@ -662,6 +1380,15 @@ class ContextStore:
         now = _utc_now()
         effective_created_at = created_at or now
         effective_updated_at = updated_at or effective_created_at
+        scope_fields = self._resolve_scope_fields(
+            project_id=project_id,
+            scope_identity=scope_identity,
+            scope_type=scope_type,
+            scope_id=scope_id,
+            scope_label=scope_label,
+            source_name=source_name,
+            source_profile=source_profile,
+        )
         payload = self._normalize_record_payload(
             kind=kind,
             title=title,
@@ -681,11 +1408,23 @@ class ContextStore:
             what_happened=what_happened,
             outcomes=outcomes,
         )
+        payload.update(
+            {
+                "scope_type": scope_fields["scope_type"],
+                "scope_id": scope_fields["scope_id"],
+                "scope_label": scope_fields["scope_label"],
+                "source_name": scope_fields["source_name"],
+                "source_profile": scope_fields["source_profile"],
+            }
+        )
         with self.connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
+            self._upsert_scope_in_conn(conn, scope_fields=scope_fields)
             self._ensure_episode_uniqueness(
                 conn,
                 project_id=project_id,
+                scope_type=payload["scope_type"],
+                scope_id=payload["scope_id"],
                 kind=payload["kind"],
                 session_id=session_id,
                 exclude_record_id=None,
@@ -693,15 +1432,21 @@ class ContextStore:
             conn.execute(
                 """
                 INSERT INTO records(
-                    record_id, project_id, kind, title, body, status, source_session_id,
+                    record_id, project_id, scope_type, scope_id, scope_label,
+                    source_name, source_profile, kind, title, body, status, source_session_id,
                     created_at, updated_at, valid_from, valid_until, superseded_by_record_id,
                     decision, why, alternatives, consequences, user_intent, what_happened, outcomes
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record_id,
                     project_id,
+                    payload["scope_type"],
+                    payload["scope_id"],
+                    payload["scope_label"],
+                    payload["source_name"],
+                    payload["source_profile"],
                     payload["kind"],
                     payload["title"],
                     payload["body"],
@@ -732,7 +1477,11 @@ class ContextStore:
                 changed_by_session_id=session_id,
             )
         self._refresh_derived_indexes_after_write(record_ids=[record_id])
-        return self.fetch_record(record_id, project_ids=[project_id], include_versions=True) or {}
+        return self.fetch_record(
+            record_id,
+            project_ids=[project_id] if project_id else None,
+            include_versions=True,
+        ) or {}
 
     def update_record(
         self,
@@ -803,6 +1552,15 @@ class ContextStore:
             what_happened=changes.get("what_happened", merged["what_happened"]),
             outcomes=changes.get("outcomes", merged["outcomes"]),
         )
+        payload.update(
+            {
+                "scope_type": merged.get("scope_type") or "project",
+                "scope_id": merged.get("scope_id") or merged.get("project_id"),
+                "scope_label": merged.get("scope_label") or merged.get("scope_id"),
+                "source_name": merged.get("source_name"),
+                "source_profile": merged.get("source_profile"),
+            }
+        )
         meaningful_fields = (
             "kind",
             "title",
@@ -824,6 +1582,8 @@ class ContextStore:
         self._ensure_episode_uniqueness(
             conn,
             project_id=merged["project_id"],
+            scope_type=payload["scope_type"],
+            scope_id=payload["scope_id"],
             kind=payload["kind"],
             session_id=payload["source_session_id"],
             exclude_record_id=record_id,
@@ -1407,7 +2167,12 @@ class ContextStore:
         """Convert one record row into JSON-like data."""
         return {
             "record_id": str(row["record_id"]),
-            "project_id": str(row["project_id"]),
+            "project_id": _row_value(row, "project_id"),
+            "scope_type": str(_row_value(row, "scope_type", "project")),
+            "scope_id": str(_row_value(row, "scope_id", _row_value(row, "project_id", ""))),
+            "scope_label": _row_value(row, "scope_label"),
+            "source_name": _row_value(row, "source_name"),
+            "source_profile": _row_value(row, "source_profile"),
             "kind": str(row["kind"]),
             "title": str(row["title"]),
             "body": str(row["body"]),
@@ -1480,7 +2245,9 @@ class ContextStore:
         self,
         conn: sqlite3.Connection,
         *,
-        project_id: str,
+        project_id: str | None,
+        scope_type: str,
+        scope_id: str,
         kind: str,
         session_id: str | None,
         exclude_record_id: str | None,
@@ -1491,9 +2258,9 @@ class ContextStore:
         query = """
             SELECT record_id
             FROM records
-            WHERE project_id = ? AND kind = 'episode' AND source_session_id = ?
+            WHERE scope_type = ? AND scope_id = ? AND kind = 'episode' AND source_session_id = ?
         """
-        params: list[Any] = [project_id, session_id]
+        params: list[Any] = [scope_type, scope_id, session_id]
         if exclude_record_id:
             query += " AND record_id != ?"
             params.append(exclude_record_id)
@@ -1505,7 +2272,7 @@ class ContextStore:
         self,
         conn: sqlite3.Connection,
         *,
-        project_id: str,
+        project_id: str | None,
         record_id: str,
         version_no: int,
         payload: dict[str, Any],
@@ -1519,17 +2286,23 @@ class ContextStore:
         conn.execute(
             """
             INSERT INTO record_versions(
-                version_id, project_id, record_id, version_no, kind, title, body, status,
-                source_session_id, created_at, updated_at, valid_from, valid_until,
-                superseded_by_record_id, decision, why, alternatives, consequences,
-                user_intent, what_happened, outcomes, change_kind, change_reason,
-                changed_at, changed_by_session_id
+                version_id, project_id, scope_type, scope_id, scope_label,
+                source_name, source_profile, record_id, version_no, kind, title,
+                body, status, source_session_id, created_at, updated_at,
+                valid_from, valid_until, superseded_by_record_id, decision, why,
+                alternatives, consequences, user_intent, what_happened, outcomes,
+                change_kind, change_reason, changed_at, changed_by_session_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 _new_id("ver"),
                 project_id,
+                payload["scope_type"],
+                payload["scope_id"],
+                payload["scope_label"],
+                payload["source_name"],
+                payload["source_profile"],
                 record_id,
                 version_no,
                 payload["kind"],
@@ -1560,7 +2333,7 @@ class ContextStore:
         self,
         conn: sqlite3.Connection,
         *,
-        project_id: str,
+        project_id: str | None,
         record_id: str,
         text: str,
         updated_at: str,
@@ -1576,14 +2349,14 @@ class ContextStore:
             )
             VALUES (?, ?, ?, ?, ?)
             """,
-            (vector, project_id, record_id, provider.model_id, updated_at),
+            (vector, project_id or "", record_id, provider.model_id, updated_at),
         )
 
     def _upsert_fts(
         self,
         conn: sqlite3.Connection,
         *,
-        project_id: str,
+        project_id: str | None,
         record_id: str,
         payload: dict[str, Any],
     ) -> None:
@@ -1592,13 +2365,16 @@ class ContextStore:
         conn.execute(
             """
             INSERT INTO records_fts(
-                record_id, project_id, updated_at, title, body, decision, why, user_intent, what_happened
+                record_id, project_id, scope_type, scope_id, updated_at, title,
+                body, decision, why, user_intent, what_happened
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record_id,
                 project_id,
+                payload.get("scope_type") or "project",
+                payload.get("scope_id") or project_id,
                 payload["updated_at"],
                 payload["title"],
                 payload["body"],
@@ -1621,7 +2397,7 @@ class ContextStore:
             payload = self._record_row_to_dict(row)
             self._upsert_embedding(
                 conn,
-                project_id=str(row["project_id"]),
+                project_id=_row_value(row, "project_id"),
                 record_id=str(row["record_id"]),
                 text=self._search_text(payload),
                 updated_at=str(row["updated_at"]),
@@ -1743,7 +2519,7 @@ class ContextStore:
                     payload = self._record_row_to_dict(row)
                     self._upsert_fts(
                         conn,
-                        project_id=str(row["project_id"]),
+                        project_id=_row_value(row, "project_id"),
                         record_id=str(row["record_id"]),
                         payload=payload,
                     )
@@ -1774,7 +2550,7 @@ class ContextStore:
                     payload = self._record_row_to_dict(row)
                     self._upsert_embedding(
                         conn,
-                        project_id=str(row["project_id"]),
+                        project_id=_row_value(row, "project_id"),
                         record_id=str(row["record_id"]),
                         text=self._search_text(payload),
                         updated_at=str(row["updated_at"]),

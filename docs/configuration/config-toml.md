@@ -23,10 +23,10 @@ dir = "~/.lerim"
 [server]
 host = "127.0.0.1"
 port = 8765
-sync_interval_minutes = 30
-maintain_interval_minutes = 60
-sync_window_days = 7
-sync_max_sessions = 50
+ingest_interval_minutes = 30
+curate_interval_minutes = 60
+ingest_window_days = 7
+ingest_max_sessions = 50
 
 [semantic_search]
 embedding_model_id = "mixedbread-ai/mxbai-embed-xsmall-v1"
@@ -42,18 +42,12 @@ mlflow_enabled = false
 provider = "minimax"
 model = "MiniMax-M2.7"
 api_base = ""
-fallback_models = []
 temperature = 1.0
-top_p = 0.95
-top_k = 40
-max_tokens = 32000
-parallel_tool_calls = true
-max_iters_maintain = 50
-max_iters_ask = 20
+curate_max_llm_calls = 50
+answer_max_retrieval_actions = 20
 
 [providers]
 minimax = "https://api.minimax.io/v1"
-minimax_anthropic = "https://api.minimax.io/anthropic"
 zai = "https://api.z.ai/api/coding/paas/v4"
 openai = "https://api.openai.com/v1"
 openrouter = "https://openrouter.ai/api/v1"
@@ -84,6 +78,4 @@ endpoint = "https://api.lerim.dev"
 - `[observability].mlflow_enabled` enables local MLflow tracing for the long-running server process
 - there is one active model role today: `[roles.agent]`
 - API keys come from environment variables, not TOML
-- `fallback_models` entries can be `"provider:model"` or, when you want the primary provider, just `"model"`
-- OpenRouter fallback model IDs may include colon suffixes, for example `"deepseek/deepseek-r1-0528:free"`
-- `top_k` is only sent to providers whose request API supports it; it is not sent to OpenAI
+- `curate_max_llm_calls` caps context-curator BAML calls; `answer_max_retrieval_actions` caps context-answerer retrieval actions

@@ -204,7 +204,7 @@ class TestRenderStatusOutput:
         payload = {
             "recent_activity": [
                 {
-                    "op_type": "sync",
+                    "op_type": "ingest",
                     "status": "done",
                     "project_label": "proj-a",
                     "sessions_analyzed": 3,
@@ -220,18 +220,18 @@ class TestRenderStatusOutput:
         assert result is not None
         output = self._render(result)
         assert "proj-a" in output
-        assert "sync" in output
+        assert "ingest" in output
 
     def test_with_schedule(self):
         payload = {
             "schedule": {
-                "sync": {
+                "ingest": {
                     "interval_minutes": 20,
                     "running": False,
                     "seconds_until_next": 90,
                     "next_due_at": "2026-04-26T12:30:00+00:00",
                 },
-                "maintain": {
+                "curate": {
                     "interval_minutes": 60,
                     "running": True,
                     "seconds_until_next": None,
@@ -241,9 +241,9 @@ class TestRenderStatusOutput:
         }
         result = render_status_output(payload, refreshed_at="now")
         output = self._render(result)
-        assert "Sync interval" in output
+        assert "Ingest interval" in output
         assert "every 20m; next in 1m 30s (12:30:00Z)" in output
-        assert "Maintain interval" in output
+        assert "Curate interval" in output
         assert "every 1h; running now" in output
 
     def test_runtime_identity_is_rendered(self):

@@ -1,8 +1,8 @@
 """Behavior tests for the user-facing CLI/API surface cluster.
 
 These cases focus on:
-- CLI rendering of ask debug traces from HTTP API payloads
-- CLI JSON passthrough for ask/maintain payloads
+- CLI rendering of answer debug traces from HTTP API payloads
+- CLI JSON passthrough for answer/curate payloads
 - Deterministic query behavior against a real temporary context DB
 """
 
@@ -98,7 +98,7 @@ def surface_project(tmp_path: Path) -> Path:
 
 @pytest.fixture()
 def surface_server() -> tuple[_SurfaceHTTPServer, int]:
-    """Start a tiny HTTP JSON server for CLI ask/maintain tests."""
+    """Start a tiny HTTP JSON server for CLI answer/curate tests."""
     server = _SurfaceHTTPServer(("127.0.0.1", 0))
     port = int(server.server_address[1])
     thread = Thread(target=server.serve_forever, daemon=True)
@@ -181,15 +181,15 @@ def _seed_query_records(base_dir: Path, project: Path) -> tuple[Path, str]:
 
 
 @pytest.mark.e2e
-def test_cli_ask_verbose_renders_trace_in_order(
+def test_cli_answer_verbose_renders_trace_in_order(
     tmp_path: Path,
     surface_project: Path,
     surface_server: tuple[_SurfaceHTTPServer, int],
 ) -> None:
-    """Verbose ask should render the ordered debug trace after the final answer."""
-    expectation = load_cli_surface_expectation("cli_ask_verbose_renders_trace_in_order")["expected"]
+    """Verbose answer should render the ordered debug trace after the final answer."""
+    expectation = load_cli_surface_expectation("cli_answer_verbose_renders_trace_in_order")["expected"]
     server, port = surface_server
-    server.responses["/api/ask"] = {
+    server.responses["/api/answer"] = {
         "answer": "There are 3 records.",
         "agent_session_id": "ses-surface-1",
         "projects_used": [],
@@ -198,37 +198,31 @@ def test_cli_ask_verbose_renders_trace_in_order(
             "messages": [
                 {
                     "message_index": 0,
-                    "kind": "request",
+                    "kind": "baml_call",
                     "parts": [
-                        {"part_kind": "system-prompt", "char_count": 321},
-                        {"part_kind": "user-prompt", "content": "how many records?"},
+                        {"part_kind": "PlanContextRetrieval", "content": {}},
                     ],
                 },
                 {
                     "message_index": 1,
-                    "kind": "response",
+                    "kind": "retrieval",
                     "parts": [
                         {
-                            "part_kind": "tool-call",
-                            "tool_name": "count_context",
-                            "args": {},
+                            "part_kind": "count",
+                            "content": {"action_type": "count", "result_count": 3},
                         }
                     ],
                 },
                 {
                     "message_index": 2,
-                    "kind": "request",
+                    "kind": "baml_call",
                     "parts": [
-                        {
-                            "part_kind": "tool-return",
-                            "tool_name": "count_context",
-                            "content_preview": '{"count": 3}',
-                        }
+                        {"part_kind": "AnswerFromContext", "content": {}}
                     ],
                 },
                 {
                     "message_index": 3,
-                    "kind": "response",
+                    "kind": "answer",
                     "parts": [
                         {"part_kind": "text", "content": "There are 3 records."},
                     ],
@@ -238,7 +232,7 @@ def test_cli_ask_verbose_renders_trace_in_order(
     }
     cli = _build_cli_runner(tmp_path, port=port, project=surface_project)
 
-    result = cli.run_ok("ask", "how many records?", "--verbose", timeout=30)
+    result = cli.run_ok("answer", "how many records?", "--verbose", timeout=30)
 
     assert server.requests[-1][0] == expectation["endpoint"]
     assert server.requests[-1][1]["verbose"] is True
@@ -246,23 +240,23 @@ def test_cli_ask_verbose_renders_trace_in_order(
     assert expectation["answer_text"] in output
     assert expectation["trace_title"] in output
     assert output.index(expectation["answer_text"]) < output.index(expectation["trace_title"])
-    assert output.index("--- Message 0 [request] ---") < output.index("--- Message 1 [response] ---")
-    assert output.index("--- Message 1 [response] ---") < output.index("--- Message 2 [request] ---")
-    assert output.index("--- Message 2 [request] ---") < output.index("--- Message 3 [response] ---")
-    assert "  [tool-call] count_context({})" in output
-    assert '  [tool-return] count_context -> {"count": 3}' in output
+    assert output.index("--- Message 0 [baml_call] ---") < output.index("--- Message 1 [retrieval] ---")
+    assert output.index("--- Message 1 [retrieval] ---") < output.index("--- Message 2 [baml_call] ---")
+    assert output.index("--- Message 2 [baml_call] ---") < output.index("--- Message 3 [answer] ---")
+    assert "  [baml] PlanContextRetrieval" in output
+    assert "  [retrieval] count results=3" in output
 
 
 @pytest.mark.e2e
-def test_cli_ask_json_contains_debug_payload(
+def test_cli_answer_json_contains_debug_payload(
     tmp_path: Path,
     surface_project: Path,
     surface_server: tuple[_SurfaceHTTPServer, int],
 ) -> None:
-    """Ask JSON output should preserve the debug payload when verbose is requested."""
-    expectation = load_cli_surface_expectation("cli_ask_json_contains_debug_payload")["expected"]
+    """Answer JSON output should preserve the debug payload when verbose is requested."""
+    expectation = load_cli_surface_expectation("cli_answer_json_contains_debug_payload")["expected"]
     server, port = surface_server
-    server.responses["/api/ask"] = {
+    server.responses["/api/answer"] = {
         "answer": "Latest record is Latest storage decision.",
         "agent_session_id": "ses-surface-2",
         "projects_used": [],
@@ -271,41 +265,40 @@ def test_cli_ask_json_contains_debug_payload(
             "messages": [
                 {
                     "message_index": 0,
-                    "kind": "request",
+                    "kind": "baml_call",
                     "parts": [
-                        {"part_kind": "user-prompt", "content": "what is the latest record?"}
+                        {"part_kind": "PlanContextRetrieval", "content": {}}
                     ],
                 }
             ],
-            "tool_calls": [{"tool_name": "count_context"}],
-            "tool_results": [{"tool_name": "count_context", "content_preview": '{"count": 2}'}],
+            "retrieval_actions": [{"action_type": "count", "result_count": 2}],
         },
     }
     cli = _build_cli_runner(tmp_path, port=port, project=surface_project)
 
-    result = cli.run_ok("ask", "what is the latest record?", "--json", "--verbose", timeout=30)
+    result = cli.run_ok("answer", "what is the latest record?", "--json", "--verbose", timeout=30)
 
     payload = parse_json_output(result.stdout)
     assert server.requests[-1][1]["verbose"] is True
     assert server.requests[-1][0] == expectation["endpoint"]
     assert payload["answer"] == expectation["answer_text"]
-    assert payload["debug"]["messages"][0]["parts"][0]["part_kind"] == "user-prompt"
-    assert payload["debug"]["tool_calls"][0]["tool_name"] == "count_context"
+    assert payload["debug"]["messages"][0]["parts"][0]["part_kind"] == "PlanContextRetrieval"
+    assert payload["debug"]["retrieval_actions"][0]["action_type"] == "count"
 
 
 @pytest.mark.e2e
-def test_cli_maintain_json_reports_changes(
+def test_cli_curate_json_reports_changes(
     tmp_path: Path,
     surface_server: tuple[_SurfaceHTTPServer, int],
 ) -> None:
-    """Maintain JSON output should preserve change-report payloads from the API surface."""
-    expectation = load_cli_surface_expectation("cli_maintain_json_reports_changes")["expected"]
+    """Curate JSON output should preserve change-report payloads from the API surface."""
+    expectation = load_cli_surface_expectation("cli_curate_json_reports_changes")["expected"]
     server, port = surface_server
-    server.responses["/api/maintain"] = {
+    server.responses["/api/curate"] = {
         "code": 0,
         "projects": {
             "surface-project": {
-                "maintain_counts": {
+                "curate_counts": {
                     "created": 1,
                     "archived": 2,
                     "updated": 1,
@@ -316,13 +309,13 @@ def test_cli_maintain_json_reports_changes(
     }
     cli = _build_cli_runner(tmp_path, port=port)
 
-    result = cli.run_ok("maintain", "--json", timeout=30)
+    result = cli.run_ok("curate", "--json", timeout=30)
 
     payload = parse_json_output(result.stdout)
     assert server.requests[-1][0] == expectation["endpoint"]
-    assert payload["projects"]["surface-project"]["maintain_counts"]["created"] == int(expectation["created"])
-    assert payload["projects"]["surface-project"]["maintain_counts"]["updated"] == int(expectation["updated"])
-    assert payload["projects"]["surface-project"]["maintain_counts"]["archived"] == int(expectation["archived"])
+    assert payload["projects"]["surface-project"]["curate_counts"]["created"] == int(expectation["created"])
+    assert payload["projects"]["surface-project"]["curate_counts"]["updated"] == int(expectation["updated"])
+    assert payload["projects"]["surface-project"]["curate_counts"]["archived"] == int(expectation["archived"])
     assert payload["queue_health"]["degraded"] is False
 
 

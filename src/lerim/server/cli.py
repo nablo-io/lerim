@@ -1,6 +1,6 @@
 """Command-line interface for Lerim runtime and service operations.
 
-Service commands (ask, sync, maintain, status) are thin HTTP clients that
+Service commands (answer, ingest, curate, status) are thin HTTP clients that
 talk to a running Lerim server (started via ``lerim up`` or ``lerim serve``).
 Host-only commands (init, project, up, down, logs, connect)
 run locally and never require an HTTP server.
@@ -45,10 +45,10 @@ from lerim.server.docker_runtime import (
     is_docker_container_running,
 )
 from lerim.server.daemon import (
-    run_maintain_once,
-    run_sync_once,
-    run_working_memory_daily,
-    run_working_memory_for_project,
+    run_curate_once,
+    run_ingest_once,
+    run_context_brief_daily,
+    run_context_brief_for_project,
     resolve_window_bounds,
 )
 from lerim.server.cli_api_client import (
@@ -63,18 +63,38 @@ from lerim.config.settings import get_config, get_user_config_path, get_user_env
 from lerim.config.tracing import configure_tracing
 from lerim.context import ContextStore
 from lerim.context.query_spec import QUERY_ENTITIES, QUERY_MODES, QUERY_ORDER_FIELDS
-from lerim.working_memory import (
-    resolve_working_memory_project,
+from lerim.context_brief import (
+    resolve_context_brief_project,
     status_to_dict,
-    working_memory_paths,
-    working_memory_status,
+    context_brief_paths,
+    context_brief_status,
 )
+
+_LEGACY_COMMAND_ALIASES = {
+    "sync": "ingest",
+    "maintain": "curate",
+    "ask": "answer",
+    "working-memory": "context-brief",
+}
+_LEGACY_COMMAND_REMOVAL_VERSION = "v0.3.0"
 
 
 def _emit(message: object = "", *, file: Any | None = None) -> None:
     """Write one CLI output line to stdout or a provided file-like target."""
     target = file if file is not None else sys.stdout
     target.write(f"{message}\n")
+
+
+def _warn_if_legacy_command(args: argparse.Namespace) -> None:
+    """Emit a one-line deprecation notice for legacy command aliases."""
+    command = str(getattr(args, "command", "") or "")
+    replacement = _LEGACY_COMMAND_ALIASES.get(command)
+    if replacement:
+        _emit(
+            f"`lerim {command}` is deprecated; use `lerim {replacement}`. "
+            f"This alias will be removed in {_LEGACY_COMMAND_REMOVAL_VERSION}.",
+            file=sys.stderr,
+        )
 
 
 def _emit_structured(*, title: str, payload: dict[str, Any], as_json: bool) -> None:
@@ -222,8 +242,9 @@ def _cmd_connect(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_sync(args: argparse.Namespace) -> int:
-    """Forward sync request to the running Lerim server."""
+def _cmd_ingest(args: argparse.Namespace) -> int:
+    """Forward ingest request to the running Lerim server."""
+    _warn_if_legacy_command(args)
     body: dict[str, Any] = {
         "agent": getattr(args, "agent", None),
         "window": getattr(args, "window", None),
@@ -237,10 +258,10 @@ def _cmd_sync(args: argparse.Namespace) -> int:
         "blocking": True,
     }
     try:
-        data = _api_post("/api/sync", body)
+        data = _api_post("/api/ingest", body)
     except ApiClientError as error:
         return _api_request_failed(error)
-    _emit_structured(title="Sync:", payload=data, as_json=args.json)
+    _emit_structured(title="Ingest:", payload=data, as_json=args.json)
     if not args.json:
         queue_health = data.get("queue_health") or {}
         if queue_health.get("degraded"):
@@ -251,17 +272,18 @@ def _cmd_sync(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_maintain(args: argparse.Namespace) -> int:
-    """Forward maintain request to the running Lerim server."""
+def _cmd_curate(args: argparse.Namespace) -> int:
+    """Forward context curation request to the running Lerim server."""
+    _warn_if_legacy_command(args)
     body = {
         "dry_run": getattr(args, "dry_run", False),
         "blocking": True,
     }
     try:
-        data = _api_post("/api/maintain", body)
+        data = _api_post("/api/curate", body)
     except ApiClientError as error:
         return _api_request_failed(error)
-    _emit_structured(title="Maintain:", payload=data, as_json=args.json)
+    _emit_structured(title="Curate:", payload=data, as_json=args.json)
     if not args.json:
         queue_health = data.get("queue_health") or {}
         if queue_health.get("degraded"):
@@ -272,24 +294,26 @@ def _cmd_maintain(args: argparse.Namespace) -> int:
     return 0
 
 
-def _working_memory_project_from_args(args: argparse.Namespace) -> Any:
-    """Resolve the current Working Memory project for CLI commands."""
+def _context_brief_project_from_args(args: argparse.Namespace) -> Any:
+    """Resolve the current Context Brief project for CLI commands."""
     config = get_config()
-    return resolve_working_memory_project(
+    return resolve_context_brief_project(
         config=config,
         project=getattr(args, "project", None),
         cwd=Path.cwd(),
     )
 
 
-def _cmd_working_memory(args: argparse.Namespace) -> int:
-    """Handle local Working Memory commands."""
-    action = getattr(args, "working_memory_action", None)
+def _cmd_context_brief(args: argparse.Namespace) -> int:
+    """Handle local context brief commands."""
+    _warn_if_legacy_command(args)
+    action = getattr(args, "context_brief_action", None)
+    command = str(getattr(args, "command", None) or "context-brief")
     if not action:
-        _emit("Usage: lerim working-memory {show,status,path,refresh}", file=sys.stderr)
+        _emit(f"Usage: lerim {command} {{show,status,path,refresh}}", file=sys.stderr)
         return 2
     try:
-        project = _working_memory_project_from_args(args)
+        project = _context_brief_project_from_args(args)
     except ValueError as exc:
         if args.json:
             _emit(json.dumps({"error": True, "message": str(exc)}, indent=2))
@@ -298,7 +322,7 @@ def _cmd_working_memory(args: argparse.Namespace) -> int:
         return 1
 
     config = get_config()
-    paths = working_memory_paths(config, project.identity.project_id)
+    paths = context_brief_paths(config, project.identity.project_id)
 
     if action == "path":
         payload = {
@@ -317,10 +341,10 @@ def _cmd_working_memory(args: argparse.Namespace) -> int:
         if paths.current_file.is_file():
             store = ContextStore(config.context_db_path)
             status = status_to_dict(
-                working_memory_status(config=config, store=store, project=project)
+                context_brief_status(config=config, store=store, project=project)
             )
             preface = [
-                "Working Memory Live Status:",
+                "Context Brief Live Status:",
                 f"- availability: {status['availability']}",
                 f"- generated_at: {status['generated_at']}",
                 f"- age: {status['age']}",
@@ -328,7 +352,7 @@ def _cmd_working_memory(args: argparse.Namespace) -> int:
                     "- db_records_changed_since_generation: "
                     f"{status['records_changed_since_generation']}"
                 ),
-                f"- suggested_action: {working_memory_show_action(status)}",
+                f"- suggested_action: {context_brief_show_action(status)}",
                 "",
                 "---",
                 "",
@@ -339,8 +363,8 @@ def _cmd_working_memory(args: argparse.Namespace) -> int:
             )
             return 0
         message = (
-            f"No Working Memory generated yet for project `{project.name}`.\n"
-            "Run: lerim working-memory refresh"
+            f"No Context Brief generated yet for project `{project.name}`.\n"
+            "Run: lerim context-brief refresh"
         )
         if args.json:
             _emit(
@@ -362,18 +386,18 @@ def _cmd_working_memory(args: argparse.Namespace) -> int:
 
     if action == "status":
         store = ContextStore(config.context_db_path)
-        status = working_memory_status(config=config, store=store, project=project)
+        status = context_brief_status(config=config, store=store, project=project)
         payload = status_to_dict(status)
         if args.json:
             _emit(json.dumps(payload, indent=2, ensure_ascii=True))
         else:
-            _emit("Working Memory:")
+            _emit("Context Brief:")
             for key, value in payload.items():
                 _emit(f"- {key}: {value}")
         return 0
 
     if action == "refresh":
-        result = run_working_memory_for_project(
+        result = run_context_brief_for_project(
             project_name=project.name,
             project_path=project.identity.repo_path,
             trigger="manual",
@@ -383,29 +407,29 @@ def _cmd_working_memory(args: argparse.Namespace) -> int:
             _emit(json.dumps(result, indent=2, ensure_ascii=True))
         else:
             if result.get("status") == "skipped":
-                _emit(f"Working Memory skipped for {project.name}: {result.get('skip_reason')}")
+                _emit(f"Context Brief skipped for {project.name}: {result.get('skip_reason')}")
             elif result.get("status") == "failed":
-                _emit(f"Working Memory failed for {project.name}: {result.get('error')}", file=sys.stderr)
+                _emit(f"Context Brief failed for {project.name}: {result.get('error')}", file=sys.stderr)
                 return 1
             else:
-                _emit(f"Working Memory generated for {project.name}.")
+                _emit(f"Context Brief generated for {project.name}.")
             if result.get("current_file"):
                 _emit(f"- current_file: {result.get('current_file')}")
             if result.get("run_folder"):
                 _emit(f"- run_folder: {result.get('run_folder')}")
         return 0
 
-    _emit(f"Unknown working-memory action: {action}", file=sys.stderr)
+    _emit(f"Unknown context-brief action: {action}", file=sys.stderr)
     return 2
 
 
-def working_memory_show_action(status: dict[str, Any]) -> str:
+def context_brief_show_action(status: dict[str, Any]) -> str:
     """Return a contextual action for the already-running show command."""
     if status.get("availability") == "stale":
         return "Refresh if newest persisted DB context matters."
     if status.get("availability") == "available":
         return "Continue with this startup context; inspect sources or query deeper if needed."
-    return str(status.get("suggested_action") or "Run `lerim working-memory status`.")
+    return str(status.get("suggested_action") or "Run `lerim context-brief status`.")
 
 
 def _cmd_dashboard(args: argparse.Namespace) -> int:
@@ -415,12 +439,66 @@ def _cmd_dashboard(args: argparse.Namespace) -> int:
     print("  The new dashboard will be available at https://lerim.dev")
     print()
     print("  In the meantime, use these CLI commands:")
-    print("    lerim status     - system overview")
-    print("    lerim ask        - query your stored context")
-    print("    lerim queue      - view session processing queue")
-    print("    lerim sync       - process new sessions")
-    print("    lerim maintain   - refine stored records")
+    print("    lerim status        - system overview")
+    print("    lerim answer        - query your stored context")
+    print("    lerim queue         - view session processing queue")
+    print("    lerim ingest        - process new sessions")
+    print("    lerim curate        - refine stored records")
+    print("    lerim context-brief - read generated startup context")
     print()
+    return 0
+
+
+def _cmd_trace(args: argparse.Namespace) -> int:
+    """Handle host-only generic trace commands."""
+    action = getattr(args, "trace_action", None)
+    if action != "import":
+        _emit("Usage: lerim trace import <path>", file=sys.stderr)
+        return 2
+    from lerim.traces import import_trace_file
+
+    try:
+        result = import_trace_file(
+            trace_path=Path(args.path),
+            source_name=str(args.source_name),
+            source_profile=str(args.source_profile),
+            scope_type=str(args.scope_type),
+            scope=str(args.scope),
+            scope_label=getattr(args, "scope_label", None),
+            session_id=getattr(args, "session_id", None),
+        )
+    except Exception as exc:
+        if args.json:
+            _emit(
+                json.dumps(
+                    {"error": True, "message": str(exc), "type": type(exc).__name__},
+                    indent=2,
+                    ensure_ascii=True,
+                )
+            )
+        else:
+            _emit(f"Trace import failed: {exc}", file=sys.stderr)
+        return 1
+
+    payload = {
+        "error": False,
+        "trace_id": result.trace_id,
+        "session_id": result.session_id,
+        "normalized_trace_path": str(result.normalized_trace_path),
+        "scope_type": result.scope_identity.scope_type,
+        "scope_id": result.scope_identity.scope_id,
+        "scope_label": result.scope_identity.label,
+        **result.ingest_result,
+    }
+    if args.json:
+        _emit(json.dumps(payload, indent=2, ensure_ascii=True))
+    else:
+        _emit("Trace imported.")
+        _emit(f"- trace_id: {result.trace_id}")
+        _emit(f"- scope: {result.scope_identity.scope_key}")
+        _emit(f"- normalized_trace_path: {result.normalized_trace_path}")
+        _emit(f"- records_created: {payload.get('records_created', 0)}")
+        _emit(f"- run_folder: {payload.get('run_folder', '')}")
     return 0
 
 
@@ -429,15 +507,15 @@ def _normalize_scope(raw: str | None) -> str:
     return "project" if str(raw or "").strip().lower() == "project" else "all"
 
 
-def _render_ask_trace(debug: dict[str, Any]) -> list[str]:
-    """Render sanitized ask trace in notebook-style message order."""
+def _render_answer_trace(debug: dict[str, Any]) -> list[str]:
+    """Render sanitized answer trace in notebook-style message order."""
     messages = debug.get("messages") or []
     if not messages:
         return []
 
     lines = [
         "=" * 70,
-        f"ASK TRACE ({len(messages)} messages)",
+        f"ANSWER TRACE ({len(messages)} messages)",
         "=" * 70,
     ]
     for message in messages:
@@ -467,6 +545,14 @@ def _render_ask_trace(debug: dict[str, Any]) -> list[str]:
                     f"  [tool-return] {str(part.get('tool_name') or '?')} -> {content}"
                 )
                 continue
+            if part_kind in {"count", "list", "search"}:
+                content = part.get("content") if isinstance(part.get("content"), dict) else {}
+                result_count = content.get("result_count", "?")
+                lines.append(f"  [retrieval] {part_kind} results={result_count}")
+                continue
+            if part_kind in {"PlanContextRetrieval", "AnswerFromContext"}:
+                lines.append(f"  [baml] {part_kind}")
+                continue
             if part_kind == "text":
                 lines.append(f"  [text] {str(part.get('content') or '')}")
                 continue
@@ -474,8 +560,9 @@ def _render_ask_trace(debug: dict[str, Any]) -> list[str]:
     return lines
 
 
-def _cmd_ask(args: argparse.Namespace) -> int:
-    """Forward ask query to the running Lerim server."""
+def _cmd_answer(args: argparse.Namespace) -> int:
+    """Forward context answer query to the running Lerim server."""
+    _warn_if_legacy_command(args)
     scope = _normalize_scope(getattr(args, "scope", None))
     payload: dict[str, Any] = {
         "question": args.question,
@@ -486,7 +573,7 @@ def _cmd_ask(args: argparse.Namespace) -> int:
     if project:
         payload["project"] = str(project)
     try:
-        data = _api_post("/api/ask", payload)
+        data = _api_post("/api/answer", payload)
     except ApiClientError as error:
         return _api_request_failed(error)
     if data.get("error"):
@@ -498,7 +585,7 @@ def _cmd_ask(args: argparse.Namespace) -> int:
         _emit(data.get("answer", ""))
         if getattr(args, "verbose", False):
             debug = data.get("debug") or {}
-            trace_lines = _render_ask_trace(debug)
+            trace_lines = _render_answer_trace(debug)
             if trace_lines:
                 _emit("")
                 for line in trace_lines:
@@ -1221,7 +1308,7 @@ def _cmd_logs(args: argparse.Namespace) -> int:
     jsonl_paths = iter_log_files("lerim.jsonl")
     if not jsonl_paths and not getattr(args, "follow", False):
         _emit("No log file found. Logs will appear after Lerim runs.", file=sys.stderr)
-        return 1
+        return 0
 
     is_tty = sys.stdout.isatty()
     raw_json = getattr(args, "raw_json", False) or getattr(args, "json", False)
@@ -1350,30 +1437,30 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     stop_event = threading.Event()
 
     def _daemon_loop() -> None:
-        """Background daemon loop with independent sync and maintain intervals."""
+        """Background daemon loop with independent ingest and curate intervals."""
         from lerim.config.logging import logger
         from lerim.server.api import ollama_lifecycle
 
-        sync_interval = max(config.sync_interval_minutes * 60, 30)
-        maintain_interval = max(config.maintain_interval_minutes * 60, 30)
-        working_memory_interval = 24 * 60 * 60
+        ingest_interval = max(config.ingest_interval_minutes * 60, 30)
+        curate_interval = max(config.curate_interval_minutes * 60, 30)
+        context_brief_interval = 24 * 60 * 60
 
         # Initialise to (now - interval) so both trigger on the first
         # iteration regardless of the monotonic clock epoch.  In Docker
         # containers the monotonic clock reflects VM uptime which can be
-        # smaller than maintain_interval, causing the first maintain to
+        # smaller than curate_interval, causing the first curate to
         # be silently skipped when initialised to 0.0.
         _now_init = time.monotonic()
-        last_sync = _now_init - sync_interval
-        last_maintain = _now_init - maintain_interval
-        last_working_memory = _now_init - working_memory_interval
+        last_ingest = _now_init - ingest_interval
+        last_curate = _now_init - curate_interval
+        last_context_brief = _now_init - context_brief_interval
         last_degraded_log_at = 0.0
         degraded_log_interval_seconds = 300.0
 
         logger.info(
-            "daemon loop started (sync every {}s, maintain every {}s)",
-            sync_interval,
-            maintain_interval,
+            "daemon loop started (ingest every {}s, curate every {}s)",
+            ingest_interval,
+            curate_interval,
         )
         if reaped_at_startup > 0:
             logger.warning(
@@ -1384,21 +1471,21 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         while not stop_event.is_set():
             now = time.monotonic()
 
-            if now - last_sync >= sync_interval:
+            if now - last_ingest >= ingest_interval:
                 try:
                     window_start, window_end = resolve_window_bounds(
-                        window=f"{config.sync_window_days}d",
+                        window=f"{config.ingest_window_days}d",
                         since_raw=None,
                         until_raw=None,
                         parse_duration_to_seconds=parse_duration_to_seconds,
                     )
                     with ollama_lifecycle(config):
-                        _code, summary = run_sync_once(
+                        _code, summary = run_ingest_once(
                             run_id=None,
                             agent_filter=None,
                             no_extract=False,
                             force=False,
-                            max_sessions=config.sync_max_sessions,
+                            max_sessions=config.ingest_max_sessions,
                             dry_run=False,
                             ignore_lock=False,
                             trigger="daemon",
@@ -1406,36 +1493,36 @@ def _cmd_serve(args: argparse.Namespace) -> int:
                             window_end=window_end,
                         )
                     logger.info(
-                        "daemon sync done — indexed={} extracted={} skipped={} failed={}",
+                        "daemon ingest done — indexed={} extracted={} skipped={} failed={}",
                         summary.indexed_sessions,
                         summary.extracted_sessions,
                         summary.skipped_sessions,
                         summary.failed_sessions,
                     )
                 except Exception as exc:
-                    logger.warning("daemon sync error: {}", exc)
-                last_sync = time.monotonic()
+                    logger.warning("daemon ingest error: {}", exc)
+                last_ingest = time.monotonic()
 
-            if now - last_maintain >= maintain_interval:
+            if now - last_curate >= curate_interval:
                 try:
                     with ollama_lifecycle(config):
-                        _code, details = run_maintain_once(
+                        _code, details = run_curate_once(
                             dry_run=False,
                             trigger="daemon",
                         )
-                    logger.info("daemon maintain done — {}", details)
+                    logger.info("daemon curate done — {}", details)
                 except Exception as exc:
-                    logger.warning("daemon maintain error: {}", exc)
-                last_maintain = time.monotonic()
+                    logger.warning("daemon curate error: {}", exc)
+                last_curate = time.monotonic()
 
-            if now - last_working_memory >= working_memory_interval:
+            if now - last_context_brief >= context_brief_interval:
                 try:
                     with ollama_lifecycle(config):
-                        details = run_working_memory_daily(trigger="daily")
-                    logger.info("daemon working-memory done — {}", details)
+                        details = run_context_brief_daily(trigger="daily")
+                    logger.info("daemon context-brief done — {}", details)
                 except Exception as exc:
-                    logger.warning("daemon working-memory error: {}", exc)
-                last_working_memory = time.monotonic()
+                    logger.warning("daemon context-brief error: {}", exc)
+                last_context_brief = time.monotonic()
 
             # Ship to cloud (best-effort)
             if config.cloud_token:
@@ -1445,9 +1532,9 @@ def _cmd_serve(args: argparse.Namespace) -> int:
 
                     results = asyncio.run(ship_once(config))
                     if results:
-                        logger.info("cloud sync: {}", results)
+                        logger.info("cloud ship: {}", results)
                 except Exception as exc:
-                    logger.warning("cloud sync error: {}", exc)
+                    logger.warning("cloud ship error: {}", exc)
 
             queue_health = queue_health_snapshot()
             if (
@@ -1462,12 +1549,13 @@ def _cmd_serve(args: argparse.Namespace) -> int:
                 )
                 last_degraded_log_at = now
 
-            next_sync = last_sync + sync_interval
-            next_maintain = last_maintain + maintain_interval
-            next_working_memory = last_working_memory + working_memory_interval
+            next_ingest = last_ingest + ingest_interval
+            next_curate = last_curate + curate_interval
+            next_context_brief = last_context_brief + context_brief_interval
             sleep_for = max(
                 1.0,
-                min(next_sync, next_maintain, next_working_memory) - time.monotonic(),
+                min(next_ingest, next_curate, next_context_brief)
+                - time.monotonic(),
             )
             stop_event.wait(sleep_for)
 
@@ -1561,6 +1649,75 @@ def _add_dry_run_flag(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_ingest_args(parser: argparse.ArgumentParser, *, config: Any) -> None:
+    """Add ingest-compatible session discovery arguments to *parser*."""
+    parser.add_argument(
+        "--run-id",
+        help="Target a single session by its run ID. Bypasses the normal index scan "
+        "and fetches this session directly. Use with --force to re-extract.",
+    )
+    parser.add_argument(
+        "--agent",
+        help="Comma-separated list of platforms to ingest (e.g. 'claude,codex'). "
+        "Omit to ingest all connected platforms.",
+    )
+    parser.add_argument(
+        "--window",
+        default=None,
+        help="Time window for session discovery. Accepts durations like 30s, 2m, 1h, 7d, "
+        "or the literal 'all' to scan every session. Ignored when --since is set. "
+        f"(default: ingest_window_days from config, currently {config.ingest_window_days}d)",
+    )
+    parser.add_argument(
+        "--since",
+        help="Absolute start bound (ISO-8601, e.g. 2026-02-01T00:00:00Z). Overrides --window.",
+    )
+    parser.add_argument(
+        "--until",
+        help="Absolute end bound (ISO-8601). Defaults to now if omitted. Only used with --since.",
+    )
+    parser.add_argument(
+        "--max-sessions",
+        type=int,
+        default=None,
+        help="Maximum number of sessions to extract in one run. "
+        f"(default: ingest_max_sessions from config, currently {config.ingest_max_sessions})",
+    )
+    parser.add_argument(
+        "--no-extract",
+        action="store_true",
+        help="Index and enqueue sessions but skip extraction entirely. "
+        "Useful to populate the queue without creating records yet.",
+    )
+    _add_force_flag(parser)
+    _add_dry_run_flag(parser)
+
+
+def _add_context_brief_subcommands(parser: argparse.ArgumentParser) -> None:
+    """Add shared context-brief subcommands to canonical and legacy parsers."""
+    brief_sub = parser.add_subparsers(dest="context_brief_action")
+    for action_name in ("show", "status", "path"):
+        action = brief_sub.add_parser(
+            action_name,
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            help=f"{action_name} Context Brief",
+        )
+        action.add_argument(
+            "--project",
+            help="Registered project name or path. Defaults to cwd project.",
+        )
+    refresh = brief_sub.add_parser(
+        "refresh",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        help="Generate Context Brief for the resolved project",
+    )
+    refresh.add_argument(
+        "--project",
+        help="Registered project name or path. Defaults to cwd project.",
+    )
+    _add_force_flag(refresh)
+
+
 def _add_dead_letter_args(parser: argparse.ArgumentParser, *, verb: str) -> None:
     """Add run_id, --project, and --all arguments for dead-letter commands."""
     parser.add_argument(
@@ -1586,9 +1743,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="lerim",
         formatter_class=_F,
-        description="Lerim -- continual learning layer for coding agents.\n"
-        "Indexes agent sessions, extracts context records, and answers questions\n"
-        "using accumulated project knowledge.",
+        description="Lerim -- trace-to-context layer for agents.\n"
+        "Ingests agent sessions, extracts durable context, and answers questions\n"
+        "using accumulated operational knowledge.",
     )
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {__version__}"
@@ -1596,9 +1753,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--json",
         action="store_true",
-        help="Emit structured JSON instead of human-readable text (works with status, ask, sync, etc.)",
+        help="Emit structured JSON instead of human-readable text (works with status, answer, ingest, etc.)",
     )
-    sub = parser.add_subparsers(dest="command")
+    sub = parser.add_subparsers(dest="command", metavar="<command>")
 
     # ── connect ──────────────────────────────────────────────────────
     connect = sub.add_parser(
@@ -1629,113 +1786,148 @@ def build_parser() -> argparse.ArgumentParser:
     )
     connect.set_defaults(func=_cmd_connect)
 
-    # ── sync ─────────────────────────────────────────────────────────
-    sync = sub.add_parser(
-        "sync",
+    # ── ingest ───────────────────────────────────────────────────────
+    ingest = sub.add_parser(
+        "ingest",
         formatter_class=_F,
-        help="Index new sessions and extract context records (hot path)",
+        help="Ingest new sessions and extract context records (hot path)",
         description=(
             "Index new sessions and extract context records via BAML/LangGraph.\n\n"
             "Examples:\n"
-            "  lerim sync                      # default 7d window\n"
-            "  lerim sync --window 30d         # last 30 days\n"
-            "  lerim sync --agent claude,codex # filter platforms"
+            "  lerim ingest                      # default 7d window\n"
+            "  lerim ingest --window 30d         # last 30 days\n"
+            "  lerim ingest --agent claude,codex # filter platforms"
         ),
     )
-    sync.add_argument(
-        "--run-id",
-        help="Target a single session by its run ID. Bypasses the normal index scan "
-        "and fetches this session directly. Use with --force to re-extract.",
-    )
-    sync.add_argument(
-        "--agent",
-        help="Comma-separated list of platforms to sync (e.g. 'claude,codex'). "
-        "Omit to sync all connected platforms.",
-    )
-    sync.add_argument(
-        "--window",
-        default=None,
-        help="Time window for session discovery. Accepts durations like 30s, 2m, 1h, 7d, "
-        "or the literal 'all' to scan every session. Ignored when --since is set. "
-        f"(default: sync_window_days from config, currently {config.sync_window_days}d)",
-    )
-    sync.add_argument(
-        "--since",
-        help="Absolute start bound (ISO-8601, e.g. 2026-02-01T00:00:00Z). Overrides --window.",
-    )
-    sync.add_argument(
-        "--until",
-        help="Absolute end bound (ISO-8601). Defaults to now if omitted. Only used with --since.",
-    )
-    sync.add_argument(
-        "--max-sessions",
-        type=int,
-        default=None,
-        help="Maximum number of sessions to extract in one run. "
-        f"(default: sync_max_sessions from config, currently {config.sync_max_sessions})",
-    )
-    sync.add_argument(
-        "--no-extract",
-        action="store_true",
-        help="Index and enqueue sessions but skip extraction entirely. "
-        "Useful to populate the queue without creating records yet.",
-    )
-    _add_force_flag(sync)
-    _add_dry_run_flag(sync)
-    sync.set_defaults(func=_cmd_sync)
+    _add_ingest_args(ingest, config=config)
+    ingest.set_defaults(func=_cmd_ingest)
 
-    # ── maintain ─────────────────────────────────────────────────────
-    maintain = sub.add_parser(
-        "maintain",
+    ingest_alias = sub.add_parser(
+        "sync",
+        formatter_class=_F,
+        help="Deprecated alias for `lerim ingest`",
+        description=(
+            "`lerim sync` is a deprecated compatibility alias for `lerim ingest`.\n\n"
+            "Examples:\n"
+            "  lerim ingest                      # default 7d window\n"
+            "  lerim ingest --window 30d         # last 30 days"
+        ),
+    )
+    _add_ingest_args(ingest_alias, config=config)
+    ingest_alias.set_defaults(func=_cmd_ingest)
+
+    # ── trace ────────────────────────────────────────────────────────
+    trace = sub.add_parser(
+        "trace",
+        formatter_class=_F,
+        help="Import explicit generic agent traces",
+        description=(
+            "Import a JSON or JSONL trace from any agent, normalize it, and extract "
+            "scoped context records.\n\n"
+            "Example:\n"
+            "  lerim trace import trace.jsonl --source-name support-bot "
+            "--source-profile generic --scope-type domain --scope support"
+        ),
+    )
+    trace_sub = trace.add_subparsers(dest="trace_action")
+    trace_import = trace_sub.add_parser(
+        "import",
+        formatter_class=_F,
+        help="Normalize and extract one explicit trace file",
+    )
+    trace_import.add_argument("path", help="Path to a JSON, JSONL, or text trace file.")
+    trace_import.add_argument(
+        "--source-name",
+        required=True,
+        help="Source agent/system name, for example support-bot or browser-agent.",
+    )
+    trace_import.add_argument(
+        "--source-profile",
+        required=True,
+        help="Source profile/category, for example generic, support, research, or web.",
+    )
+    trace_import.add_argument(
+        "--scope-type",
+        required=True,
+        choices=["project", "domain", "user", "session", "workspace", "custom"],
+        help="Context isolation type for imported records.",
+    )
+    trace_import.add_argument(
+        "--scope",
+        required=True,
+        help="Scope token. For project scope, pass a repo path.",
+    )
+    trace_import.add_argument(
+        "--scope-label",
+        help="Optional human label for this scope.",
+    )
+    trace_import.add_argument(
+        "--session-id",
+        help="Optional stable session id. Defaults to the normalized trace id.",
+    )
+    trace.set_defaults(func=_cmd_trace)
+    trace_import.set_defaults(func=_cmd_trace)
+
+    # ── curate ───────────────────────────────────────────────────────
+    curate = sub.add_parser(
+        "curate",
         formatter_class=_F,
         help="Refine existing records offline (cold path)",
         description=(
             "Offline record refinement: merge duplicates, archive low-value items.\n\n"
             "Examples:\n"
-            "  lerim maintain            # one pass\n"
-            "  lerim maintain --dry-run  # preview only"
+            "  lerim curate            # one pass\n"
+            "  lerim curate --dry-run  # preview only"
         ),
     )
-    _add_dry_run_flag(maintain)
-    maintain.set_defaults(func=_cmd_maintain)
+    _add_dry_run_flag(curate)
+    curate.set_defaults(func=_cmd_curate)
 
-    # ── working-memory ───────────────────────────────────────────────
-    working_memory = sub.add_parser(
+    curate_alias = sub.add_parser(
+        "maintain",
+        formatter_class=_F,
+        help="Deprecated alias for `lerim curate`",
+        description=(
+            "`lerim maintain` is a deprecated compatibility alias for `lerim curate`.\n\n"
+            "Examples:\n"
+            "  lerim curate            # one pass\n"
+            "  lerim curate --dry-run  # preview only"
+        ),
+    )
+    _add_dry_run_flag(curate_alias)
+    curate_alias.set_defaults(func=_cmd_curate)
+
+    # ── context-brief ────────────────────────────────────────────────
+    context_brief = sub.add_parser(
+        "context-brief",
+        formatter_class=_F,
+        help="Read or refresh generated startup context",
+        description=(
+            "Generated markdown startup context for agents.\n\n"
+            "Examples:\n"
+            "  lerim context-brief show\n"
+            "  lerim context-brief status\n"
+            "  lerim context-brief refresh --force"
+        ),
+    )
+    _add_context_brief_subcommands(context_brief)
+    context_brief.set_defaults(func=_cmd_context_brief)
+
+    context_brief_alias = sub.add_parser(
         "working-memory",
         formatter_class=_F,
-        help="Read or refresh generated project Working Memory",
+        help="Deprecated alias for `lerim context-brief`",
         description=(
-            "Generated markdown startup context for coding agents.\n\n"
+            "`lerim working-memory` is a deprecated compatibility alias for "
+            "`lerim context-brief`.\n\n"
             "Examples:\n"
-            "  lerim working-memory show\n"
-            "  lerim working-memory status\n"
-            "  lerim working-memory refresh --force"
+            "  lerim context-brief show\n"
+            "  lerim context-brief status\n"
+            "  lerim context-brief refresh --force"
         ),
     )
-    working_memory_sub = working_memory.add_subparsers(
-        dest="working_memory_action"
-    )
-    for action_name in ("show", "status", "path"):
-        action = working_memory_sub.add_parser(
-            action_name,
-            formatter_class=_F,
-            help=f"{action_name} Working Memory",
-        )
-        action.add_argument(
-            "--project",
-            help="Registered project name or path. Defaults to cwd project.",
-        )
-    wm_refresh = working_memory_sub.add_parser(
-        "refresh",
-        formatter_class=_F,
-        help="Generate Working Memory for the resolved project",
-    )
-    wm_refresh.add_argument(
-        "--project",
-        help="Registered project name or path. Defaults to cwd project.",
-    )
-    _add_force_flag(wm_refresh)
-    working_memory.set_defaults(func=_cmd_working_memory)
+    _add_context_brief_subcommands(context_brief_alias)
+    context_brief_alias.set_defaults(func=_cmd_context_brief)
 
     # ── dashboard ────────────────────────────────────────────────────
     dashboard = sub.add_parser(
@@ -1746,32 +1938,56 @@ def build_parser() -> argparse.ArgumentParser:
     )
     dashboard.set_defaults(func=_cmd_dashboard)
 
-    # ── ask ──────────────────────────────────────────────────────────
-    ask = sub.add_parser(
-        "ask",
+    # ── answer ───────────────────────────────────────────────────────
+    answer = sub.add_parser(
+        "answer",
         formatter_class=_F,
-        help="Ask a question using stored context records",
+        help="Answer a question using stored context records",
         description=(
             "Query Lerim using stored context records.\n\n"
-            "Example: lerim ask 'What auth pattern do we use?'"
+            "Example: lerim answer 'What auth pattern do we use?'"
         ),
     )
-    ask.add_argument(
+    answer.add_argument(
         "question", help="Your question (use quotes if it contains spaces)."
     )
-    ask.add_argument(
+    answer.add_argument(
         "--scope",
         choices=["all", "project"],
         default="all",
         help="Read scope: all projects (default) or one project.",
     )
-    ask.add_argument("--project", help="Project name/path when --scope=project.")
-    ask.add_argument(
+    answer.add_argument("--project", help="Project name/path when --scope=project.")
+    answer.add_argument(
         "--verbose",
         action="store_true",
-        help="Show ask tool calls and concise tool results.",
+        help="Show context-answerer retrieval steps and concise results.",
     )
-    ask.set_defaults(func=_cmd_ask)
+    answer.set_defaults(func=_cmd_answer)
+
+    answer_alias = sub.add_parser(
+        "ask",
+        formatter_class=_F,
+        help="Deprecated alias for `lerim answer`",
+        description=(
+            "`lerim ask` is a deprecated compatibility alias for `lerim answer`.\n\n"
+            "Example: lerim answer 'What auth pattern do we use?'"
+        ),
+    )
+    answer_alias.add_argument("question", help="Your question (use quotes if it contains spaces).")
+    answer_alias.add_argument(
+        "--scope",
+        choices=["all", "project"],
+        default="all",
+        help="Read scope: all projects (default) or one project.",
+    )
+    answer_alias.add_argument("--project", help="Project name/path when --scope=project.")
+    answer_alias.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Show context-answerer retrieval steps and concise results.",
+    )
+    answer_alias.set_defaults(func=_cmd_answer)
 
     # ── query ────────────────────────────────────────────────────────
     query = sub.add_parser(
@@ -2131,11 +2347,15 @@ def main(argv: list[str] | None = None) -> int:
         parser.parse_args([args.command, "--help"])
         return 0
 
-    if args.command == "working-memory" and not getattr(
+    if args.command in {"context-brief", "working-memory"} and not getattr(
         args,
-        "working_memory_action",
+        "context_brief_action",
         None,
     ):
+        parser.parse_args([args.command, "--help"])
+        return 0
+
+    if args.command == "trace" and not getattr(args, "trace_action", None):
         parser.parse_args([args.command, "--help"])
         return 0
 

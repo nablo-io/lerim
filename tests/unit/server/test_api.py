@@ -1,5 +1,5 @@
 """Unit tests for api.py functions: detect_agents, write_init_config,
-api_sync, api_maintain, api_health, api_status, api_project_*,
+api_ingest, api_curate, api_health, api_status, api_project_*,
 api_retry_all_dead_letter, api_skip_all_dead_letter, looks_like_auth_error,
 and Docker runtime exports.
 
@@ -30,7 +30,7 @@ from lerim.server.api import (
     api_connect,
     api_connect_list,
     api_health,
-    api_maintain,
+    api_curate,
     api_memory_reset,
     api_project_add,
     api_project_list,
@@ -38,13 +38,13 @@ from lerim.server.api import (
     api_retry_all_dead_letter,
     api_skip_all_dead_letter,
     api_status,
-    api_sync,
+    api_ingest,
     detect_agents,
     looks_like_auth_error,
     write_init_config,
 )
 from lerim.server.docker_runtime import docker_available
-from lerim.server.daemon import SyncSummary
+from lerim.server.daemon import IngestSummary
 from tests.helpers import make_config
 
 
@@ -216,16 +216,16 @@ def test_docker_available_timeout(monkeypatch) -> None:
 
 
 # ---------------------------------------------------------------------------
-# api_sync
+# api_ingest
 # ---------------------------------------------------------------------------
 
 
-def test_api_sync_returns_code_and_summary(monkeypatch, tmp_path) -> None:
-    """api_sync calls run_sync_once and returns code + summary dict."""
+def test_api_ingest_returns_code_and_summary(monkeypatch, tmp_path) -> None:
+    """api_ingest calls run_ingest_once and returns code + summary dict."""
     cfg = make_config(tmp_path)
     monkeypatch.setattr(api_mod, "get_config", lambda: cfg)
 
-    summary = SyncSummary(
+    summary = IngestSummary(
         indexed_sessions=2,
         extracted_sessions=1,
         skipped_sessions=0,
@@ -233,80 +233,80 @@ def test_api_sync_returns_code_and_summary(monkeypatch, tmp_path) -> None:
         run_ids=["r1"],
         cost_usd=0.005,
     )
-    monkeypatch.setattr(api_mod, "run_sync_once", lambda **kw: (0, summary))
+    monkeypatch.setattr(api_mod, "run_ingest_once", lambda **kw: (0, summary))
     monkeypatch.setattr(api_mod, "ollama_lifecycle", _noop_lifecycle)
     _stub_status_catalog(monkeypatch)
 
-    result = api_sync(agent="claude", window="7d")
+    result = api_ingest(agent="claude", window="7d")
 
     assert result["code"] == 0
     assert result["extracted_sessions"] == 1
 
 
-def test_api_sync_dry_run(monkeypatch, tmp_path) -> None:
-    """api_sync passes dry_run flag through to run_sync_once."""
+def test_api_ingest_dry_run(monkeypatch, tmp_path) -> None:
+    """api_ingest passes dry_run flag through to run_ingest_once."""
     cfg = make_config(tmp_path)
     monkeypatch.setattr(api_mod, "get_config", lambda: cfg)
 
     captured_kwargs: dict[str, Any] = {}
 
-    def fake_sync(**kwargs):
-        """Capture sync arguments."""
+    def fake_ingest(**kwargs):
+        """Capture ingest arguments."""
         captured_kwargs.update(kwargs)
-        return (0, SyncSummary(0, 0, 0, 0, []))
+        return (0, IngestSummary(0, 0, 0, 0, []))
 
-    monkeypatch.setattr(api_mod, "run_sync_once", fake_sync)
+    monkeypatch.setattr(api_mod, "run_ingest_once", fake_ingest)
     monkeypatch.setattr(api_mod, "ollama_lifecycle", _noop_lifecycle)
     _stub_status_catalog(monkeypatch)
 
-    api_sync(dry_run=True)
+    api_ingest(dry_run=True)
 
     assert captured_kwargs["dry_run"] is True
 
 
-def test_api_sync_force_flag(monkeypatch, tmp_path) -> None:
-    """api_sync passes force flag through to run_sync_once."""
+def test_api_ingest_force_flag(monkeypatch, tmp_path) -> None:
+    """api_ingest passes force flag through to run_ingest_once."""
     cfg = make_config(tmp_path)
     monkeypatch.setattr(api_mod, "get_config", lambda: cfg)
 
     captured_kwargs: dict[str, Any] = {}
 
-    def fake_sync(**kwargs):
-        """Capture sync arguments."""
+    def fake_ingest(**kwargs):
+        """Capture ingest arguments."""
         captured_kwargs.update(kwargs)
-        return (0, SyncSummary(0, 0, 0, 0, []))
+        return (0, IngestSummary(0, 0, 0, 0, []))
 
-    monkeypatch.setattr(api_mod, "run_sync_once", fake_sync)
+    monkeypatch.setattr(api_mod, "run_ingest_once", fake_ingest)
     monkeypatch.setattr(api_mod, "ollama_lifecycle", _noop_lifecycle)
     _stub_status_catalog(monkeypatch)
 
-    api_sync(force=True)
+    api_ingest(force=True)
 
     assert captured_kwargs["force"] is True
 
 
-def test_api_ask_includes_debug_when_verbose(monkeypatch, tmp_path) -> None:
-    """api_ask should pass verbose through to runtime ask and expose debug payload."""
+def test_api_answer_includes_debug_when_verbose(monkeypatch, tmp_path) -> None:
+    """api_answer should pass verbose through to runtime answer and expose debug payload."""
     cfg = make_config(tmp_path)
     monkeypatch.setattr(api_mod, "get_config", lambda: cfg)
     monkeypatch.setattr(api_mod, "_resolve_selected_projects", lambda **kw: [])
 
     class _FakeRuntime:
-        def ask(self, question, project_ids=None, repo_root=None, include_debug=False):
+        def answer(self, question, project_ids=None, repo_root=None, include_debug=False):
             assert question == "how many records"
             assert include_debug is True
             return (
                 "3 records",
                 "sid-1",
                 0.0,
-                {"tool_calls": [{"tool_name": "count_context"}], "tool_results": []},
+                {"retrieval_actions": [{"action_type": "count", "result_count": 3}]},
             )
 
     monkeypatch.setattr(api_mod, "LerimRuntime", lambda: _FakeRuntime())
 
-    payload = api_mod.api_ask("how many records", verbose=True)
+    payload = api_mod.api_answer("how many records", verbose=True)
     assert payload["answer"] == "3 records"
-    assert payload["debug"]["tool_calls"][0]["tool_name"] == "count_context"
+    assert payload["debug"]["retrieval_actions"][0]["action_type"] == "count"
 
 
 def test_api_query_empty_project_selection_returns_empty_scope(
@@ -373,12 +373,12 @@ def test_api_query_storage_error_returns_structured_failure(
     assert payload["message"] == "Context query storage is unavailable."
 
 
-def test_api_sync_includes_queue_health_warning(monkeypatch, tmp_path) -> None:
-    """Sync API response surfaces degraded queue warning hints."""
+def test_api_ingest_includes_queue_health_warning(monkeypatch, tmp_path) -> None:
+    """Ingest API response surfaces degraded queue warning hints."""
     cfg = make_config(tmp_path)
     monkeypatch.setattr(api_mod, "get_config", lambda: cfg)
     monkeypatch.setattr(
-        api_mod, "run_sync_once", lambda **kw: (0, SyncSummary(0, 0, 0, 0, []))
+        api_mod, "run_ingest_once", lambda **kw: (0, IngestSummary(0, 0, 0, 0, []))
     )
     monkeypatch.setattr(api_mod, "ollama_lifecycle", _noop_lifecycle)
     monkeypatch.setattr(
@@ -386,62 +386,62 @@ def test_api_sync_includes_queue_health_warning(monkeypatch, tmp_path) -> None:
         "queue_health_snapshot",
         lambda: {"degraded": True, "advice": "run `lerim queue --failed`"},
     )
-    result = api_sync()
+    result = api_ingest()
     assert result["queue_health"]["degraded"] is True
     assert "warning" in result
 
 
 # ---------------------------------------------------------------------------
-# api_maintain
+# api_curate
 # ---------------------------------------------------------------------------
 
 
-def test_api_maintain_returns_code_and_payload(monkeypatch, tmp_path) -> None:
-    """api_maintain calls run_maintain_once and returns code + payload."""
+def test_api_curate_returns_code_and_payload(monkeypatch, tmp_path) -> None:
+    """api_curate calls run_curate_once and returns code + payload."""
     cfg = make_config(tmp_path)
     monkeypatch.setattr(api_mod, "get_config", lambda: cfg)
     monkeypatch.setattr(
         api_mod,
-        "run_maintain_once",
+        "run_curate_once",
         lambda **kw: (0, {"projects": {"test": {"counts": {}}}}),
     )
     monkeypatch.setattr(api_mod, "ollama_lifecycle", _noop_lifecycle)
     _stub_status_catalog(monkeypatch)
 
-    result = api_maintain()
+    result = api_curate()
 
     assert result["code"] == 0
     assert "projects" in result
 
 
-def test_api_maintain_dry_run(monkeypatch, tmp_path) -> None:
-    """api_maintain passes dry_run through."""
+def test_api_curate_dry_run(monkeypatch, tmp_path) -> None:
+    """api_curate passes dry_run through."""
     cfg = make_config(tmp_path)
     monkeypatch.setattr(api_mod, "get_config", lambda: cfg)
 
     captured: dict[str, Any] = {}
 
-    def fake_maintain(**kwargs):
-        """Capture maintain arguments."""
+    def fake_curate(**kwargs):
+        """Capture curate arguments."""
         captured.update(kwargs)
         return (0, {"dry_run": True})
 
-    monkeypatch.setattr(api_mod, "run_maintain_once", fake_maintain)
+    monkeypatch.setattr(api_mod, "run_curate_once", fake_curate)
     monkeypatch.setattr(api_mod, "ollama_lifecycle", _noop_lifecycle)
     _stub_status_catalog(monkeypatch)
 
-    api_maintain(dry_run=True)
+    api_curate(dry_run=True)
 
     assert captured["dry_run"] is True
     assert set(captured) == {"dry_run"}
 
 
-def test_api_maintain_includes_queue_health_warning(monkeypatch, tmp_path) -> None:
-    """Maintain API response surfaces degraded queue warning hints."""
+def test_api_curate_includes_queue_health_warning(monkeypatch, tmp_path) -> None:
+    """Curate API response surfaces degraded queue warning hints."""
     cfg = make_config(tmp_path)
     monkeypatch.setattr(api_mod, "get_config", lambda: cfg)
     monkeypatch.setattr(
-        api_mod, "run_maintain_once", lambda **kw: (0, {"projects": {}})
+        api_mod, "run_curate_once", lambda **kw: (0, {"projects": {}})
     )
     monkeypatch.setattr(api_mod, "ollama_lifecycle", _noop_lifecycle)
     monkeypatch.setattr(
@@ -449,7 +449,7 @@ def test_api_maintain_includes_queue_health_warning(monkeypatch, tmp_path) -> No
         "queue_health_snapshot",
         lambda: {"degraded": True, "advice": "run `lerim queue --failed`"},
     )
-    result = api_maintain()
+    result = api_curate()
     assert result["queue_health"]["degraded"] is True
     assert "warning" in result
 
@@ -495,14 +495,14 @@ def test_api_status_returns_expected_keys(
     assert result["record_count"] == 1
     assert result["sessions_indexed_count"] == 5
     assert result["queue"] == {"pending": 0, "done": 3}
-    assert result["sync_window_days"] == cfg.sync_window_days
-    assert result["schedule"]["sync"]["interval_minutes"] == cfg.sync_interval_minutes
-    assert result["schedule"]["sync"]["seconds_until_next"] == 0
+    assert result["ingest_window_days"] == cfg.ingest_window_days
+    assert result["schedule"]["ingest"]["interval_minutes"] == cfg.ingest_interval_minutes
+    assert result["schedule"]["ingest"]["seconds_until_next"] == 0
     assert (
-        result["schedule"]["maintain"]["interval_minutes"]
-        == cfg.maintain_interval_minutes
+        result["schedule"]["curate"]["interval_minutes"]
+        == cfg.curate_interval_minutes
     )
-    assert result["schedule"]["maintain"]["seconds_until_next"] == 0
+    assert result["schedule"]["curate"]["seconds_until_next"] == 0
     assert "queue_health" in result
     assert result["scope"]["strict_project_only"] is True
 
@@ -544,15 +544,15 @@ def test_api_status_degrades_when_session_catalog_unavailable(
     assert result["recent_activity"] == []
 
 
-def test_api_maintain_degrades_when_queue_health_unavailable(
+def test_api_curate_degrades_when_queue_health_unavailable(
     monkeypatch, tmp_path
 ) -> None:
-    """api_maintain still returns its payload when queue health cannot read."""
+    """api_curate still returns its payload when queue health cannot read."""
     cfg = make_config(tmp_path)
     monkeypatch.setattr(api_mod, "get_config", lambda: cfg)
     monkeypatch.setattr(
         api_mod,
-        "run_maintain_once",
+        "run_curate_once",
         lambda dry_run: (0, {"dry_run": dry_run}),
     )
 
@@ -562,7 +562,7 @@ def test_api_maintain_degrades_when_queue_health_unavailable(
 
     monkeypatch.setattr(api_mod, "queue_health_snapshot", broken_queue_health)
 
-    result = api_maintain(dry_run=True)
+    result = api_curate(dry_run=True)
 
     assert result["code"] == 0
     assert result["dry_run"] is True
@@ -570,10 +570,10 @@ def test_api_maintain_degrades_when_queue_health_unavailable(
     assert result["queue_health"]["error"]
 
 
-def test_api_status_scope_skipped_unscoped_from_latest_sync(
+def test_api_status_scope_skipped_unscoped_from_latest_ingest(
     monkeypatch, tmp_path
 ) -> None:
-    """Status exposes strict-scope skipped counter from latest sync details."""
+    """Status exposes strict-scope skipped counter from latest ingest details."""
     cfg = make_config(tmp_path)
     monkeypatch.setattr(api_mod, "get_config", lambda: cfg)
     monkeypatch.setattr(api_mod, "list_platforms", lambda path: [])
@@ -583,15 +583,50 @@ def test_api_status_scope_skipped_unscoped_from_latest_sync(
         api_mod,
         "latest_service_run",
         lambda svc: (
-            {"details": {"sync_metrics": {"skipped_unscoped": 7}}}
-            if svc == "sync"
+            {"details": {"ingest_metrics": {"skipped_unscoped": 7}}}
+            if svc == "ingest"
             else None
         ),
     )
     _stub_status_catalog(monkeypatch)
     result = api_status()
     assert result["scope"]["skipped_unscoped"] == 7
-    assert result["latest_sync"]["details"]["skipped_unscoped"] == 7
+    assert result["latest_ingest"]["details"]["skipped_unscoped"] == 7
+
+
+def test_api_status_normalizes_non_curate_history_to_ingest(
+    monkeypatch, tmp_path
+) -> None:
+    """Status should not leak stale pre-canonical service run type names."""
+    cfg = make_config(tmp_path)
+    run = {
+        "id": 123,
+        "job_type": "old-ingest-row",
+        "status": "completed",
+        "started_at": "2026-05-16T07:00:00+00:00",
+        "completed_at": "2026-05-16T07:01:00+00:00",
+        "trigger": "daemon",
+        "details": {
+            "projects_metrics": {"proj-a": {"sessions_analyzed": 1}},
+            "ingest_metrics": {"sessions_analyzed": 1},
+        },
+    }
+    monkeypatch.setattr(api_mod, "get_config", lambda: cfg)
+    monkeypatch.setattr(api_mod, "list_platforms", lambda path: [])
+    monkeypatch.setattr(api_mod, "count_fts_indexed", lambda: 0)
+    monkeypatch.setattr(api_mod, "count_session_jobs_by_status", lambda: {})
+    monkeypatch.setattr(
+        api_mod,
+        "latest_service_run",
+        lambda svc: run if svc == "ingest" else None,
+    )
+    _stub_status_catalog(monkeypatch)
+    monkeypatch.setattr(api_mod, "list_service_runs", lambda **kwargs: [run])
+
+    result = api_status()
+
+    assert result["latest_ingest"]["job_type"] == "ingest"
+    assert result["recent_activity"][0]["op_type"] == "ingest"
 
 
 def test_api_status_preserves_bad_project_selection_error(
@@ -819,7 +854,7 @@ def test_api_memory_reset_all_clears_memory_and_cloud_state(
     _seed_memory_reset_project(tmp_path, cfg, "proj-a", project_a)
     _seed_memory_reset_project(tmp_path, cfg, "proj-b", project_b)
     catalog_mod.record_service_run(
-        job_type="sync",
+        job_type="ingest",
         status="completed",
         started_at="2026-04-01T00:00:00+00:00",
         completed_at="2026-04-01T00:00:01+00:00",
@@ -892,7 +927,7 @@ def test_api_memory_reset_refuses_busy_writer_lock(monkeypatch, tmp_path) -> Non
             pass
 
         def acquire(self, *args, **kwargs):
-            raise api_mod.LockBusyError(tmp_path / "writer.lock", {"owner": "sync"})
+            raise api_mod.LockBusyError(tmp_path / "writer.lock", {"owner": "ingest"})
 
         def release(self):
             raise AssertionError("busy lock should not be released")

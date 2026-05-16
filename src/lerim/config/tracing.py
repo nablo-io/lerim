@@ -1,7 +1,7 @@
 """MLflow tracing for Lerim agent observability.
 
-Activates MLflow when ``LERIM_MLFLOW=true`` is set. PydanticAI flows are
-captured by autologging; the BAML/LangGraph extract flow emits explicit spans.
+Activates MLflow when ``LERIM_MLFLOW=true`` is set. BAML/LangGraph flows emit
+explicit spans through Lerim's runtime instrumentation.
 
 Traces are stored under ``~/.lerim/observability/`` so observability files do
 not clutter the root of the Lerim home directory.
@@ -15,7 +15,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import mlflow
-import mlflow.pydantic_ai
 from mlflow.exceptions import MlflowException
 from mlflow.store.db.utils import (
 	_initialize_tables,
@@ -139,7 +138,6 @@ def configure_tracing(config: Config, experiment_name: str = "lerim") -> None:
 	def _activate_mlflow() -> None:
 		mlflow.set_tracking_uri(tracking_uri)
 		mlflow.set_experiment(experiment_name)
-		mlflow.pydantic_ai.autolog()
 
 	try:
 		_ensure_mlflow_schema(tracking_uri, str(db_path))

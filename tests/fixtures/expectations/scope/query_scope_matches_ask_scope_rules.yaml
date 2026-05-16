@@ -1,4 +1,0 @@
-case: query_scope_matches_ask_scope_rules
-expected:
-  project_count: 1
-  all_count: 2

@@ -1,0 +1,7 @@
+case: answer_all_scope_can_combine_projects
+expected:
+  answer_must_include_all:
+    - "redis"
+    - "lease"
+    - "postgres"
+    - "advisory"

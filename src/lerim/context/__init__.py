@@ -6,6 +6,12 @@ from importlib import import_module
 from typing import Any
 
 from lerim.context.project_identity import ProjectIdentity, resolve_project_identity
+from lerim.context.scope_identity import (
+    ALLOWED_SCOPE_TYPES,
+    ScopeIdentity,
+    resolve_scope_identity,
+    scope_from_project,
+)
 from lerim.context.spec import (
     ALLOWED_CHANGE_KINDS,
     ALLOWED_FINDING_LEVELS,
@@ -67,6 +73,7 @@ __all__ = [
     "ALLOWED_FINDING_LEVELS",
     "ALLOWED_KINDS",
     "ALLOWED_STATUSES",
+    "ALLOWED_SCOPE_TYPES",
     "ContextStore",
     "DURABLE_RECORD_KINDS",
     "DURABLE_FINDING_LEVELS",
@@ -86,6 +93,7 @@ __all__ = [
     "RecordChangeKind",
     "RecordKind",
     "RecordStatus",
+    "ScopeIdentity",
     "clear_embedding_provider_cache",
     "format_durable_record_kinds",
     "format_allowed_finding_levels",
@@ -97,4 +105,6 @@ __all__ = [
     "record_search_text",
     "record_validation_message",
     "resolve_project_identity",
+    "resolve_scope_identity",
+    "scope_from_project",
 ]

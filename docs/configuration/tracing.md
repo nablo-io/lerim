@@ -9,17 +9,21 @@ for one-off runs.
 
 When tracing is enabled, MLflow records:
 
-- **Sync extraction and maintain graphs** -- the BAML plus LangGraph flows emit
-  top-level `lerim.agent.extract` and `lerim.agent.maintain` spans with trace
-  metadata and model labels.
-- **PydanticAI model calls** -- via `mlflow.pydantic_ai.autolog()`, ask and
-  working-memory model invocations are captured automatically, including input
-  prompts, outputs, token counts, and latency.
-- **Agent/tool executions** -- ask tool calls and PydanticAI agent steps are
-  traced as nested spans when the runtime exposes them.
-- **agent_trace.json** -- each sync/maintain run also writes local graph events
-  under the run workspace. Ask runs write the PydanticAI message/tool history.
-- **Lerim run id correlation** -- each sync/maintain trace is tagged with
+- **Runtime operations** -- ingest, curate, answer, and Context Brief emit root
+  `lerim.<operation>` traces tagged with run id, session id, project id, and
+  workspace artifact paths.
+- **Named agent spans** -- trace ingestion, context curation, context answering,
+  and context-brief compilation emit `lerim.agent.<name>` spans when they run
+  inside a traced runtime operation.
+- **Graph events** -- ingest, curate, and Context Brief still write detailed
+  local `agent_trace.json` files under the run workspace. These are the most
+  detailed per-phase record today; MLflow currently shows the operation and
+  named-agent boundaries rather than every graph node as its own nested span.
+- **Retrieval actions** -- answerer retrieval planning and read-only context
+  queries are recorded in the local debug trace when verbose answer output is enabled.
+- **agent_trace.json** -- each ingest/curate run also writes local graph events
+  under the run workspace. Answer debug output writes BAML and retrieval events.
+- **Lerim run id correlation** -- each ingest/curate trace is tagged with
   `lerim.run_id`, and MLflow `client_request_id` is set to the same value used
   in the local run `manifest.json` and workspace folder name.
 
@@ -34,7 +38,7 @@ MLflow ships as a Lerim dependency, so `pip install lerim` already includes it.
 ## Enable tracing
 
 Enable tracing for the long-running Lerim server process. Setting it only on a
-client command like `lerim sync` will not enable tracing for a server that is
+client command like `lerim ingest` will not enable tracing for a server that is
 already running.
 
 MLflow has two separate roles in Lerim:
@@ -42,7 +46,7 @@ MLflow has two separate roles in Lerim:
 - **Lerim server writes traces.** This happens during `lerim serve` or the
   Docker service started by `lerim up`, when tracing is enabled in config.
 - **MLflow UI reads traces.** `mlflow ui` only starts a local web viewer for the
-  SQLite trace database. It does not need to be running while sync/maintain
+  SQLite trace database. It does not need to be running while ingest/curate
   jobs execute, and it does not cause Lerim to log anything.
 
 === "config.toml"
@@ -107,23 +111,24 @@ Lerim continues writing traces as long as the server is running with
 In the UI, look for:
 
 - **Experiments** -- select the `lerim` experiment.
-- **Traces** -- the primary view for Lerim agent spans. Expand a trace to see
-  sync and maintain graph spans, or the PydanticAI model/tool span tree for ask.
+- **Traces** -- the primary view for Lerim operation and agent spans. Expand a
+  trace to see named spans such as `lerim.agent.trace_ingestion`,
+  `lerim.agent.context_curator`, `lerim.agent.context_answerer`, or
+  `lerim.agent.context_brief_compiler`.
 - **Run id** -- match a local run folder to MLflow by searching for the
   `manifest.json` `run_id` value. It is also stored as `client_request_id` and
   the `lerim.run_id` tag.
-- **Model calls** -- PydanticAI model requests are logged with input prompts,
-  outputs, token counts, and latency. Sync extraction and maintain model
-  metadata is attached to their BAML/LangGraph spans.
-- **Spans** -- nested spans show the call hierarchy from the top-level
-  orchestration down to individual LM calls and tool invocations.
+- **Model labels and inputs** -- agent spans include model/scope inputs where
+  the runtime has them.
+- **Local graph detail** -- for per-node graph events, open the matching
+  run folder's `agent_trace.json`.
 
 Classic MLflow **Runs** may be empty for agent traces. That does not mean
 tracing is broken; check the Traces view or verify the SQLite counts below.
 
 !!! tip "Filtering"
 	Use the MLflow search bar to filter traces by experiment name, tags, status,
-	or text. This is useful when you have many sync/maintain cycles logged.
+	or text. This is useful when you have many ingest/curate cycles logged.
 
 ## Verify Logging
 
@@ -134,15 +139,15 @@ checkout, inspect the trace tables directly:
 uv run python -c "import sqlite3, pathlib; p=pathlib.Path.home()/'.lerim/observability/mlflow.db'; con=sqlite3.connect(p); print('trace_info', con.execute('select count(*) from trace_info').fetchone()[0]); print('spans', con.execute('select count(*) from spans').fetchone()[0])"
 ```
 
-You should see `trace_info` and `spans` counts increase while sync/maintain/ask
-work runs.
+You should see `trace_info` and `spans` counts increase while ingest, curate,
+answer, or Context Brief work runs.
 
 ## Local Run Artifacts
 
-Each sync or maintain execution writes a local artifact bundle under:
+Each ingest or curate execution writes a local artifact bundle under:
 
 ```text
-~/.lerim/workspace/YYYY/MM/DD/<sync-or-maintain>/<run_id>/
+~/.lerim/workspace/YYYY/MM/DD/<ingest-or-curate>/<run_id>/
 ```
 
 Important files:
@@ -150,7 +155,7 @@ Important files:
 - `manifest.json` -- run id, operation, project, session id, artifact paths, and
   status. `mlflow_client_request_id` matches the MLflow trace request id.
 - `events.jsonl` -- compact started/succeeded/failed events for that run.
-- `agent_trace.json` -- serialized graph events or PydanticAI messages when available.
+- `agent_trace.json` -- serialized graph, BAML, or retrieval events when available.
 - `agent.log` -- short human-readable agent summary on success.
 - `error.json` -- structured error details on failure.
 

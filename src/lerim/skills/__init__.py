@@ -1,4 +1,4 @@
-"""Bundled skill files for coding agent integration.
+"""Bundled skill files for supported agent integration.
 
 Provides SKILL.md and cli-reference.md that can be installed into agent
 skill directories via ``lerim skill install``.

@@ -5,7 +5,11 @@ from __future__ import annotations
 from baml_py import ClientRegistry
 
 from lerim.agents.baml_client.sync_client import b
-from lerim.config.providers import MINIMAX_TEMPERATURE_FLOOR, normalize_model_name
+from lerim.config.providers import (
+    MINIMAX_TEMPERATURE_FLOOR,
+    ensure_provider_api_key,
+    normalize_model_name,
+)
 from lerim.config.settings import Config, RoleConfig, get_config
 
 BAML_HTTP_CONNECT_TIMEOUT_MS = 10_000
@@ -13,20 +17,6 @@ BAML_HTTP_TIME_TO_FIRST_TOKEN_TIMEOUT_MS = 120_000
 BAML_HTTP_IDLE_TIMEOUT_MS = 30_000
 BAML_HTTP_REQUEST_TIMEOUT_MS = 300_000
 
-_API_KEY_ATTRS = {
-    "minimax": "minimax_api_key",
-    "opencode_go": "opencode_api_key",
-    "zai": "zai_api_key",
-    "openai": "openai_api_key",
-    "openrouter": "openrouter_api_key",
-}
-_API_KEY_ENVS = {
-    "minimax": "MINIMAX_API_KEY",
-    "opencode_go": "OPENCODE_API_KEY",
-    "zai": "ZAI_API_KEY",
-    "openai": "OPENAI_API_KEY",
-    "openrouter": "OPENROUTER_API_KEY",
-}
 _LOCAL_PROVIDERS = {"ollama", "mlx"}
 
 
@@ -54,10 +44,10 @@ def build_baml_client_for_role(
         provider=resolved_provider,
         override=api_base_url,
     )
-    resolved_api_key = _resolve_api_key(
+    resolved_api_key = api_key or ensure_provider_api_key(
         cfg,
-        provider=resolved_provider,
-        override=api_key,
+        resolved_provider,
+        role_label=f"provider={resolved_provider}",
     )
     resolved_temperature = _resolve_temperature(
         provider=resolved_provider,
@@ -80,7 +70,7 @@ def build_baml_client_for_role(
                 "request_timeout_ms": BAML_HTTP_REQUEST_TIMEOUT_MS,
             },
         },
-        retry_policy="ExtractAgentRetry",
+        retry_policy="RuntimeAgentRetry",
     )
     registry.set_primary("RuntimeAgentModel")
     return b.with_options(client_registry=registry)
@@ -126,25 +116,6 @@ def _resolve_base_url(
     return base_url.rstrip("/")
 
 
-def _resolve_api_key(
-    config: Config,
-    *,
-    provider: str,
-    override: str | None,
-) -> str:
-    """Resolve the API key value expected by BAML's OpenAI-compatible client."""
-    if override:
-        return override
-    attr = _API_KEY_ATTRS.get(provider)
-    if attr is None:
-        return provider
-    value = getattr(config, attr, None)
-    if not value:
-        env_name = _API_KEY_ENVS.get(provider, attr.removesuffix("_api_key").upper() + "_API_KEY")
-        raise RuntimeError(f"missing_api_key:{env_name} required for provider={provider}")
-    return str(value)
-
-
 def _resolve_temperature(*, provider: str, value: float) -> float:
     """Normalize model temperature for provider quirks."""
     temperature = float(value)
@@ -155,7 +126,7 @@ def _resolve_temperature(*, provider: str, value: float) -> float:
 
 def _self_check() -> None:
     """Run a small import-time construction check without network calls."""
-    assert isinstance(_API_KEY_ATTRS, dict)
+    assert _LOCAL_PROVIDERS == {"ollama", "mlx"}
 
 
 if __name__ == "__main__":

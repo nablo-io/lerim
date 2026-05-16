@@ -318,15 +318,15 @@ class TestFmtLogLine:
 
 
 # ===================================================================
-# _cmd_sync
+# _cmd_ingest
 # ===================================================================
 
 
-class TestCmdSync:
-    """Tests for the sync command handler."""
+class TestCmdIngest:
+    """Tests for the ingest command handler."""
 
-    def test_sync_success_json(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Sync with --json emits JSON response from API."""
+    def test_ingest_success_json(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Ingest with --json emits JSON response from API."""
         fake = {"indexed": 5, "extracted": 3}
         captured: dict[str, Any] = {}
         monkeypatch.setattr(
@@ -335,7 +335,7 @@ class TestCmdSync:
             lambda path, body: captured.update({"path": path, "body": body}) or fake,
         )
         args = _ns(
-            command="sync",
+            command="ingest",
             json=True,
             agent=None,
             window=None,
@@ -345,16 +345,16 @@ class TestCmdSync:
         )
         buf = io.StringIO()
         with redirect_stdout(buf):
-            code = cli._cmd_sync(args)
+            code = cli._cmd_ingest(args)
         assert code == 0
         parsed = json.loads(buf.getvalue())
         assert parsed["indexed"] == 5
-        assert captured["path"] == "/api/sync"
+        assert captured["path"] == "/api/ingest"
         assert captured["body"]["blocking"] is True
         assert "ignore_lock" not in captured["body"]
 
-    def test_sync_success_human(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Sync without --json emits human-readable output."""
+    def test_ingest_success_human(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Ingest without --json emits human-readable output."""
         fake = {"indexed": 2}
         captured: dict[str, Any] = {}
         monkeypatch.setattr(
@@ -363,7 +363,7 @@ class TestCmdSync:
             lambda path, body: captured.update({"path": path, "body": body}) or fake,
         )
         args = _ns(
-            command="sync",
+            command="ingest",
             json=False,
             agent="claude",
             window="7d",
@@ -373,17 +373,17 @@ class TestCmdSync:
         )
         buf = io.StringIO()
         with redirect_stdout(buf):
-            code = cli._cmd_sync(args)
+            code = cli._cmd_ingest(args)
         assert code == 0
-        assert "Sync:" in buf.getvalue()
+        assert "Ingest:" in buf.getvalue()
         assert captured["body"]["force"] is True
         assert captured["body"]["blocking"] is True
 
-    def test_sync_not_running(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Sync returns 1 when the server is unreachable."""
+    def test_ingest_not_running(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Ingest returns 1 when the server is unreachable."""
         monkeypatch.setattr(cli, "_api_post", _raise_api_error)
         args = _ns(
-            command="sync",
+            command="ingest",
             json=False,
             agent=None,
             window=None,
@@ -393,20 +393,20 @@ class TestCmdSync:
         )
         buf = io.StringIO()
         with redirect_stderr(buf):
-            code = cli._cmd_sync(args)
+            code = cli._cmd_ingest(args)
         assert code == 1
 
-    def test_sync_prints_degraded_queue_hint(
+    def test_ingest_prints_degraded_queue_hint(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Human sync output prints degraded queue warning block."""
+        """Human ingest output prints degraded queue warning block."""
         fake = {
             "indexed": 1,
             "queue_health": {"degraded": True, "advice": "run `lerim queue --failed`"},
         }
         monkeypatch.setattr(cli, "_api_post", lambda _p, _b: fake)
         args = _ns(
-            command="sync",
+            command="ingest",
             json=False,
             agent=None,
             window=None,
@@ -416,7 +416,7 @@ class TestCmdSync:
         )
         buf = io.StringIO()
         with redirect_stdout(buf):
-            code = cli._cmd_sync(args)
+            code = cli._cmd_ingest(args)
         assert code == 0
         text = buf.getvalue()
         assert "Queue degraded" in text
@@ -424,15 +424,15 @@ class TestCmdSync:
 
 
 # ===================================================================
-# _cmd_maintain
+# _cmd_curate
 # ===================================================================
 
 
-class TestCmdMaintain:
-    """Tests for the maintain command handler."""
+class TestCmdCurate:
+    """Tests for the curate command handler."""
 
-    def test_maintain_success_json(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Maintain with --json emits JSON response."""
+    def test_curate_success_json(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Curate with --json emits JSON response."""
         fake = {"records_created": 1, "records_archived": 0}
         captured: dict[str, Any] = {}
         monkeypatch.setattr(
@@ -440,38 +440,38 @@ class TestCmdMaintain:
             "_api_post",
             lambda path, body: captured.update({"path": path, "body": body}) or fake,
         )
-        args = _ns(command="maintain", json=True, force=False, dry_run=False)
+        args = _ns(command="curate", json=True, force=False, dry_run=False)
         buf = io.StringIO()
         with redirect_stdout(buf):
-            code = cli._cmd_maintain(args)
+            code = cli._cmd_curate(args)
         assert code == 0
         parsed = json.loads(buf.getvalue())
         assert "records_created" in parsed
-        assert captured["path"] == "/api/maintain"
+        assert captured["path"] == "/api/curate"
         assert captured["body"] == {"dry_run": False, "blocking": True}
 
-    def test_maintain_not_running(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Maintain returns 1 when the server is unreachable."""
+    def test_curate_not_running(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Curate returns 1 when the server is unreachable."""
         monkeypatch.setattr(cli, "_api_post", _raise_api_error)
-        args = _ns(command="maintain", json=False, force=False, dry_run=False)
+        args = _ns(command="curate", json=False, force=False, dry_run=False)
         buf = io.StringIO()
         with redirect_stderr(buf):
-            code = cli._cmd_maintain(args)
+            code = cli._cmd_curate(args)
         assert code == 1
 
-    def test_maintain_prints_degraded_queue_hint(
+    def test_curate_prints_degraded_queue_hint(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Human maintain output prints degraded queue warning block."""
+        """Human curate output prints degraded queue warning block."""
         fake = {
             "projects": {},
             "queue_health": {"degraded": True, "advice": "run `lerim queue --failed`"},
         }
         monkeypatch.setattr(cli, "_api_post", lambda _p, _b: fake)
-        args = _ns(command="maintain", json=False, force=False, dry_run=False)
+        args = _ns(command="curate", json=False, force=False, dry_run=False)
         buf = io.StringIO()
         with redirect_stdout(buf):
-            code = cli._cmd_maintain(args)
+            code = cli._cmd_curate(args)
         assert code == 0
         text = buf.getvalue()
         assert "Queue degraded" in text
@@ -498,51 +498,51 @@ class TestCmdDashboard:
 
 
 # ===================================================================
-# _cmd_ask
+# _cmd_answer
 # ===================================================================
 
 
-class TestCmdAsk:
-    """Tests for the ask command handler."""
+class TestCmdAnswer:
+    """Tests for the answer command handler."""
 
-    def test_ask_success_json(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Ask with --json emits the full response dict."""
+    def test_answer_success_json(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Answer with --json emits the full response dict."""
         fake = {"answer": "Use JWT.", "error": False, "projects_used": []}
         monkeypatch.setattr(cli, "_api_post", lambda _p, _b: fake)
-        args = _ns(command="ask", json=True, question="how?", limit=5)
+        args = _ns(command="answer", json=True, question="how?", limit=5)
         buf = io.StringIO()
         with redirect_stdout(buf):
-            code = cli._cmd_ask(args)
+            code = cli._cmd_answer(args)
         assert code == 0
         parsed = json.loads(buf.getvalue())
         assert parsed["answer"] == "Use JWT."
 
-    def test_ask_success_human(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Ask without --json prints the answer text only."""
+    def test_answer_success_human(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Answer without --json prints the answer text only."""
         fake = {"answer": "Bearer tokens.", "error": False}
         monkeypatch.setattr(cli, "_api_post", lambda _p, _b: fake)
-        args = _ns(command="ask", json=False, question="auth?", limit=5)
+        args = _ns(command="answer", json=False, question="auth?", limit=5)
         buf = io.StringIO()
         with redirect_stdout(buf):
-            code = cli._cmd_ask(args)
+            code = cli._cmd_answer(args)
         assert code == 0
         assert "Bearer tokens." in buf.getvalue()
 
-    def test_ask_error_response(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Ask returns 1 when the API signals an error."""
+    def test_answer_error_response(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Answer returns 1 when the API signals an error."""
         fake = {"answer": "auth error", "error": True}
         monkeypatch.setattr(cli, "_api_post", lambda _p, _b: fake)
-        args = _ns(command="ask", json=False, question="q", limit=5)
+        args = _ns(command="answer", json=False, question="q", limit=5)
         buf = io.StringIO()
         with redirect_stderr(buf):
-            code = cli._cmd_ask(args)
+            code = cli._cmd_answer(args)
         assert code == 1
 
-    def test_ask_not_running(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Ask returns 1 when server is unreachable."""
+    def test_answer_not_running(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Answer returns 1 when server is unreachable."""
         monkeypatch.setattr(cli, "_api_post", _raise_api_error)
-        args = _ns(command="ask", json=False, question="q", limit=5)
-        code = cli._cmd_ask(args)
+        args = _ns(command="answer", json=False, question="q", limit=5)
+        code = cli._cmd_answer(args)
         assert code == 1
 
 
@@ -680,7 +680,7 @@ class TestCmdStatusLive:
             "connected_agents": ["claude", "codex"],
             "record_count": 5,
             "sessions_indexed_count": 10,
-            "sync_window_days": 7,
+            "ingest_window_days": 7,
             "queue": {"pending": 2, "dead_letter": 1},
             "unscoped_sessions": {"total": 3, "by_agent": {"cursor": 3}},
             "queue_health": {"degraded": True, "advice": "inspect failed queue"},
@@ -704,7 +704,7 @@ class TestCmdStatusLive:
         )
         text = buf.getvalue()
         assert "Lerim Status (" in text
-        assert "Sync window" in text
+        assert "Ingest window" in text
         assert "quiet" in text
         assert "Project Streams" in text
         assert "What These Terms Mean" in text
@@ -739,6 +739,12 @@ class TestCmdStatusLive:
 
 class TestCmdConnect:
     """Tests for the connect command handler."""
+
+    @pytest.fixture(autouse=True)
+    def _disable_real_docker_restart(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(cli, "is_docker_container_running", lambda: False)
 
     def test_connect_list_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Connect list with no platforms prints 'No platforms connected.'"""
@@ -1754,7 +1760,7 @@ class TestCmdLogs:
     def test_logs_no_file(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """Logs returns 1 when the log file does not exist."""
+        """Logs returns a successful empty-state message when no log file exists."""
         monkeypatch.setattr("lerim.config.logging.LOG_DIR", tmp_path)
         args = _ns(
             command="logs",
@@ -1767,7 +1773,7 @@ class TestCmdLogs:
         buf = io.StringIO()
         with redirect_stderr(buf):
             code = cli._cmd_logs(args)
-        assert code == 1
+        assert code == 0
         assert "no log file" in buf.getvalue().lower()
 
     def test_logs_reads_entries(
@@ -2073,10 +2079,24 @@ class TestBuildParser:
         parser = cli.build_parser()
         subcommands = [
             ["connect"],
-            ["sync"],
-            ["maintain"],
+            ["ingest"],
+            [
+                "trace",
+                "import",
+                "trace.jsonl",
+                "--source-name",
+                "support-bot",
+                "--source-profile",
+                "support",
+                "--scope-type",
+                "domain",
+                "--scope",
+                "support",
+            ],
+            ["curate"],
+            ["context-brief"],
             ["dashboard"],
-            ["ask", "question text"],
+            ["answer", "question text"],
             ["status"],
             ["queue"],
             ["retry", "abcdef"],
@@ -2106,12 +2126,12 @@ class TestBuildParser:
             args = parser.parse_args(argv)
             assert args.command is not None, f"Failed to parse: {argv}"
 
-    def test_sync_flags(self) -> None:
-        """Sync parser accepts all flags."""
+    def test_ingest_flags(self) -> None:
+        """Ingest parser accepts all flags."""
         parser = cli.build_parser()
         args = parser.parse_args(
             [
-                "sync",
+                "ingest",
                 "--run-id",
                 "r1",
                 "--agent",
@@ -2136,11 +2156,40 @@ class TestBuildParser:
         assert args.force is True
         assert args.dry_run is True
 
-    def test_maintain_flags(self) -> None:
-        """Maintain parser accepts --dry-run."""
+    def test_curate_flags(self) -> None:
+        """Curate parser accepts --dry-run."""
         parser = cli.build_parser()
-        args = parser.parse_args(["maintain", "--dry-run"])
+        args = parser.parse_args(["curate", "--dry-run"])
         assert args.dry_run is True
+
+    def test_trace_import_flags(self) -> None:
+        """Trace import parser accepts source and scope flags."""
+        parser = cli.build_parser()
+        args = parser.parse_args(
+            [
+                "trace",
+                "import",
+                "trace.jsonl",
+                "--source-name",
+                "support-bot",
+                "--source-profile",
+                "support",
+                "--scope-type",
+                "domain",
+                "--scope",
+                "support",
+                "--scope-label",
+                "Support",
+                "--session-id",
+                "sess_support",
+            ]
+        )
+        assert args.command == "trace"
+        assert args.trace_action == "import"
+        assert args.source_name == "support-bot"
+        assert args.scope_type == "domain"
+        assert args.scope_label == "Support"
+        assert args.session_id == "sess_support"
 
     def test_queue_flags(self) -> None:
         """Queue parser accepts --failed, --status, and --project."""
@@ -2172,11 +2221,11 @@ class TestBuildParser:
         assert args.live is True
         assert args.interval == 1.5
 
-    def test_ask_scope_flags(self) -> None:
-        """Ask parser accepts --scope and optional --project."""
+    def test_answer_scope_flags(self) -> None:
+        """Answer parser accepts --scope and optional --project."""
         parser = cli.build_parser()
         args = parser.parse_args(
-            ["ask", "hello", "--scope", "project", "--project", "myproj"]
+            ["answer", "hello", "--scope", "project", "--project", "myproj"]
         )
         assert args.scope == "project"
         assert args.project == "myproj"
@@ -2230,8 +2279,8 @@ class TestMain:
             "record_count": 0,
             "sessions_indexed_count": 0,
             "queue": {},
-            "latest_sync": None,
-            "latest_maintain": None,
+            "latest_ingest": None,
+            "latest_curate": None,
         }
         monkeypatch.setattr(cli, "_api_get", lambda _p: fake_status)
         buf = io.StringIO()
@@ -2279,7 +2328,7 @@ class TestMain:
         )
         buf = io.StringIO()
         with redirect_stdout(buf):
-            code = cli.main(["ask", "hello"])
+            code = cli.main(["answer", "hello"])
         assert code == 0
         assert len(tracing_called) == 0
 
@@ -2313,7 +2362,7 @@ class TestMain:
         buf = io.StringIO()
         with redirect_stdout(buf):
             with pytest.raises(SystemExit) as exc:
-                cli.main(["maintain", "--help"])
+                cli.main(["curate", "--help"])
         assert exc.value.code == 0
         assert len(tracing_called) == 0
 
@@ -2634,7 +2683,7 @@ class TestApiGetPost:
         monkeypatch.setattr(
             "urllib.request.urlopen", lambda req, timeout=300: FakeResp()
         )
-        result = cli._api_post("/api/sync", {"force": True})
+        result = cli._api_post("/api/ingest", {"force": True})
         assert result == {"created": True}
 
     def test_api_post_unreachable(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2650,7 +2699,7 @@ class TestApiGetPost:
             ),
         )
         with pytest.raises(cli.ApiClientError) as exc:
-            cli._api_post("/api/sync", {})
+            cli._api_post("/api/ingest", {})
         assert exc.value.kind == "unreachable"
 
     def test_api_get_json_decode_error(self, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,0 +1,11 @@
+case: ingest_artifact_paths_are_stable_per_flow
+expected:
+  workspace_subdir: "ingest"
+  artifact_names:
+    - "agent_log"
+    - "agent_trace"
+    - "error"
+    - "events"
+    - "manifest"
+    - "subagents_log"
+    - "session_log"

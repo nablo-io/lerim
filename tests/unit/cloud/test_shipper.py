@@ -813,7 +813,7 @@ class TestShipServiceRuns:
 		conn.execute(
 			"INSERT INTO service_runs (job_type, status, started_at, completed_at, trigger, details_json) "
 			"VALUES (?, ?, ?, ?, ?, ?)",
-			("sync", "done", "2026-03-20T01:00:00Z", "2026-03-20T01:05:00Z", "daemon", '{"count": 1}'),
+			("ingest", "done", "2026-03-20T01:00:00Z", "2026-03-20T01:05:00Z", "daemon", '{"count": 1}'),
 		)
 		conn.commit()
 		conn.close()
@@ -870,7 +870,7 @@ class TestQueryServiceRuns:
 		conn.execute(
 			"INSERT INTO service_runs (job_type, status, started_at, details_json) "
 			"VALUES (?, ?, ?, ?)",
-			("sync", "done", "2026-03-20T00:00:00Z", '{"sessions": 3}'),
+			("ingest", "done", "2026-03-20T00:00:00Z", '{"sessions": 3}'),
 		)
 		conn.commit()
 		conn.close()

@@ -1,6 +1,6 @@
 site_name: Lerim
 site_url: https://docs.lerim.dev
-site_description: Persistent context for coding agents
+site_description: Context compiler infrastructure for AI agents
 repo_url: https://github.com/lerim-dev/lerim-cli
 repo_name: lerim-dev/lerim-cli
 edit_uri: edit/main/docs/
@@ -94,21 +94,23 @@ nav:
     - Installation: installation.md
     - Quickstart: quickstart.md
   - Concepts:
+    - Business Workflows: concepts/business-workflows.md
     - How It Works: concepts/how-it-works.md
     - Context Model: concepts/context-model.md
-    - Supported Agents: concepts/supported-agents.md
-    - Sync & Maintain: concepts/sync-maintain.md
-    - Working Memory: concepts/working-memory.md
+    - Trace Sources & Adapters: concepts/supported-agents.md
+    - Ingest & Curate: concepts/ingest-curate.md
+    - Context Brief: concepts/context-brief.md
   - CLI Reference:
     - Overview: cli/overview.md
     - lerim init: cli/init.md
     - lerim project: cli/project.md
     - lerim connect: cli/connect.md
     - lerim up / down / logs: cli/up-down-logs.md
-    - lerim sync: cli/sync.md
-    - lerim maintain: cli/maintain.md
-    - lerim working-memory: cli/working-memory.md
-    - lerim ask: cli/ask.md
+    - lerim ingest: cli/ingest.md
+    - lerim curate: cli/curate.md
+    - lerim context-brief: cli/context-brief.md
+    - lerim answer: cli/answer.md
+    - lerim trace: cli/trace.md
     - lerim query: cli/query.md
     - lerim queue: cli/queue.md
     - lerim unscoped: cli/unscoped.md

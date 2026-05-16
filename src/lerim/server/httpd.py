@@ -21,11 +21,12 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from lerim.config.logging import logger
 from lerim.server.api import (
-    api_ask,
+    api_answer,
     api_connect,
     api_connect_list,
+    api_curate,
     api_health,
-    api_maintain,
+    api_ingest,
     api_project_add,
     api_project_list,
     api_query,
@@ -36,7 +37,6 @@ from lerim.server.api import (
     api_skip_all_dead_letter,
     api_skip_job,
     api_status,
-    api_sync,
     api_unscoped,
 )
 from lerim.config.settings import (
@@ -350,10 +350,10 @@ def _serialize_full_config(config: Config) -> dict[str, Any]:
         "server": {
             "host": config.server_host,
             "port": config.server_port,
-            "sync_interval_minutes": config.sync_interval_minutes,
-            "maintain_interval_minutes": config.maintain_interval_minutes,
-            "sync_window_days": config.sync_window_days,
-            "sync_max_sessions": config.sync_max_sessions,
+            "ingest_interval_minutes": config.ingest_interval_minutes,
+            "curate_interval_minutes": config.curate_interval_minutes,
+            "ingest_window_days": config.ingest_window_days,
+            "ingest_max_sessions": config.ingest_max_sessions,
         },
         "embedding": {
             "model_id": config.embedding_model_id,
@@ -579,8 +579,8 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
         """Return queue and recent run status for refine panel."""
         payload = {
             "queue": count_session_jobs_by_status(),
-            "sync": latest_service_run("sync"),
-            "maintain": latest_service_run("maintain"),
+            "ingest": latest_service_run("ingest"),
+            "curate": latest_service_run("curate"),
         }
         self._json(payload)
 
@@ -592,15 +592,15 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
         """
         now = datetime.now(timezone.utc)
 
-        # -- Active background threads (sync-* / maintain-*) --
-        sync_threads: list[str] = []
-        maintain_threads: list[str] = []
+        # -- Active background threads (ingest-* / curate-*) --
+        ingest_threads: list[str] = []
+        curate_threads: list[str] = []
         for t in threading.enumerate():
             name = t.name or ""
-            if name.startswith("sync-"):
-                sync_threads.append(name)
-            elif name.startswith("maintain-"):
-                maintain_threads.append(name)
+            if name.startswith("ingest-"):
+                ingest_threads.append(name)
+            elif name.startswith("curate-"):
+                curate_threads.append(name)
 
         # -- Queue counts (single lightweight GROUP BY) --
         queue = count_session_jobs_by_status()
@@ -611,9 +611,9 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
             str(j.get("run_id") or "") for j in running_jobs if j.get("run_id")
         ]
 
-        # -- Latest sync / maintain service runs --
-        last_sync_raw = latest_service_run("sync")
-        last_maintain_raw = latest_service_run("maintain")
+        # -- Latest ingest / curate service runs --
+        last_ingest_raw = latest_service_run("ingest")
+        last_curate_raw = latest_service_run("curate")
 
         def _format_service_run(run: dict[str, Any] | None) -> dict[str, Any] | None:
             if run is None:
@@ -641,15 +641,15 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
 
         payload = {
             "timestamp": now.isoformat(),
-            "sync_active": len(sync_threads) > 0,
-            "sync_threads": sync_threads,
-            "maintain_active": len(maintain_threads) > 0,
-            "maintain_threads": maintain_threads,
-            "sync_sessions_processing": queue.get("running", 0),
+            "ingest_active": len(ingest_threads) > 0,
+            "ingest_threads": ingest_threads,
+            "curate_active": len(curate_threads) > 0,
+            "curate_threads": curate_threads,
+            "ingest_sessions_processing": queue.get("running", 0),
             "queue": queue,
             "running_run_ids": running_run_ids,
-            "last_sync": _format_service_run(last_sync_raw),
-            "last_maintain": _format_service_run(last_maintain_raw),
+            "last_ingest": _format_service_run(last_ingest_raw),
+            "last_curate": _format_service_run(last_curate_raw),
         }
         self._json(payload)
 
@@ -780,7 +780,7 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
                 self._error(HTTPStatus.BAD_REQUEST, str(exc))
                 return None
 
-        if path == "/api/ask":
+        if path == "/api/answer":
             body = read_body()
             if body is None:
                 return
@@ -802,22 +802,22 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
             project_name = str(project).strip() if isinstance(project, str) else None
             verbose = bool(body.get("verbose"))
 
-            def _run_ask() -> None:
-                """Execute ask in background thread."""
+            def _run_context_answerer() -> None:
+                """Execute answer in background thread."""
                 if scope == "all" and not project_name:
-                    result_holder.append(api_ask(question, verbose=verbose))
+                    result_holder.append(api_answer(question, verbose=verbose))
                 else:
                     result_holder.append(
-                        api_ask(question, scope=scope, project=project_name, verbose=verbose)
+                        api_answer(question, scope=scope, project=project_name, verbose=verbose)
                     )
 
-            thread = threading.Thread(target=_run_ask)
+            thread = threading.Thread(target=_run_context_answerer)
             thread.start()
             thread.join(timeout=300)
             if result_holder:
                 self._json(result_holder[0])
             else:
-                self._error(HTTPStatus.GATEWAY_TIMEOUT, "Ask timed out")
+                self._error(HTTPStatus.GATEWAY_TIMEOUT, "Answer timed out")
             return
         if path == "/api/query":
             body = read_body()
@@ -853,18 +853,18 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
                 return
             self._json(result)
             return
-        if path == "/api/sync":
+        if path == "/api/ingest":
             body = read_body()
             if body is None:
                 return
             if "ignore_lock" in body:
                 self._error(
                     HTTPStatus.BAD_REQUEST,
-                    "ignore_lock is not supported for /api/sync.",
+                    f"ignore_lock is not supported for {path}.",
                 )
                 return
 
-            sync_kwargs = {
+            ingest_kwargs = {
                 "agent": body.get("agent"),
                 "window": body.get("window") or None,
                 "since": body.get("since"),
@@ -876,46 +876,50 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
                 "dry_run": bool(body.get("dry_run")),
             }
             if bool(body.get("blocking")):
-                self._json(api_sync(**sync_kwargs))
+                payload = api_ingest(**ingest_kwargs)
+                self._json(payload)
                 return
 
             job_id = str(uuid.uuid4())[:8]
 
-            def _run_sync() -> None:
-                """Execute sync in background."""
-                api_sync(**sync_kwargs)
+            def _run_ingest() -> None:
+                """Execute ingest in background."""
+                api_ingest(**ingest_kwargs)
 
             threading.Thread(
-                target=_run_sync, name=f"sync-{job_id}", daemon=True
+                target=_run_ingest, name=f"ingest-{job_id}", daemon=True
             ).start()
-            self._json({"status": "started", "job_id": job_id, "mode": "async"})
+            payload = {"status": "started", "job_id": job_id, "mode": "async"}
+            self._json(payload)
             return
-        if path == "/api/maintain":
+        if path == "/api/curate":
             body = read_body()
             if body is None:
                 return
             if "force" in body:
                 self._error(
                     HTTPStatus.BAD_REQUEST,
-                    "force is not supported for /api/maintain.",
+                    f"force is not supported for {path}.",
                 )
                 return
 
-            maintain_kwargs = {"dry_run": bool(body.get("dry_run"))}
+            curate_kwargs = {"dry_run": bool(body.get("dry_run"))}
             if bool(body.get("blocking")):
-                self._json(api_maintain(**maintain_kwargs))
+                payload = api_curate(**curate_kwargs)
+                self._json(payload)
                 return
 
             job_id = str(uuid.uuid4())[:8]
 
-            def _run_maintain() -> None:
-                """Execute maintain in background."""
-                api_maintain(**maintain_kwargs)
+            def _run_context_curator() -> None:
+                """Execute context curation in background."""
+                api_curate(**curate_kwargs)
 
             threading.Thread(
-                target=_run_maintain, name=f"maintain-{job_id}", daemon=True
+                target=_run_context_curator, name=f"curate-{job_id}", daemon=True
             ).start()
-            self._json({"status": "started", "job_id": job_id, "mode": "async"})
+            payload = {"status": "started", "job_id": job_id, "mode": "async"}
+            self._json(payload)
             return
         if path == "/api/connect":
             body = read_body()

@@ -1,4 +1,0 @@
-case: maintain_once_dry_run_short_circuits_even_with_force
-expected:
-  dry_run: true
-  service_run_status: "completed"

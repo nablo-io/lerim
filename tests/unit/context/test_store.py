@@ -12,6 +12,7 @@ from lerim.context import (
     ALLOWED_CHANGE_KINDS,
     ALLOWED_KINDS,
     ALLOWED_STATUSES,
+    resolve_scope_identity,
 )
 from lerim.context.spec import (
     MAX_DURABLE_BODY_CHARS,
@@ -273,10 +274,28 @@ class TestContextStoreInit:
             "records",
             "record_versions",
             "projects",
+            "scopes",
             "sessions",
             "schema_meta",
         ):
             assert expected in tables
+
+    def test_register_project_creates_project_scope(self, mock_store, project_id):
+        mock_store.register_project(project_id)
+
+        with mock_store.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT scope_type, scope_id, scope_label, repo_path
+                FROM scopes
+                WHERE scope_type = 'project' AND scope_id = ?
+                """,
+                (project_id.project_id,),
+            ).fetchone()
+
+        assert row is not None
+        assert row["scope_label"] == project_id.project_slug
+        assert row["repo_path"] == str(project_id.repo_path)
 
     def test_initialize_sets_schema_version(self, mock_store):
         with mock_store.connect() as conn:
@@ -301,6 +320,193 @@ class TestContextStoreInit:
                 "SELECT COUNT(*) FROM schema_meta WHERE key='schema_version'"
             ).fetchone()[0]
         assert n == 1
+
+    def test_initialize_migrates_v2_tables_with_session_foreign_keys(
+        self, tmp_path, mock_embeddings
+    ):
+        db_path = tmp_path / "legacy.sqlite3"
+        now = "2026-01-01T00:00:00+00:00"
+        with sqlite3.connect(db_path) as raw:
+            raw.execute("PRAGMA foreign_keys = ON")
+            raw.executescript(
+                """
+                CREATE TABLE projects (
+                    project_id TEXT PRIMARY KEY,
+                    project_slug TEXT NOT NULL,
+                    repo_path TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE sessions (
+                    session_id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    agent_type TEXT NOT NULL,
+                    source_trace_ref TEXT NOT NULL,
+                    repo_path TEXT,
+                    cwd TEXT,
+                    started_at TEXT,
+                    model_name TEXT,
+                    instructions_text TEXT,
+                    prompt_text TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(project_id) REFERENCES projects(project_id)
+                );
+                CREATE TABLE records (
+                    record_id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    source_session_id TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    valid_from TEXT NOT NULL,
+                    valid_until TEXT,
+                    superseded_by_record_id TEXT,
+                    decision TEXT,
+                    why TEXT,
+                    alternatives TEXT,
+                    consequences TEXT,
+                    user_intent TEXT,
+                    what_happened TEXT,
+                    outcomes TEXT,
+                    FOREIGN KEY(project_id) REFERENCES projects(project_id),
+                    FOREIGN KEY(source_session_id) REFERENCES sessions(session_id),
+                    FOREIGN KEY(superseded_by_record_id) REFERENCES records(record_id)
+                );
+                CREATE TABLE record_versions (
+                    version_id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    record_id TEXT NOT NULL,
+                    version_no INTEGER NOT NULL,
+                    kind TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    source_session_id TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    valid_from TEXT NOT NULL,
+                    valid_until TEXT,
+                    superseded_by_record_id TEXT,
+                    decision TEXT,
+                    why TEXT,
+                    alternatives TEXT,
+                    consequences TEXT,
+                    user_intent TEXT,
+                    what_happened TEXT,
+                    outcomes TEXT,
+                    change_kind TEXT NOT NULL,
+                    change_reason TEXT,
+                    changed_at TEXT NOT NULL,
+                    changed_by_session_id TEXT,
+                    FOREIGN KEY(project_id) REFERENCES projects(project_id),
+                    FOREIGN KEY(record_id) REFERENCES records(record_id),
+                    FOREIGN KEY(source_session_id) REFERENCES sessions(session_id),
+                    FOREIGN KEY(superseded_by_record_id) REFERENCES records(record_id),
+                    FOREIGN KEY(changed_by_session_id) REFERENCES sessions(session_id)
+                );
+                """
+            )
+            raw.execute(
+                "INSERT INTO projects VALUES (?, ?, ?, ?, ?)",
+                ("proj_legacy", "legacy", str(tmp_path), now, now),
+            )
+            raw.execute(
+                "INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "sess_legacy",
+                    "proj_legacy",
+                    "codex",
+                    "trace.jsonl",
+                    str(tmp_path),
+                    str(tmp_path),
+                    now,
+                    "test-model",
+                    None,
+                    "prompt",
+                    now,
+                ),
+            )
+            raw.execute(
+                "INSERT INTO records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "rec_legacy",
+                    "proj_legacy",
+                    "decision",
+                    "Keep migration safe",
+                    "Existing records must survive schema upgrades.",
+                    "active",
+                    "sess_legacy",
+                    now,
+                    now,
+                    now,
+                    None,
+                    None,
+                    "Keep migration safe",
+                    "Existing databases have session foreign keys.",
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+            )
+            raw.execute(
+                "INSERT INTO record_versions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "ver_legacy",
+                    "proj_legacy",
+                    "rec_legacy",
+                    1,
+                    "decision",
+                    "Keep migration safe",
+                    "Existing records must survive schema upgrades.",
+                    "active",
+                    "sess_legacy",
+                    now,
+                    now,
+                    now,
+                    None,
+                    None,
+                    "Keep migration safe",
+                    "Existing databases have session foreign keys.",
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    "create",
+                    "initial",
+                    now,
+                    "sess_legacy",
+                ),
+            )
+            raw.commit()
+
+        store = ContextStore(db_path)
+        store.initialize()
+
+        with store.connect() as conn:
+            assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+            session = conn.execute(
+                "SELECT project_id, scope_type, scope_id FROM sessions"
+            ).fetchone()
+            record = conn.execute(
+                "SELECT project_id, scope_type, scope_id, source_session_id FROM records"
+            ).fetchone()
+            version = conn.execute(
+                "SELECT project_id, scope_type, scope_id, changed_by_session_id FROM record_versions"
+            ).fetchone()
+
+        assert session["project_id"] == "proj_legacy"
+        assert session["scope_type"] == "project"
+        assert session["scope_id"] == "proj_legacy"
+        assert record["source_session_id"] == "sess_legacy"
+        assert record["scope_id"] == "proj_legacy"
+        assert version["changed_by_session_id"] == "sess_legacy"
+        assert version["scope_id"] == "proj_legacy"
 
     def test_initialize_normalizes_existing_timestamp_text_for_filters(
         self, mock_seeded
@@ -436,15 +642,22 @@ class TestContextStoreInit:
             conn.execute(
                 """
                 INSERT INTO records(
-                    record_id, project_id, kind, title, body, status, source_session_id,
-                    created_at, updated_at, valid_from, valid_until, superseded_by_record_id,
-                    decision, why, alternatives, consequences, user_intent, what_happened, outcomes
+                    record_id, project_id, scope_type, scope_id, scope_label,
+                    source_name, source_profile, kind, title, body, status,
+                    source_session_id, created_at, updated_at, valid_from,
+                    valid_until, superseded_by_record_id, decision, why,
+                    alternatives, consequences, user_intent, what_happened, outcomes
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     "rec_offline",
                     project_id.project_id,
+                    "project",
+                    project_id.project_id,
+                    project_id.project_slug,
+                    "test",
+                    "test",
                     "fact",
                     "Offline fact",
                     "Exact reads should not need embeddings.",
@@ -514,6 +727,8 @@ class TestRegisterProject:
             ).fetchone()
         assert row is not None
         assert row["agent_type"] == "codex"
+        assert row["scope_type"] == "project"
+        assert row["scope_id"] == project_id.project_id
 
     def test_upsert_session_updates_existing(self, mock_store, project_id):
         mock_store.register_project(project_id)
@@ -547,6 +762,35 @@ class TestRegisterProject:
             ).fetchone()
         assert row["agent_type"] == "claude"
         assert row["source_trace_ref"] == "new.jsonl"
+
+    def test_upsert_session_accepts_generic_scope(self, mock_store):
+        scope = resolve_scope_identity(scope_type="domain", scope="support")
+        result = mock_store.upsert_session(
+            project_id=None,
+            session_id="sess_generic",
+            agent_type="generic-agent",
+            source_trace_ref="generic.jsonl",
+            repo_path=None,
+            cwd=None,
+            started_at="2026-01-01T00:00:00Z",
+            model_name="test-model",
+            instructions_text=None,
+            prompt_text=None,
+            scope_identity=scope,
+            source_name="customer-bot",
+            source_profile="support",
+        )
+
+        with mock_store.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM sessions WHERE session_id = ?",
+                ("sess_generic",),
+            ).fetchone()
+
+        assert result["scope_type"] == "domain"
+        assert row["project_id"] is None
+        assert row["scope_id"] == scope.scope_id
+        assert row["source_name"] == "customer-bot"
 
 
 class TestCreateRecord:
@@ -610,6 +854,41 @@ class TestCreateRecord:
         assert rec["kind"] == "episode"
         assert rec["user_intent"] == "Fix the flaky test"
         assert rec["what_happened"] == "Identified race condition in worker pool"
+
+    def test_create_generic_scoped_record_without_project(self, mock_store):
+        scope = resolve_scope_identity(scope_type="domain", scope="support")
+        mock_store.upsert_session(
+            project_id=None,
+            session_id="sess_generic",
+            agent_type="generic-agent",
+            source_trace_ref="generic.jsonl",
+            repo_path=None,
+            cwd=None,
+            started_at=None,
+            model_name="test-model",
+            instructions_text=None,
+            prompt_text=None,
+            scope_identity=scope,
+            source_name="customer-bot",
+            source_profile="support",
+        )
+
+        rec = mock_store.create_record(
+            project_id=None,
+            session_id="sess_generic",
+            kind="fact",
+            title="Escalations need account IDs",
+            body="Support escalations should preserve the account identifier.",
+            scope_identity=scope,
+            source_name="customer-bot",
+            source_profile="support",
+        )
+
+        assert rec["project_id"] is None
+        assert rec["scope_type"] == "domain"
+        assert rec["scope_id"] == scope.scope_id
+        assert rec["source_name"] == "customer-bot"
+        assert rec["versions"][0]["scope_id"] == scope.scope_id
 
     def test_create_archived_record_sets_valid_until(self, mock_seeded):
         store, pid = mock_seeded
@@ -1796,6 +2075,8 @@ class TestEnsureEpisodeUniqueness:
             mock_store._ensure_episode_uniqueness(
                 conn,
                 project_id="proj_x",
+                scope_type="project",
+                scope_id="proj_x",
                 kind="fact",
                 session_id="sess_1",
                 exclude_record_id=None,
@@ -1806,6 +2087,8 @@ class TestEnsureEpisodeUniqueness:
             mock_store._ensure_episode_uniqueness(
                 conn,
                 project_id="proj_x",
+                scope_type="project",
+                scope_id="proj_x",
                 kind="episode",
                 session_id=None,
                 exclude_record_id=None,
@@ -1819,6 +2102,8 @@ class TestEnsureEpisodeUniqueness:
                 store._ensure_episode_uniqueness(
                     conn,
                     project_id=pid,
+                    scope_type="project",
+                    scope_id=pid,
                     kind="episode",
                     session_id="sess_test",
                     exclude_record_id=None,
@@ -1831,6 +2116,8 @@ class TestEnsureEpisodeUniqueness:
             store._ensure_episode_uniqueness(
                 conn,
                 project_id=pid,
+                scope_type="project",
+                scope_id=pid,
                 kind="episode",
                 session_id="sess_test",
                 exclude_record_id=rec["record_id"],

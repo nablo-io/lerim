@@ -1,0 +1,4 @@
+case: ingest_retries_transient_error_and_then_writes_artifacts
+expected:
+  expected_attempts: 2
+  workspace_subdir: "ingest"

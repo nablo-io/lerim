@@ -1,0 +1,34 @@
+case: very_long_trace_uses_windows
+summary: A very long trace should stay compressed before the final writes.
+
+expected:
+  episode_count: 1
+  durable_count: 1
+  durable_kind_any_of:
+    - constraint
+    - decision
+    - fact
+  read_window_count_at_least: 4
+  scan_window_count_at_least: 1
+  must_use_tools:
+    - read_window
+    - scan_window
+    - save_context
+  must_not_use_tools:
+    - revise_context
+  durable_text_must_include_all:
+    - lease
+    - queue
+  durable_text_must_include_any:
+    - ownership
+    - authoritative state
+    - authoritative lease
+    - persisted
+    - failover
+    - worker memory
+    - restart
+  durable_text_must_not_include:
+    - helper rename
+    - debug label
+    - snapshot formatting
+    - cleanup notes

@@ -2,7 +2,11 @@
 
 ## Summary
 
-Lerim stores durable context records in SQLite.
+Lerim stores durable context records backed by source evidence.
+
+The model starts from agent traces, but traces are evidence rather than memory.
+Lerim extracts the small amount of durable signal worth reusing later and keeps
+evidence linked back to the source run.
 
 High-level record kinds include:
 
@@ -27,9 +31,14 @@ Each record can carry:
 
 The database is the source of truth.
 
-## What maintain does
+Raw traces are not the product surface. Durable records are.
 
-`maintain` works on records, not files.
+Most traces should produce no new durable record unless they contain reusable
+decisions, preferences, constraints, facts, references, or handoff context.
+
+## What curate does
+
+`curate` works on records, not files.
 
 It can:
 
@@ -37,7 +46,8 @@ It can:
 - archive low-value records
 - add links
 - supersede outdated records
+- keep context selective as more traces are processed
 
-## What ask does
+## What answer does
 
-`ask` retrieves records with hybrid search and then fetches the full records needed for the answer.
+`answer` retrieves records with hybrid search and then fetches the full records needed for the answer.

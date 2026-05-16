@@ -2,17 +2,16 @@
   <img src="assets/lerim.png" alt="Lerim Logo" width="160">
 </p>
 
-<h3 align="center">Durable context for coding agents.</h3>
+<h3 align="center">Context compiler infrastructure for AI agents.</h3>
 
 <p align="center">
-  Turn coding-agent sessions into reusable context records.
-  Capture decisions, constraints, preferences, and evidence so the next agent starts with precedent, not guesswork.
+  Lerim extracts reusable decisions, constraints, evidence, and handoffs from completed agent work so future agents start with trusted context instead of raw logs.
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/lerim/"><img src="https://img.shields.io/pypi/v/lerim?style=flat-square&color=2563eb" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/lerim/"><img src="https://img.shields.io/pypi/v/lerim?style=flat-square&color=245f46" alt="PyPI version"></a>
   <a href="https://pypi.org/project/lerim/"><img src="https://img.shields.io/pypi/pyversions/lerim?style=flat-square" alt="Python versions"></a>
-  <a href="https://github.com/lerim-dev/lerim-cli/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-BSL--1.1-10b981?style=flat-square" alt="License"></a>
+  <a href="https://github.com/lerim-dev/lerim-cli/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-BSL--1.1-a55f3f?style=flat-square" alt="License"></a>
   <a href="https://github.com/lerim-dev/lerim-cli/actions"><img src="https://img.shields.io/github/actions/workflow/status/lerim-dev/lerim-cli/ci.yml?style=flat-square&label=tests" alt="Tests"></a>
   <a href="https://github.com/lerim-dev/lerim-cli"><img src="https://img.shields.io/github/stars/lerim-dev/lerim-cli?style=flat-square" alt="GitHub stars"></a>
 </p>
@@ -27,17 +26,13 @@
   <a href="https://github.com/lerim-dev/lerim-cli/blob/main/LICENSE">License</a>
 </p>
 
-<p align="center">
-  Works with Claude Code, Codex CLI, Cursor, and OpenCode.
-</p>
-
 # Lerim
 
-Lerim is a local-first context runtime for coding agents.
+Lerim is context compiler infrastructure for AI agents.
 
-It watches agent sessions, extracts the durable parts, and stores them in one shared context layer that every future agent can query.
+It watches supported agent sessions, filters noisy execution history into durable signal, and turns that signal into a shared context layer future agents can query.
 
-Instead of losing the reasoning after each session, Lerim keeps:
+Instead of replaying raw traces or losing what happened after each run, Lerim keeps:
 
 - decisions
 - constraints
@@ -47,7 +42,9 @@ Instead of losing the reasoning after each session, Lerim keeps:
 
 ## Why Lerim
 
-Coding agents are fast, but they forget.
+AI agents now triage tickets, investigate incidents, research markets, prepare handoffs, review policies, and change software.
+
+Every run leaves a trace. Most traces are too long, too noisy, and too platform-specific for the next agent to reuse directly.
 
 Without a durable context layer:
 
@@ -56,16 +53,57 @@ Without a durable context layer:
 - preferences get ignored
 - every new session starts too close to zero
 
-Lerim fixes that by turning raw traces into reusable context records and making them queryable from the CLI, Lerim Cloud, and agent tools.
+Lerim fixes that by turning raw traces into reusable context records and making them queryable from agent tools and product workflows.
+
+The current package provides the trace-to-context foundation and supported source adapters. For customer deployments, Lerim can be adapted around the business traces that matter: support handoffs, operations incidents, research workflows, revenue processes, security reviews, and internal automation logs.
 
 ## Key Capabilities
 
-- Local-first storage. Durable context lives in one global SQLite database at `~/.lerim/context.sqlite3`.
-- Shared across agents. What Claude Code learns can be reused by Codex, Cursor, or another supported agent later.
-- Background maintenance. `sync` ingests sessions, `maintain` consolidates overlap and archives stale records, `ask` retrieves relevant precedent.
-- Generated Working Memory. `working-memory` keeps a compact Markdown startup view at `~/.lerim/workspace/current/<project_id>/WORKING_MEMORY.md`.
-- Hybrid retrieval. Lerim combines local ONNX embeddings stored through `sqlite-vec` with SQLite FTS5 and RRF fusion.
-- Clean agent tool surface. Ask exposes semantic DB-era retrieval tools like `count_context`, `list_context`, `search_context`, and `get_context`; sync and maintain use BAML/LangGraph graphs over the same SQLite context store.
+- Trace-to-context extraction. `ingest` reads supported traces, extracts reusable signal, and can archive routine runs without creating noisy durable records.
+- Shared context across agents. What one agent learns can become useful context for a different agent or workflow later.
+- Context curation. Lerim consolidates overlap, archives weak records, and keeps the context layer compact.
+- Query and startup context. Agents can ask questions against accumulated context or start from a compact context brief.
+- Evidence-backed memory. Useful decisions, constraints, preferences, references, and handoffs stay linked to the work that produced them.
+- Customer-adaptable workflows. The same context layer can be shaped around a software team, support desk, research process, operations workflow, or custom business agent.
+
+## Business Workflows Lerim Supports
+
+- Research and market intelligence: retain source trails, evidence strength, assumptions, rejected leads, and client-specific brief constraints across agent-assisted research cycles.
+- Support operations: preserve triage decisions, escalation evidence, policy references, known fixes, and customer constraints.
+- Security and IT: carry forward incident timelines, access-review rationale, policy exceptions, remediation evidence, and helpdesk handoffs.
+- Operations: preserve incident decisions, inventory exceptions, supplier or carrier constraints, runbook lessons, and unresolved risks.
+- Revenue and customer workflows: reuse account context, positioning decisions, campaign constraints, approvals, and follow-up commitments.
+- Engineering automation: retain architecture decisions, failed tests, repo conventions, release lessons, and operational constraints.
+
+## Custom Agent Traces
+
+Built-in `connect` adapters monitor the supported sources available today:
+Claude Code, Codex CLI, Cursor, and OpenCode.
+
+For another agent or business workflow, use explicit trace import:
+
+```bash
+lerim trace import ./support-agent-run.jsonl \
+  --source-name support-bot \
+  --source-profile support \
+  --scope-type domain \
+  --scope support
+```
+
+The trace can be JSON, JSONL, or plain text. Lerim normalizes it into the compact
+trace shape, stores a canonical copy under the Lerim workspace, registers the
+selected scope, and runs ingestion into the shared context store.
+
+Today, the custom-agent path expects the user or customer system to produce the
+trace file and call `lerim trace import` after a run. For a customer deployment,
+the adapter layer can automate that step around the customer's agent runtime,
+ticket system, browser workflow, or internal automation logs.
+
+Customers can also run their own exporter, cleaner, or redaction step before
+import. That is the recommended path when traces contain source-specific noise,
+large tool payloads, secrets, regulated data, or customer-specific retention
+rules. Lerim filters for durable signal during ingestion, but it should not be
+used as the only privacy or compliance sanitizer for arbitrary traces.
 
 ## Quick Start
 
@@ -75,7 +113,7 @@ Install Lerim:
 pip install lerim
 ```
 
-Initialize and register the current repo:
+Initialize and register the current workspace:
 
 ```bash
 lerim init
@@ -96,10 +134,10 @@ lerim status
 lerim status --live
 ```
 
-Ask a question:
+Answer a question:
 
 ```bash
-lerim ask "What do we already know about the auth flow?"
+lerim answer "What sources supported our last competitor-pricing assumption?"
 ```
 
 ## What the Commands Do
@@ -116,32 +154,32 @@ Shows service health and current status.
 
 Shows live status updates. This is useful for demos and for watching background extraction happen.
 
-### `lerim sync`
+### `lerim ingest`
 
-Indexes sessions and extracts durable context from recent work. When Lerim is running in the background, sync work is scheduled from your configured intervals.
+Indexes supported trace sessions and extracts durable context from recent work. When Lerim is running in the background, ingest work is scheduled from your configured intervals.
 
-### `lerim maintain`
+### `lerim curate`
 
-Improves context quality over time by merging duplicates, archiving weak records, and refreshing useful context. Background maintenance is also driven by configured intervals.
+Improves context quality over time by merging duplicates, archiving weak records, and refreshing useful context. This is where Lerim keeps memory selective instead of turning every trace into permanent context.
 
-### `lerim ask`
+### `lerim answer`
 
-Lets you ask questions against accumulated project context.
+Lets you answer questions against accumulated project context.
 
 ```bash
-lerim ask "Why did we choose SQLite for local metadata?"
+lerim answer "What evidence supports the latest compliance decision?"
 ```
 
-### `lerim working-memory`
+### `lerim context-brief`
 
 Reads or refreshes a generated Markdown startup context for the current project.
-This is the fast path a coding agent can read at the start of work without
-running retrieval or synthesis in real time.
+This is the fast path an agent can read at the start of work without running
+retrieval or synthesis in real time.
 
 ```bash
-lerim working-memory show
-lerim working-memory status
-lerim working-memory refresh
+lerim context-brief show
+lerim context-brief status
+lerim context-brief refresh
 ```
 
 ## Configuration
@@ -173,43 +211,57 @@ Example provider config:
 [roles.agent]
 provider = "minimax"
 model = "MiniMax-M2.7"
-fallback_models = ["zai:glm-4.7"]
+temperature = 1.0
+curate_max_llm_calls = 50
+answer_max_retrieval_actions = 20
 ```
 
 ## How It Works
 
-Lerim has four main flows:
+Lerim has six internal phases:
 
-1. `sync`
-   Reads new traces/session metadata and extracts durable context records.
+1. `trace_ingestor`
+   Reads new supported traces/session metadata and prepares trace windows.
 
-2. `maintain`
+2. `durable_signal_filter`
+   Separates reusable signal from implementation evidence and trace noise.
+
+3. `context_writer`
+   Writes exactly one episode plus zero or more durable records.
+
+4. `context_curator`
    Refines existing records by merging overlap and retiring low-value stale records.
 
-3. `ask`
+5. `context_answerer`
    Retrieves relevant records and answers a question using the current context layer.
 
-4. `working-memory`
+6. `context_brief_compiler`
    Generates a compact, cited Markdown view from recent durable records so agents
    can start with fast context before querying deeper.
 
 In practice, this means Lerim becomes the shared precedent store behind your agent workflows.
 
-Semantic retrieval is local:
+The trace-to-context pipeline is intentionally selective:
 
-- ONNX model: `mixedbread-ai/mxbai-embed-xsmall-v1`
-- vector storage: `sqlite-vec`
-- lexical retrieval: SQLite FTS5
-- fusion: `RRF`
+```text
+raw trace -> evidence -> durable signal -> scoped context -> future agent
+```
 
-## Storage Model
+Most routine traces should produce no new durable record. Lerim's value is compact, cited context, not more logs.
+
+Retrieval blends semantic and lexical signals so agents get compact, relevant
+context instead of a raw trace dump.
+
+## Implementation Details
+
+### Technical Storage Model
 
 Global Lerim state lives under `~/.lerim/`:
 
 - `context.sqlite3` — canonical durable context store
 - `index/sessions.sqlite3` — session catalog and queue
-- `workspace/` — sync and maintain run artifacts
-- `workspace/current/<project_id>/WORKING_MEMORY.md` — generated current Working Memory view
+- `workspace/` — ingest and curate run artifacts
+- `workspace/current/<project_id>/CONTEXT_BRIEF.md` — generated current Context Brief view
 - `cache/traces/` — compacted agent trace cache
 - `models/embeddings/` — local embedding model cache
 - `models/huggingface/` — Hugging Face library cache
@@ -222,25 +274,22 @@ Project separation happens inside the database by `project_id`.
 
 There is no per-project durable store on disk.
 
-## Agent Runtime
+### Agent Runtime
 
-The sync extractor and maintain flow use BAML plus LangGraph graphs under
-`src/lerim/agents/`. Sync reads deterministic trace windows, asks BAML for
-typed window scans, synthesizes one final record payload, and persists the
-result to SQLite. Maintain builds semantic-neighbor clusters from active
-records, asks BAML to review clusters, then asks BAML to review the remaining
-records for single-record health issues before applying validated store
-operations.
+The runtime lives under `src/lerim/agents/`.
+The trace ingestion flow reads deterministic trace windows, observes typed
+findings, filters durable signal aggressively, writes one final context payload,
+and persists it for later retrieval. Routine sessions can produce only an
+archived episode and no durable records.
 
-Ask still uses PydanticAI with a small semantic DB-era retrieval surface:
+The context curator builds semantic-neighbor clusters from active records,
+reviews clusters, reviews remaining records for single-record health issues,
+and applies validated store operations.
 
-- `count_context`
-- `list_context`
-- `search_context`
-- `get_context`
-
-Keeping the surface DB-era and semantic makes the runtime easier to reason
-about and gives smaller future models a cleaner action space for training.
+The context answerer plans exact count/list/search retrieval actions, executes
+read-only context queries, and synthesizes the answer from retrieved records
+only. The context-brief compiler uses the same pattern to write cited
+startup context from bounded candidate records.
 
 ## Common Commands
 
@@ -250,11 +299,11 @@ lerim status --live
 lerim logs --follow
 lerim queue
 lerim queue --failed
-lerim sync
-lerim maintain
-lerim working-memory show
-lerim working-memory status
-lerim ask "What decisions exist about caching?"
+lerim ingest
+lerim curate
+lerim context-brief show
+lerim context-brief status
+lerim answer "What decisions exist about caching?"
 ```
 
 Setup and management:
@@ -286,8 +335,8 @@ tests/run_tests.sh e2e
 Before release, verify the affected path with the relevant suites:
 
 - `tests/smoke/` — quick real-LLM extract sanity
-- `tests/integration/` — real extract, maintain, and semantic ask coverage
-- `tests/e2e/` — full runtime-cycle checks over sync, maintain, and ask
+- `tests/integration/` — real extract, curate, and semantic answer coverage
+- `tests/e2e/` — full runtime-cycle checks over ingest, curate, and answer
 
 Start here if you want to read the codebase:
 
@@ -302,13 +351,13 @@ Contributions are welcome.
 
 Good starting points include:
 
-- session adapters and adding more agents
+- trace-source adapters and generic import
 - extraction quality
-- context maintenance quality
+- context curation quality
 - docs and demo examples
 
 Helpful links:
 
 - [Contributing Guide](https://docs.lerim.dev/contributing/getting-started/)
 - [Open issues](https://github.com/lerim-dev/lerim-cli/issues)
-- Agent adapter examples: `src/lerim/adapters/`
+- Trace-source adapter examples: `src/lerim/adapters/`

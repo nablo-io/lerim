@@ -6,10 +6,10 @@ The maintained test surface is DB-first.
 
 What we test:
 
-- unit tests for config, adapters, store, tools, CLI, API, daemon, runtime, and generated Working Memory
-- smoke tests for quick real-LLM extract sanity
-- integration tests for real extract, maintain, semantic ask, cloud sync state, and multi-project scope flows
-- integration tests for runtime orchestration behavior like workspace artifact layout, ask debug trace ordering, and mutation count reporting
+- unit tests for config, adapters, store, CLI, API, daemon, runtime, and generated Context Brief
+- smoke tests for quick real-LLM trace-ingestion sanity
+- integration tests for real trace ingestion, context curation, context answering, context briefs, cloud ingest state, and multi-project scope flows
+- integration tests for runtime orchestration behavior like workspace artifact layout, answer debug trace ordering, and mutation count reporting
 - e2e surface tests for CLI/API rendering and deterministic query behavior
 - deterministic query tests preserve the difference between unscoped queries and empty project selections
 
@@ -34,9 +34,10 @@ The new live integration suites are behavior-first.
 Shape:
 
 - one folder per cluster under `tests/integration/`, for example:
-  - `tests/integration/extract/`
-  - `tests/integration/maintain/`
-  - `tests/integration/ask/`
+  - `tests/integration/trace_ingestion/`
+  - `tests/integration/context_curator/`
+  - `tests/integration/answer/`
+  - `tests/integration/agents/`
   - `tests/integration/runtime/`
   - `tests/integration/scope/`
   - `tests/integration/cloud/`
@@ -44,14 +45,14 @@ Shape:
 - one or more behavior-grouped test files inside each cluster folder
 - one `helpers.py` per cluster when that cluster needs a runner/harness
 - one expectation YAML per case under `tests/fixtures/expectations/<cluster>/`
-- trace fixtures under `tests/fixtures/traces/extract/` only when the agent truly works from a trace
+- trace fixtures under `tests/fixtures/traces/trace_ingestion/` only when the agent truly works from a trace
 
 Design rule:
 
-- `extract` cases are trace-driven
-- `ask` and `maintain` cases are mostly seeded-state-driven
+- `trace_ingestion` cases are trace-driven
+- `answer` and `context_curator` cases are mostly seeded-state-driven
 - scope/runtime/cloud/queue clusters use the smallest real setup that exercises that behavior
-- runtime cases cover generated Working Memory artifact layout, current-copy behavior, skip behavior, and empty-state generation
+- runtime cases cover generated Context Brief artifact layout, current-copy behavior, skip behavior, and empty-state generation
 
 Some extract pressure cases generate a long trace dynamically instead of checking in a giant fixture. That is intentional. Use a generated trace when the test is about context pressure or pruning, not about exact transcript wording.
 
@@ -83,21 +84,21 @@ Rules:
 - agent tool tests also cover source-session provenance defaults so historical traces do not look freshly created when indexed later
 - agent build tests guard the runtime tool contract against documentation and helper drift
 - adapter tests cover compact-trace visibility for canonical message fields and structured event messages without keyword heuristics
-- extract persistence tests cover idempotent replay when a session episode already exists
-- maintain unit tests cover semantic clustering, action validation, and direct `ContextStore` mutation application
+- ingest persistence tests cover idempotent replay when a session episode already exists
+- curate unit tests cover semantic clustering, action validation, and direct `ContextStore` mutation application
 - session catalog tests cover queue claim availability, content-hash refresh/change detection, and stable pagination ordering
 - API/daemon tests cover degraded status reporting when the session catalog is unavailable
 - daemon tests cover transient session-job heartbeat write failures
 - session catalog tests cover process-local active-job leases that avoid false stale queue health during transient heartbeat write failures
-- daemon sync tests cover one-at-a-time job claiming to avoid false stale-running queue state
-- config tests cover provider client lifecycle, provider-specific model settings, fallback-model parsing, strict config parsing, and SDK log-noise filters
-- Working Memory tests cover cwd project resolution, freshness counts, markdown citations, CLI local reads, and artifact writes without live LLM calls
+- daemon ingest tests cover one-at-a-time job claiming to avoid false stale-running queue state
+- config tests cover provider capability validation, provider-specific model normalization, strict config parsing, and SDK log-noise filters
+- Context Brief tests cover cwd project resolution, freshness counts, markdown citations, CLI local reads, and artifact writes without live LLM calls
 
 ## Testing rules
 
 1. **Every public function gets a test.** No exceptions.
 2. **Database operations get direct store tests.** Never test `ContextStore` methods only through agent tools.
-3. **Validation paths are first-class.** Every `ValueError`, `ModelRetry`, and guard condition needs a dedicated test.
+3. **Validation paths are first-class.** Every `ValueError`, graph-visible model retry, and guard condition needs a dedicated test.
 4. **One test file per source module.** Never split one module's tests across multiple files.
 5. **Three layers: unit (no LLM/network, temp DB), integration (real LLM, real DB, `@pytest.mark.llm`), smoke (quick sanity).**
 6. **Mock external deps, not internal modules.** Use temp SQLite DBs instead of mocking ContextStore.
@@ -113,11 +114,11 @@ The current system is:
 - canonical durable context in `~/.lerim/context.sqlite3`
 - canonical session catalog in `~/.lerim/index/sessions.sqlite3`
 - canonical run artifacts in `~/.lerim/workspace/`
-- generated Working Memory artifacts in `~/.lerim/workspace/current/<project_id>/WORKING_MEMORY.md`
+- generated Context Brief artifacts in `~/.lerim/workspace/current/<project_id>/CONTEXT_BRIEF.md`
 - local semantic retrieval via ONNX embeddings + `sqlite-vec` + FTS5 + RRF
-- extract graph: deterministic window reads, BAML window scan, BAML record synthesis, context-store persistence
-- maintain graph: active-record inventory, semantic-neighbor clusters, BAML cluster review, BAML health review for records without prior cluster actions, validated store mutations
-- ask tools: `count_context`, `list_context`, `search_context`, `get_context`
+- ingest graph: deterministic window reads, BAML trace observation, BAML durable-signal filtering, BAML context writing, context-store persistence
+- curate graph: active-record inventory, semantic-neighbor clusters, BAML context-cluster review, BAML record-health review for records without prior cluster actions, validated store mutations
+- answer flow: BAML retrieval planning, read-only `ContextStore` count/list/search execution, BAML answer synthesis
 
 ## Fixtures
 
@@ -139,7 +140,7 @@ They audit:
 - schema exactness
 - dead forbidden tables
 - agent tool use from `agent_trace.json`
-- DB quality after sync and maintain
+- DB quality after ingest and curate
 
 ## Expectation files
 
@@ -156,6 +157,6 @@ Keep them behavior-shaped.
 
 Do not encode accidental wording or prompt internals unless the behavior truly depends on that distinction.
 
-For ask cases, prefer support-boundary assertions over total tool bans: exact time/current queries should prove narrowing happens before synthesis, zero-result windows should prove no later retrieval widens scope, and semantic cases should prove the returned fetched support is sufficient. Only ban tools when the ban is the behavior under test, such as deterministic count questions avoiding semantic retrieval.
+For answer cases, prefer support-boundary assertions over total tool bans: exact time/current queries should prove narrowing happens before synthesis, zero-result windows should prove no later retrieval widens scope, and semantic cases should prove the returned fetched support is sufficient. Only ban tools when the ban is the behavior under test, such as deterministic count questions avoiding semantic retrieval.
 
-For maintain cases, no-churn expectations should assert that useful records keep their content and receive no mutation rows. Do not require rewrite churn when a concise durable record already has clear typed fields.
+For curate cases, no-churn expectations should assert that useful records keep their content and receive no mutation rows. Do not require rewrite churn when a concise durable record already has clear typed fields.

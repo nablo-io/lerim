@@ -105,11 +105,7 @@ def test_type_conversion_non_empty_string():
 
 
 def test_role_config_construction():
-    """_build_role produces RoleConfig from explicit config values.
-
-    The single-pass extraction agent auto-scales its budget — no
-    usage_limit_* keys live on RoleConfig anymore.
-    """
+    """_build_role produces RoleConfig from explicit config values."""
     role = _build_role(
         {},
         default_provider="openrouter",
@@ -120,14 +116,14 @@ def test_role_config_construction():
     assert role.model == "qwen/qwen3-coder-30b-a3b-instruct"
 
 
-def test_role_config_construction_with_request_limits():
-    """_build_role should honor maintain/ask request limit overrides."""
+def test_role_config_construction_with_agent_budgets():
+    """_build_role should honor curate/answer budget overrides."""
     role = _build_role(
         {
             "provider": "ollama",
             "model": "qwen3:8b",
-            "max_iters_maintain": 12,
-            "max_iters_ask": 8,
+            "curate_max_llm_calls": 12,
+            "answer_max_retrieval_actions": 8,
         },
         default_provider="openrouter",
         default_model="default-model",
@@ -135,8 +131,8 @@ def test_role_config_construction_with_request_limits():
     assert isinstance(role, RoleConfig)
     assert role.provider == "ollama"
     assert role.model == "qwen3:8b"
-    assert role.max_iters_maintain == 12
-    assert role.max_iters_ask == 8
+    assert role.curate_max_llm_calls == 12
+    assert role.answer_max_retrieval_actions == 8
 
 
 def test_config_scaffold_creation(tmp_path, monkeypatch):
@@ -201,7 +197,6 @@ def test_config_public_dict(tmp_path):
     d = cfg.public_dict()
     assert isinstance(d, dict)
     # Should not contain API keys
-    assert "anthropic_api_key" not in d
     assert "openai_api_key" not in d
     assert "zai_api_key" not in d
     assert "global_data_dir" not in d
@@ -225,14 +220,14 @@ def test_config_rejects_unknown_role_keys(tmp_path, monkeypatch):
         "\n[server]\n"
         'host = "127.0.0.1"\n'
         "port = 8765\n"
-        "sync_interval_minutes = 5\n"
-        "maintain_interval_minutes = 5\n"
-        "sync_window_days = 7\n"
-        "sync_max_sessions = 10\n"
+        "ingest_interval_minutes = 5\n"
+        "curate_interval_minutes = 5\n"
+        "ingest_window_days = 7\n"
+        "ingest_max_sessions = 10\n"
         "\n[roles.agent]\n"
         'provider = "minimax"\n'
         'model = "MiniMax-M2.7"\n'
-        "max_iters_sync = 15\n",
+        "ingest_max_llm_calls = 15\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("LERIM_CONFIG", str(config_path))

@@ -1,6 +1,10 @@
-# Connecting Agents
+# Connecting Trace Sources
 
-Lerim reads trace data from supported coding agents.
+Lerim reads trace data from supported sources and turns it into reusable context.
+
+The commands below connect the sources available today. Generic trace import
+and broader source support are the direction for support, research, operations,
+revenue, compliance, and custom business-agent workflows.
 
 ## Auto-detect
 

@@ -81,13 +81,13 @@ def test_multiple_status_calls(
 @pytest.mark.e2e
 def test_commands_fail_gracefully_without_server(cli: CLIRunner, e2e_home) -> None:
 	"""Commands that need server fail gracefully when it's not running."""
-	result = cli.run("sync")
+	result = cli.run("ingest")
 	assert result.returncode != 0 or "not running" in (result.stdout + result.stderr).lower()
 
-	result = cli.run("maintain")
+	result = cli.run("curate")
 	assert result.returncode != 0 or "not running" in (result.stdout + result.stderr).lower()
 
-	result = cli.run("ask", "test question")
+	result = cli.run("answer", "test question")
 	assert result.returncode != 0 or "not running" in (result.stdout + result.stderr).lower()
 
 

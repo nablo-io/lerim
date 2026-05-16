@@ -12,9 +12,9 @@ For local work, use the CLI and local API directly:
 
 ```bash
 lerim status
-lerim ask "What changed?"
-lerim sync
-lerim maintain
+lerim answer "What changed?"
+lerim ingest
+lerim curate
 ```
 
 The local API is available on port `8765` (default) when you run `lerim up` or `lerim serve`.

@@ -1,4 +1,0 @@
-case: maintain_project_a_only_mutates_project_a
-expected:
-  changed_project: "alpha"
-  untouched_project: "beta"

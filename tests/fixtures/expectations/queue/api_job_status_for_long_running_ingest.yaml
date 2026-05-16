@@ -1,0 +1,8 @@
+case: api_job_status_for_long_running_ingest
+expected:
+  start_status: "started"
+  running_status: "running"
+  completed_status: "completed"
+  op_type: "ingest"
+  queue_running: 1
+  queue_done: 1

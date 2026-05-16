@@ -3,7 +3,7 @@
 Tests that multiple projects have isolated context:
 - Projects are registered separately
 - Records are scoped to projects
-- Ask can filter by project scope
+- Answer can filter by project scope
 
 Limitation: `project add/remove` commands write to ~/.lerim/config.toml
 directly, not respecting LERIM_CONFIG. Tests that modify project
@@ -95,15 +95,15 @@ def test_status_with_project_scope(
 
 @pytest.mark.e2e
 @pytest.mark.llm
-def test_ask_with_project_scope(
+def test_answer_with_project_scope(
 	cli: CLIRunner,
 	e2e_server: LerimServer,
 	e2e_project: Path,
 	e2e_home: Path,
 ) -> None:
-	"""Ask can be scoped to a specific project."""
+	"""Answer can be scoped to a specific project."""
 	result = cli.run_ok(
-		"ask",
+		"answer",
 		"What do we know?",
 		"--scope", "project",
 		"--project", e2e_project.name,

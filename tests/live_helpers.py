@@ -10,12 +10,7 @@ from typing import Any
 
 import pytest
 import sqlite_vec
-from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 
-from lerim.agents.toolsets import (
-    ASK_TOOL_NAMES as ASK_TOOL_NAMES,
-    CURRENT_AGENT_TOOL_NAMES as CURRENT_AGENT_TOOL_NAMES,
-)
 from lerim.config.settings import Config, get_config, reload_config
 from lerim.context.spec import RECORD_KIND_SPECS
 
@@ -26,6 +21,7 @@ REQUIRED_CONTEXT_TABLES = {
     "record_versions",
     "records_fts",
     "schema_meta",
+    "scopes",
     "sessions",
 }
 IGNORED_FTS_SHADOW_TABLES = {
@@ -48,20 +44,23 @@ FRAMEWORK_TOOL_NAMES = {
 }
 EXTRACT_EVENT_NAMES = frozenset(
     {
+        "resolve_scope",
         "read_window",
         "scan_window",
+        "filter_signals",
         "synthesize_records",
+        "review_records",
         "save_context",
         "model_retry",
     }
 )
-MAINTAIN_EVENT_NAMES = frozenset(
+CONTEXT_CURATOR_EVENT_NAMES = frozenset(
     {
         "load_inventory",
         "build_similarity_clusters",
         "review_cluster",
         "review_health_batch",
-        "apply_maintain_action",
+        "apply_context_curation_action",
         "model_retry",
         "final_result",
     }
@@ -121,8 +120,8 @@ def build_live_config(base: Path) -> Config:
         Path("models") / "embeddings",
         Path("models") / "huggingface" / "hub",
         Path("observability") / "backups",
-        Path("workspace") / "maintain",
-        Path("workspace") / "sync",
+        Path("workspace") / "curate",
+        Path("workspace") / "ingest",
     ):
         (base / relative).mkdir(parents=True, exist_ok=True)
     (base / "platforms.json").write_text("{}\n", encoding="utf-8")
@@ -140,13 +139,13 @@ def build_live_config(base: Path) -> Config:
     )
 
 
-def dump_messages(messages: list[ModelMessage]) -> list[dict[str, Any]]:
-    """Serialize PydanticAI message history into stable JSON-like objects."""
-    return ModelMessagesTypeAdapter.dump_python(messages, mode="json")
+def dump_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return BAML/LangGraph event history as stable JSON-like objects."""
+    return [dict(message) for message in messages]
 
 
 def extract_tool_names(payload: list[dict[str, Any]]) -> list[str]:
-    """Extract tool-call names from a serialized message payload."""
+    """Extract event/function/action names from a serialized trace payload."""
     names: list[str] = []
 
     def walk(value: Any) -> None:
@@ -154,10 +153,12 @@ def extract_tool_names(payload: list[dict[str, Any]]) -> list[str]:
             action = str(value.get("action") or "").strip()
             if action:
                 names.append(action)
-            if value.get("part_kind") == "tool-call":
-                tool_name = str(value.get("tool_name") or "").strip()
-                if tool_name:
-                    names.append(tool_name)
+            function = str(value.get("function") or "").strip()
+            if function:
+                names.append(function)
+            action_type = str(value.get("action_type") or "").strip()
+            if action_type:
+                names.append(action_type)
             for item in value.values():
                 walk(item)
             return
@@ -170,7 +171,7 @@ def extract_tool_names(payload: list[dict[str, Any]]) -> list[str]:
 
 
 def read_agent_trace_tool_names(agent_trace_path: Path) -> list[str]:
-    """Read one on-disk agent trace and return its tool-call names."""
+    """Read one on-disk agent trace and return its event/function/action names."""
     payload = json.loads(agent_trace_path.read_text(encoding="utf-8"))
     return extract_tool_names(payload)
 

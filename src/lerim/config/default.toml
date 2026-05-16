@@ -8,10 +8,10 @@ dir = "~/.lerim"
 [server]
 host = "127.0.0.1"
 port = 8765
-sync_interval_minutes = 30          # sync hot path interval
-maintain_interval_minutes = 60       # maintain cold path interval
-sync_window_days = 7
-sync_max_sessions = 50
+ingest_interval_minutes = 30          # ingest hot path interval
+curate_interval_minutes = 60       # curate cold path interval
+ingest_window_days = 7
+ingest_max_sessions = 50
 
 [semantic_search]
 embedding_model_id = "mixedbread-ai/mxbai-embed-xsmall-v1"
@@ -26,27 +26,18 @@ provider = "minimax"               # opencode_go | minimax | zai | openrouter | 
 model = "MiniMax-M2.7"                 # package default model for minimax provider
 api_base = ""
 # Model names are auto-normalized per provider (e.g. minimax-m2.5 → MiniMax-M2.5 for minimax provider).
-fallback_models = []  # disabled for now — ensure exact model is used, no silent fallback
-# BAML/LangGraph sync reads deterministic trace windows and derives its
-# extraction budget from the trace size in lerim.agents.extract.windowing.
-max_iters_maintain = 50                # max BAML calls for maintain flow
-max_iters_ask = 20                     # max request turns for ask flow
-# MiniMax-M2 official sampling preset (from HuggingFace model card):
-# temperature=1.0, top_p=0.95, top_k=40. These are for "agent/tool-calling
-# tasks" per the vendor recommendation. See also MiniMax docs re valid
-# temperature range (0.0, 1.0] — clamped in _build_model_settings.
+# BAML/LangGraph trace ingestion reads deterministic trace windows and derives its
+# extraction budget from the trace size in lerim.agents.trace_ingestion.windowing.
+curate_max_llm_calls = 50               # max BAML calls for context curation
+answer_max_retrieval_actions = 20       # max planned retrieval actions for context answering
+# MiniMax requires temperature > 0, so the runtime clamps this for MiniMax only.
 temperature = 1.0
-top_p = 0.95
-top_k = 40                              # passed via extra_body (not a standard OpenAI param)
-max_tokens = 32000                      # completion budget passed to the model
-parallel_tool_calls = true              # enable parallel tool emission when the model supports it
 
 [providers]
 # Default API base URLs per provider.
 # Override here to point all roles using that provider at a different endpoint.
 # Per-role api_base (under [roles.*]) takes precedence over these defaults.
 minimax = "https://api.minimax.io/v1"
-minimax_anthropic = "https://api.minimax.io/anthropic"
 zai = "https://api.z.ai/api/coding/paas/v4"
 openai = "https://api.openai.com/v1"
 openrouter = "https://openrouter.ai/api/v1"
@@ -54,7 +45,7 @@ opencode_go = "https://opencode.ai/zen/go/v1"
 ollama = "http://127.0.0.1:11434"
 # Docker: use "http://host.docker.internal:11434" if Ollama runs on the host.
 mlx = "http://127.0.0.1:8000/v1"
-auto_unload = true                     # unload Ollama models after each sync/maintain cycle to free RAM
+auto_unload = true                     # unload Ollama models after each ingest/curate cycle to free RAM
 
 [cloud]
 endpoint = "https://api.lerim.dev"

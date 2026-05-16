@@ -37,26 +37,26 @@ def test_project_remove_nonexistent(cli: CLIRunner, e2e_home) -> None:
 
 
 @pytest.mark.e2e
-def test_sync_with_invalid_run_id(
+def test_ingest_with_invalid_run_id(
 	cli: CLIRunner,
 	e2e_server: LerimServer,
 	e2e_home,
 ) -> None:
-	"""Sync with invalid run-id handles error gracefully."""
-	result = cli.run("sync", "--run-id", "nonexistent-session-id-12345")
+	"""Ingest with invalid run-id handles error gracefully."""
+	result = cli.run("ingest", "--run-id", "nonexistent-session-id-12345")
 	assert result.returncode == 0 or "not found" in (result.stdout + result.stderr).lower()
 
 
 @pytest.mark.e2e
 @pytest.mark.llm
-def test_ask_empty_question(
+def test_answer_empty_question(
 	cli: CLIRunner,
 	e2e_server: LerimServer,
 	e2e_project: Path,
 	e2e_home,
 ) -> None:
-	"""Ask with empty question returns error or handles gracefully."""
-	result = cli.run("ask", "", timeout=60)
+	"""Answer with empty question returns error or handles gracefully."""
+	result = cli.run("answer", "", timeout=60)
 	assert result.returncode == 0 or "error" in (result.stdout + result.stderr).lower() or len(result.stderr.strip()) > 0
 
 
@@ -93,7 +93,7 @@ def test_help_flag(cli: CLIRunner, e2e_home) -> None:
 @pytest.mark.e2e
 def test_subcommand_help(cli: CLIRunner, e2e_home) -> None:
 	"""Subcommand help works."""
-	for cmd in ["project", "sync", "maintain", "ask", "status", "queue"]:
+	for cmd in ["project", "ingest", "curate", "answer", "status", "queue"]:
 		result = cli.run(cmd, "--help")
 		assert result.returncode == 0
 

@@ -1,0 +1,40 @@
+case: multi_record_trace
+summary: One trace can yield two clearly independent durable records when each is reusable on its own.
+
+expected:
+  episode_count: 1
+  durable_count: 2
+  decision_count: 1
+  fact_count: 1
+  must_use_tools:
+    - read_window
+    - save_context
+  must_not_use_tools:
+    - revise_context
+  decision_text_must_include_all:
+    - typed
+    - tools
+  decision_text_must_include_any:
+    - raw sql
+    - direct sql
+    - product agents
+    - domain tools
+    - invariants
+  decision_text_must_not_include:
+    - debug print
+    - helper variable
+    - assertion
+  fact_text_must_include_all:
+    - libvips
+    - image
+  fact_text_must_include_any:
+    - ci
+    - transforms
+    - dependency
+    - environment
+    - require
+    - missing
+  fact_text_must_not_include:
+    - debug print
+    - helper variable
+    - assertion

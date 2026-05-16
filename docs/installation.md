@@ -1,6 +1,6 @@
 # Installation
 
-Install Lerim, connect your agent traces, and start the service.
+Install Lerim, connect current trace sources, and start the service.
 
 ## Install
 
@@ -16,13 +16,13 @@ lerim init
 
 This writes user config to the active Lerim config path (by default `~/.lerim/config.toml`).
 
-## Connect agents
+## Connect current trace sources
 
 ```bash
 lerim connect auto
 ```
 
-Or connect one platform manually:
+Or connect one current coding-agent platform manually:
 
 ```bash
 lerim connect claude

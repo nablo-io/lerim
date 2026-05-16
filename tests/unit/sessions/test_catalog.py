@@ -1075,7 +1075,7 @@ class TestQueueHealth:
         assert health["degraded"] is True
         assert health["stale_running_count"] >= 1
         assert isinstance(health["oldest_running_age_seconds"], int)
-        assert "lerim sync" in health["advice"]
+        assert "lerim ingest" in health["advice"]
 
     def test_fresh_heartbeat_keeps_queue_healthy(self, sessions_db):
         _seed_and_enqueue("qh-heartbeat")

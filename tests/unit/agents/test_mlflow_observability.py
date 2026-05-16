@@ -2,19 +2,14 @@
 
 from __future__ import annotations
 
-import inspect
 import sys
-from types import SimpleNamespace
 
 import pytest
-from pydantic_ai import ModelRetry
-from pydantic_ai.messages import FinalResultEvent, RetryPromptPart
 
 from lerim.agents.mlflow_observability import (
     finish_mlflow_run,
-    handle_mlflow_event_stream,
     lerim_mlflow_run,
-    trace_mlflow_tool,
+    mlflow_span,
 )
 
 
@@ -70,104 +65,65 @@ class FakeMlflow:
 def _run_kwargs() -> dict:
     return {
         "enabled": True,
-        "operation": "sync",
-        "run_id": "sync-run",
+        "operation": "ingest",
+        "run_id": "ingest-run",
         "session_id": "session",
         "project_id": "proj",
         "project_name": "project",
     }
 
 
-async def _events(*items):
-    for item in items:
-        yield item
-
-
-def test_trace_mlflow_tool_preserves_original_signature():
-    def sample_tool(ctx, name: str, limit: int = 3) -> str:
-        """Sample tool."""
-        return name * limit
-
-    wrapped = trace_mlflow_tool(sample_tool)
-
-    assert wrapped.__name__ == "sample_tool"
-    assert wrapped.__doc__ == "Sample tool."
-    assert inspect.signature(wrapped) == inspect.signature(sample_tool)
-
-
-def test_tool_wrapper_logs_success_and_controlled_retry(monkeypatch):
+def test_mlflow_span_logs_success(monkeypatch):
     fake_mlflow = FakeMlflow()
     monkeypatch.setitem(sys.modules, "mlflow", fake_mlflow)
-
-    def flaky_tool(ctx, value: str) -> str:
-        if value == "retry":
-            raise ModelRetry("try again")
-        return f"ok:{value}"
-
-    wrapped = trace_mlflow_tool(flaky_tool)
-    ctx = SimpleNamespace(deps=SimpleNamespace())
 
     with lerim_mlflow_run(**_run_kwargs()) as mlflow_run:
-        assert wrapped(ctx, "done") == "ok:done"
-        with pytest.raises(ModelRetry):
-            wrapped(ctx, "retry")
-        finish_mlflow_run(mlflow_run, final_status="succeeded")
+        with mlflow_span(
+            "lerim.agent.trace_ingestion",
+            span_type="AGENT",
+            attributes={"lerim.agent_name": "trace_ingestion"},
+            inputs={"trace": "sample"},
+        ):
+            pass
+        finish_mlflow_run(
+            mlflow_run,
+            final_status="succeeded",
+            outputs={"records_created": 1},
+            records_created=1,
+        )
 
-    tool_spans = [span for span in fake_mlflow.spans if span.name == "lerim.tool.flaky_tool"]
-    assert tool_spans[0].attributes["lerim.outcome"] == "succeeded"
-    assert tool_spans[0].status == "OK"
-    assert tool_spans[1].attributes["lerim.outcome"] == "controlled_retry"
-    assert tool_spans[1].attributes["lerim.retry_requested"] is True
-    assert tool_spans[1].attributes["lerim.terminal_error"] is False
-    assert tool_spans[1].status == "OK"
-    assert tool_spans[1].exit_type is None
-    root_span = fake_mlflow.spans[0]
-    assert root_span.attributes["lerim.tool_call_count"] == 2
-    assert root_span.attributes["lerim.controlled_retry_count"] == 1
+    child = next(span for span in fake_mlflow.spans if span.name == "lerim.agent.trace_ingestion")
+    assert child.span_type == "AGENT"
+    assert child.attributes["lerim.agent_name"] == "trace_ingestion"
+    assert child.inputs == {"trace": "sample"}
+    assert child.status == "OK"
+
+    root = fake_mlflow.spans[0]
+    assert root.attributes["lerim.records_created"] == 1
+    assert root.outputs == {"records_created": 1}
+    assert root.status == "OK"
 
 
-def test_tool_wrapper_logs_terminal_error(monkeypatch):
+def test_mlflow_span_marks_errors(monkeypatch):
     fake_mlflow = FakeMlflow()
     monkeypatch.setitem(sys.modules, "mlflow", fake_mlflow)
-
-    def broken_tool(ctx) -> str:
-        raise RuntimeError("boom")
-
-    wrapped = trace_mlflow_tool(broken_tool)
-    ctx = SimpleNamespace(deps=SimpleNamespace())
 
     with pytest.raises(RuntimeError, match="boom"):
         with lerim_mlflow_run(**_run_kwargs()):
-            wrapped(ctx)
+            with mlflow_span("lerim.agent.context_curator", span_type="AGENT"):
+                raise RuntimeError("boom")
 
-    tool_span = next(span for span in fake_mlflow.spans if span.name == "lerim.tool.broken_tool")
-    assert tool_span.attributes["lerim.outcome"] == "terminal_error"
-    assert tool_span.attributes["lerim.terminal_error"] is True
-    assert tool_span.status == "ERROR"
-    assert tool_span.exit_type is RuntimeError
+    child = next(span for span in fake_mlflow.spans if span.name == "lerim.agent.context_curator")
+    assert child.status == "ERROR"
+    assert child.exit_type is RuntimeError
+    root = fake_mlflow.spans[0]
+    assert root.status == "ERROR"
 
 
-def test_event_handler_logs_retry_prompt_and_final_result(monkeypatch):
-    fake_mlflow = FakeMlflow()
-    monkeypatch.setitem(sys.modules, "mlflow", fake_mlflow)
-
-    retry_event = SimpleNamespace(
-        event_kind="function_tool_result",
-        result=RetryPromptPart(
-            content="add required fields",
-            tool_name="save_context",
-            tool_call_id="call-1",
-        ),
-    )
-    final_event = FinalResultEvent(tool_name="final_result", tool_call_id="call-2")
-
-    with lerim_mlflow_run(**_run_kwargs()) as mlflow_run:
-        import asyncio
-
-        asyncio.run(handle_mlflow_event_stream(None, _events(retry_event, final_event)))
+def test_mlflow_span_noops_when_run_disabled() -> None:
+    with lerim_mlflow_run(enabled=False, **{k: v for k, v in _run_kwargs().items() if k != "enabled"}) as mlflow_run:
+        with mlflow_span("lerim.agent.context_answerer") as span:
+            assert span is None
         finish_mlflow_run(mlflow_run, final_status="succeeded")
 
-    assert any(span.name == "lerim.retry.save_context" for span in fake_mlflow.spans)
-    assert any(span.name == "lerim.final_result" for span in fake_mlflow.spans)
-    root_span = fake_mlflow.spans[0]
-    assert root_span.attributes["lerim.final_result_seen"] is True
+    assert mlflow_run["finished"] is True

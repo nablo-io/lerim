@@ -2,20 +2,11 @@
 
 from __future__ import annotations
 
-import sys
 from unittest.mock import MagicMock, patch
 
 from mlflow.exceptions import MlflowException
 
-_mock_mlflow = MagicMock()
-_mock_mlflow_pydantic_ai = MagicMock()
-_mock_mlflow.pydantic_ai = _mock_mlflow_pydantic_ai
-
-if "mlflow" not in sys.modules:
-	sys.modules["mlflow"] = _mock_mlflow
-	sys.modules["mlflow.pydantic_ai"] = _mock_mlflow_pydantic_ai
-
-from lerim.config.tracing import configure_tracing  # noqa: E402
+from lerim.config.tracing import configure_tracing
 
 
 def _make_config(*, enabled: bool):
@@ -30,7 +21,6 @@ def _make_config(*, enabled: bool):
 def test_tracing_disabled_does_nothing(mock_mlflow: MagicMock) -> None:
 	configure_tracing(_make_config(enabled=False))
 	mock_mlflow.set_experiment.assert_not_called()
-	mock_mlflow.pydantic_ai.autolog.assert_not_called()
 
 
 @patch("lerim.config.tracing.mlflow")
@@ -41,7 +31,6 @@ def test_tracing_enabled_sets_experiment_and_autologs(
 	configure_tracing(_make_config(enabled=True))
 	mock_ensure_schema.assert_called_once()
 	mock_mlflow.set_experiment.assert_called_once_with("lerim")
-	mock_mlflow.pydantic_ai.autolog.assert_called_once()
 
 
 @patch("lerim.config.tracing.mlflow")
@@ -52,7 +41,6 @@ def test_tracing_init_error_disables_tracing_without_crashing(
 	mock_ensure_schema.side_effect = RuntimeError("schema mismatch")
 	configure_tracing(_make_config(enabled=True))
 	mock_mlflow.set_experiment.assert_not_called()
-	mock_mlflow.pydantic_ai.autolog.assert_not_called()
 
 
 @patch("lerim.config.tracing.mlflow")
@@ -74,7 +62,6 @@ def test_tracing_recovers_missing_revision_during_activation(
 	assert mock_ensure_schema.call_count == 2
 	mock_backup.assert_called_once()
 	assert mock_mlflow.set_experiment.call_count == 2
-	mock_mlflow.pydantic_ai.autolog.assert_called_once()
 
 
 @patch("lerim.config.tracing._upgrade_db")

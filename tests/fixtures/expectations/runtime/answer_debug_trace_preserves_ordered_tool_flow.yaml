@@ -1,0 +1,10 @@
+case: answer_debug_trace_preserves_ordered_tool_flow
+expected:
+  retrieval_action_order:
+    - "list"
+    - "search"
+  message_kinds:
+    - "baml_call"
+    - "retrieval"
+    - "retrieval"
+    - "baml_call"

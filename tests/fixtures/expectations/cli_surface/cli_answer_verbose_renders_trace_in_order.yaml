@@ -1,0 +1,5 @@
+case: cli_answer_verbose_renders_trace_in_order
+expected:
+  endpoint: "/api/answer"
+  answer_text: "There are 3 records."
+  trace_title: "ANSWER TRACE (4 messages)"

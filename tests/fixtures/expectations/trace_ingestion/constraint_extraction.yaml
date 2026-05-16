@@ -1,0 +1,26 @@
+case: constraint_extraction
+summary: A durable invariant should be stored as a constraint record, not a decision or fact.
+
+expected:
+  episode_count: 1
+  durable_count: 1
+  constraint_count: 1
+  must_use_tools:
+    - read_window
+    - save_context
+  must_not_use_tools:
+    - revise_context
+  constraint_text_must_include_all:
+    - checkpoint
+    - session
+  constraint_text_must_include_any:
+    - at most one
+    - one-to-one
+    - zero or one
+    - never multiple
+    - identity
+    - invariant
+  constraint_text_must_not_include:
+    - pytest
+    - stack trace
+    - helper rename

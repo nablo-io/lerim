@@ -22,7 +22,7 @@ lerim query sessions list --order-by created_at --limit 20
 
 ## Notes
 
-- `query` runs locally and does not require the Ask agent.
+- `query` runs locally and does not require the context answerer.
 - Session lists only support `created_at` ordering and return newest rows first.
-- For explanatory answers, use [lerim ask](ask.md).
+- For explanatory answers, use [lerim answer](answer.md).
 - For full argument details, check the bundled CLI reference in `src/lerim/skills/cli-reference.md` in the repo.

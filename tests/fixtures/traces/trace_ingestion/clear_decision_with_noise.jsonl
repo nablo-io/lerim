@@ -1,0 +1,6 @@
+{"role":"user","content":"We need to make one storage decision for Lerim. Durable context should stay in context.sqlite3, and session indexing plus queue state should stay in sessions.sqlite3. Keep them as two separate SQLite databases."}
+{"role":"assistant","content":"Agreed. Decision: keep two SQLite databases. Why: the durable context store and the hot session/queue catalog have different responsibilities and write patterns."}
+{"role":"user","content":"The rest is low value detail. I renamed a few local variables, tweaked a spinner label, added a temporary debug print, then removed it. Do not turn those details into durable context."}
+{"role":"assistant","content":"Understood. The durable record is the DB split. The variable rename, spinner tweak, and temporary debug print are implementation noise only."}
+{"role":"user","content":"When we apply this later, product agents should query durable context from context.sqlite3, while operational ingestion/indexing code should keep using the sessions database."}
+{"role":"assistant","content":"That gives a clean rule for future work: context questions go to the durable context DB, and indexing or queue operations go to the session DB."}

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-16
+
+### Added
+- Expanded Lerim from a coding-agent memory layer into a general trace-to-context architecture for AI agent workflows.
+- Added BAML/LangGraph context curation, context answering, and context-brief compilation alongside trace ingestion.
+- Added layered durable-signal filtering, source-session review, synthesized record updates, and a final context quality gate.
+- Added integration coverage for each BAML-backed agent role with real LLM calls.
+
+### Changed
+- Renamed the live agent roles around the new context architecture: trace ingestion, durable-signal filtering, context writing, context curation, context answering, and context-brief compilation.
+- Refreshed prompts to avoid fixture-specific or coding-only assumptions and to classify durable signal from broader agent activity traces.
+- Updated README, docs, bundled skill text, and landing-page positioning around agent traces, durable signal, and future-agent context.
+
+### Fixed
+- Hardened SQLite migrations for foreign-key-safe table rebuilds.
+- Tightened answerer retrieval so topical words are not misread as record-kind filters.
+- Improved context-brief validation by dropping unsupported generated lines before rendering.
+
+### Removed
+- Removed the remaining PydanticAI agent runtime and retired fallback/dead configuration paths.
+
 ## [0.1.83] - 2026-05-14
 
 ### Added

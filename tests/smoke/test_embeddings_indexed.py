@@ -1,17 +1,17 @@
-"""Smoke test: embeddings are indexed after extraction."""
+"""Smoke test: embeddings are indexed after ingestion."""
 
 import pytest
 
-from lerim.agents.extract import run_extraction
+from lerim.agents.trace_ingestion import run_trace_ingestion
 from lerim.context import ContextStore, resolve_project_identity
-from tests.conftest import EXTRACT_TRACES_DIR
+from tests.conftest import TRACE_INGESTION_TRACES_DIR
 
 
 @pytest.mark.smoke
 @pytest.mark.llm
 @pytest.mark.agent
 def test_embeddings_indexed(live_config, live_repo_root):
-	"""Verify embeddings are indexed after extracting a decision.
+	"""Verify embeddings are indexed after ingesting a decision.
 
 	Uses clear_decision_with_noise fixture which creates a durable record.
 	"""
@@ -21,7 +21,7 @@ def test_embeddings_indexed(live_config, live_repo_root):
 	store.register_project(identity)
 
 	session_id = "smoke-embeddings"
-	trace_path = EXTRACT_TRACES_DIR / "clear_decision_with_noise.jsonl"
+	trace_path = TRACE_INGESTION_TRACES_DIR / "clear_decision_with_noise.jsonl"
 
 	store.upsert_session(
 		project_id=identity.project_id,
@@ -37,7 +37,7 @@ def test_embeddings_indexed(live_config, live_repo_root):
 		metadata={},
 	)
 
-	result = run_extraction(
+	result = run_trace_ingestion(
 		context_db_path=live_config.context_db_path,
 		project_identity=identity,
 		session_id=session_id,
@@ -45,9 +45,9 @@ def test_embeddings_indexed(live_config, live_repo_root):
 		config=live_config,
 	)
 
-	assert result is not None, "Extraction returned no result"
+	assert result is not None, "Ingestion returned no result"
 
 	with store.connect() as conn:
 		count = conn.execute("SELECT COUNT(*) FROM record_embeddings").fetchone()[0]
 
-	assert count > 0, "No embeddings indexed after extraction"
+	assert count > 0, "No embeddings indexed after ingestion"

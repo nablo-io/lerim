@@ -43,6 +43,6 @@ Validate quality of outputs, not only counts/status.
 When a new path replaces an old one, remove obsolete code.
 Do not keep dead replacement code "just in case."
 
-## 8) Keep docs and rules in sync
+## 8) Keep docs and rules in ingest
 
 When behavior changes, update the related docs and `AGENTS.md` references in the same change.

@@ -1,0 +1,8 @@
+case: answer_project_scope_ignores_other_projects
+expected:
+  answer_must_include_all:
+    - "redis"
+    - "lease"
+  answer_must_not_include:
+    - "postgres"
+    - "advisory"

@@ -1,0 +1,22 @@
+case: similar_but_new_decision
+summary: A nearby existing record should not block creation of a genuinely new decision.
+
+expected:
+  episode_count: 1
+  durable_count: 1
+  decision_count: 1
+  created_durable_count: 1
+  must_use_tools:
+    - read_window
+    - save_context
+  must_not_use_tools:
+    - revise_context
+  decision_text_must_include_all:
+    - lease
+    - ownership
+    - queue row
+  decision_text_must_include_any:
+    - restart
+    - failover
+  decision_text_must_not_include:
+    - attempt count

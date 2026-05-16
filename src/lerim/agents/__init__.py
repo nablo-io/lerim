@@ -1,18 +1,18 @@
-"""Agent modules for extract, maintain, ask, and working-memory flows."""
+"""Agent modules for trace-ingestion, context-curation, and answer flows."""
 
 from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["run_maintain", "run_ask"]
+__all__ = ["run_context_curator", "run_context_answerer"]
 
 
 def __getattr__(name: str) -> Any:
 	"""Lazy-load agent exports to avoid circular import cycles."""
-	if name == "run_maintain":
-		from lerim.agents.maintain import run_maintain
-		return run_maintain
-	if name == "run_ask":
-		from lerim.agents.ask import run_ask
-		return run_ask
+	if name == "run_context_curator":
+		from lerim.agents.context_curator import run_context_curator
+		return run_context_curator
+	if name == "run_context_answerer":
+		from lerim.agents.context_answerer import run_context_answerer
+		return run_context_answerer
 	raise AttributeError(name)

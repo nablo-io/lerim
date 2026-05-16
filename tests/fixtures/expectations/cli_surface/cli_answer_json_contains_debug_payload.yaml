@@ -1,0 +1,4 @@
+case: cli_answer_json_contains_debug_payload
+expected:
+  endpoint: "/api/answer"
+  answer_text: "Latest record is Latest storage decision."

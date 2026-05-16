@@ -2,7 +2,7 @@
 
 Inspect the local session-processing queue.
 
-Use `lerim queue` to debug ingestion state without involving the Ask agent.
+Use `lerim queue` to debug ingestion state without involving the context answerer.
 
 ## Examples
 

@@ -1,8 +1,0 @@
-case: api_job_status_for_long_running_sync
-expected:
-  start_status: "started"
-  running_status: "running"
-  completed_status: "completed"
-  op_type: "sync"
-  queue_running: 1
-  queue_done: 1

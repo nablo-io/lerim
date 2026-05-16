@@ -1,0 +1,6 @@
+case: cli_curate_json_reports_changes
+expected:
+  endpoint: "/api/curate"
+  created: 1
+  updated: 1
+  archived: 2

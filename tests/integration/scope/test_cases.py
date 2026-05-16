@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from lerim.agents.extract import ExtractionEvent, ExtractionResult, ExtractionRunDetails
-from lerim.agents.maintain import run_maintain
+from lerim.agents.trace_ingestion import TraceIngestionEvent, TraceIngestionResult, TraceIngestionRunDetails
+from lerim.agents.context_curator import run_context_curator
 from lerim.server.api import api_query
 from lerim.server.runtime import LerimRuntime
 from tests.integration.common_helpers import retry_on_overload
@@ -18,11 +18,11 @@ from tests.integration.scope.helpers import (
 )
 
 
-def _extract_details(kwargs, *, summary: str) -> ExtractionRunDetails:
-    """Build graph-style extraction details for sync runtime test doubles."""
-    return ExtractionRunDetails(
+def _extract_details(kwargs, *, summary: str) -> TraceIngestionRunDetails:
+    """Build graph-style ingestion details for runtime test doubles."""
+    return TraceIngestionRunDetails(
         events=[
-            ExtractionEvent(
+            TraceIngestionEvent(
                 action="final_result",
                 ok=True,
                 content=summary,
@@ -41,7 +41,7 @@ def _extract_details(kwargs, *, summary: str) -> ExtractionRunDetails:
     )
 
 
-def _seed_ask_scope_records(env: ScopeCaseEnv) -> None:
+def _seed_answer_scope_records(env: ScopeCaseEnv) -> None:
     """Seed one distinctive durable decision into each project."""
     seed_scope_session(
         env,
@@ -83,25 +83,25 @@ def _seed_ask_scope_records(env: ScopeCaseEnv) -> None:
     )
 
 
-def _seed_maintain_scope_records(env: ScopeCaseEnv) -> str:
-    """Seed duplicate alpha records and one clean beta record for maintain."""
+def _seed_curate_scope_records(env: ScopeCaseEnv) -> str:
+    """Seed duplicate alpha records and one clean beta record for curate."""
     seed_scope_session(
         env,
         project_identity=env.identity_a,
-        session_id="maintain-seed-alpha",
+        session_id="curate-seed-alpha",
         repo_root=env.project_a_root,
     )
     seed_scope_session(
         env,
         project_identity=env.identity_b,
-        session_id="maintain-seed-beta",
+        session_id="curate-seed-beta",
         repo_root=env.project_b_root,
     )
 
     seed_scope_record(
         env,
         project_identity=env.identity_a,
-        session_id="maintain-seed-alpha",
+        session_id="curate-seed-alpha",
         kind="decision",
         title="Alpha keeps Redis leases authoritative",
         body=(
@@ -114,7 +114,7 @@ def _seed_maintain_scope_records(env: ScopeCaseEnv) -> str:
     seed_scope_record(
         env,
         project_identity=env.identity_a,
-        session_id="maintain-seed-alpha",
+        session_id="curate-seed-alpha",
         kind="decision",
         title="Alpha worker ownership still lives in Redis leases",
         body=(
@@ -127,18 +127,18 @@ def _seed_maintain_scope_records(env: ScopeCaseEnv) -> str:
     seed_scope_record(
         env,
         project_identity=env.identity_a,
-        session_id="maintain-seed-alpha",
+        session_id="curate-seed-alpha",
         kind="episode",
-        title="Routine alpha sync confirmation",
-        body="Routine sync ran successfully with no durable context.",
-        user_intent="Confirm the nightly sync completed.",
-        what_happened="The operator checked the routine sync and saw no issues.",
+        title="Routine alpha ingest confirmation",
+        body="Routine ingest ran successfully with no durable context.",
+        user_intent="Confirm the nightly ingest completed.",
+        what_happened="The operator checked the routine ingest and saw no issues.",
         outcomes="No durable action was needed.",
     )
     beta_record = seed_scope_record(
         env,
         project_identity=env.identity_b,
-        session_id="maintain-seed-beta",
+        session_id="curate-seed-beta",
         kind="decision",
         title="Beta keeps advisory locks in Postgres",
         body="Project beta coordinates workers with Postgres advisory locks.",
@@ -151,14 +151,14 @@ def _seed_maintain_scope_records(env: ScopeCaseEnv) -> str:
 @pytest.mark.integration
 @pytest.mark.llm
 @pytest.mark.agent
-def test_ask_project_scope_ignores_other_projects(live_config, tmp_path) -> None:
-    """Project-scoped ask should not pull facts from a different project."""
-    expectation = load_scope_expectation("ask_project_scope_ignores_other_projects")["expected"]
+def test_answer_project_scope_ignores_other_projects(live_config, tmp_path) -> None:
+    """Project-scoped answer should not pull facts from a different project."""
+    expectation = load_scope_expectation("answer_project_scope_ignores_other_projects")["expected"]
     env = build_scope_case_env(live_config=live_config, tmp_path=tmp_path)
-    _seed_ask_scope_records(env)
+    _seed_answer_scope_records(env)
     runtime = LerimRuntime(default_cwd=str(env.project_a_root), config=env.config)
 
-    answer, _session_id, _cost_usd, _debug = runtime.ask(
+    answer, _session_id, _cost_usd, _debug = runtime.answer(
         "What worker ownership mechanism does this project use?",
         project_ids=[env.identity_a.project_id],
         repo_root=env.project_a_root,
@@ -175,14 +175,14 @@ def test_ask_project_scope_ignores_other_projects(live_config, tmp_path) -> None
 @pytest.mark.integration
 @pytest.mark.llm
 @pytest.mark.agent
-def test_ask_all_scope_can_combine_projects(live_config, tmp_path) -> None:
-    """All-project ask should be able to synthesize across both projects."""
-    expectation = load_scope_expectation("ask_all_scope_can_combine_projects")["expected"]
+def test_answer_all_scope_can_combine_projects(live_config, tmp_path) -> None:
+    """All-project answer should be able to synthesize across both projects."""
+    expectation = load_scope_expectation("answer_all_scope_can_combine_projects")["expected"]
     env = build_scope_case_env(live_config=live_config, tmp_path=tmp_path)
-    _seed_ask_scope_records(env)
+    _seed_answer_scope_records(env)
     runtime = LerimRuntime(default_cwd=str(env.project_a_root), config=env.config)
 
-    answer, _session_id, _cost_usd, _debug = runtime.ask(
+    answer, _session_id, _cost_usd, _debug = runtime.answer(
         "Across the registered projects, what worker ownership mechanisms do we use?",
         project_ids=env.all_project_ids,
         repo_root=env.project_a_root,
@@ -197,24 +197,24 @@ def test_ask_all_scope_can_combine_projects(live_config, tmp_path) -> None:
 @pytest.mark.integration
 @pytest.mark.llm
 @pytest.mark.agent
-def test_maintain_project_a_only_mutates_project_a(live_config, tmp_path) -> None:
-    """Maintain should only write versions inside the selected project scope."""
-    expectation = load_scope_expectation("maintain_project_a_only_mutates_project_a")["expected"]
+def test_curate_project_a_only_mutates_project_a(live_config, tmp_path) -> None:
+    """Curate should only write versions inside the selected project scope."""
+    expectation = load_scope_expectation("curate_project_a_only_mutates_project_a")["expected"]
     env = build_scope_case_env(live_config=live_config, tmp_path=tmp_path)
-    beta_record_id = _seed_maintain_scope_records(env)
+    beta_record_id = _seed_curate_scope_records(env)
     seed_scope_session(
         env,
         project_identity=env.identity_a,
-        session_id="maintain-alpha-run",
+        session_id="curate-alpha-run",
         repo_root=env.project_a_root,
-        agent_type="maintain",
+        agent_type="curate",
     )
 
     result = retry_on_overload(
-        lambda: run_maintain(
+        lambda: run_context_curator(
             context_db_path=env.config.context_db_path,
             project_identity=env.identity_a,
-            session_id="maintain-alpha-run",
+            session_id="curate-alpha-run",
             config=env.config,
         )
     )
@@ -230,7 +230,7 @@ def test_maintain_project_a_only_mutates_project_a(live_config, tmp_path) -> Non
                 WHERE rv.changed_by_session_id = ?
                 ORDER BY rv.changed_at ASC, rv.version_no ASC
                 """,
-                ("maintain-alpha-run",),
+                ("curate-alpha-run",),
             ).fetchall()
         ]
 
@@ -241,7 +241,7 @@ def test_maintain_project_a_only_mutates_project_a(live_config, tmp_path) -> Non
     )
 
     assert result.completion_summary.strip()
-    assert changed_rows, "maintain should make at least one scoped repair in project alpha"
+    assert changed_rows, "curate should make at least one scoped repair in project alpha"
     assert all(row["project_id"] == env.identity_a.project_id for row in changed_rows)
     assert beta_record is not None
     assert len(beta_record["versions"]) == 1
@@ -251,15 +251,15 @@ def test_maintain_project_a_only_mutates_project_a(live_config, tmp_path) -> Non
 
 
 @pytest.mark.integration
-def test_query_scope_matches_ask_scope_rules(
+def test_query_scope_matches_answer_scope_rules(
     live_config,
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Deterministic query scope selection should mirror ask scope selection."""
-    expectation = load_scope_expectation("query_scope_matches_ask_scope_rules")["expected"]
+    """Deterministic query scope selection should mirror answer scope selection."""
+    expectation = load_scope_expectation("query_scope_matches_answer_scope_rules")["expected"]
     env = build_scope_case_env(live_config=live_config, tmp_path=tmp_path)
-    _seed_ask_scope_records(env)
+    _seed_answer_scope_records(env)
     monkeypatch.setattr("lerim.server.api.get_config", lambda: env.config)
 
     project_payload = api_query(
@@ -296,7 +296,7 @@ def test_scope_extract_project_a_does_not_touch_project_b(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Project-scoped sync/extract should mutate only the selected project."""
+    """Project-scoped ingest/extract should mutate only the selected project."""
     expectation = load_scope_expectation("scope_extract_project_a_does_not_touch_project_b")["expected"]
     env = build_scope_case_env(live_config=live_config, tmp_path=tmp_path)
     seed_scope_session(
@@ -317,9 +317,7 @@ def test_scope_extract_project_a_does_not_touch_project_b(
     trace_path = env.project_a_root / "scope-extract-trace.jsonl"
     trace_path.write_text('{"role":"user","content":"scope extract test"}\n', encoding="utf-8")
 
-    monkeypatch.setattr("lerim.server.runtime.build_pydantic_model", lambda *args, **kwargs: "fake-model")
-
-    def _fake_run_extraction(**kwargs):
+    def _fake_run_trace_ingestion(**kwargs):
         env.store.create_record(
             project_id=kwargs["project_identity"].project_id,
             session_id=kwargs["session_id"],
@@ -333,19 +331,19 @@ def test_scope_extract_project_a_does_not_touch_project_b(
             session_id=kwargs["session_id"],
             kind="decision",
             title="Alpha extracted decision",
-            body="Alpha extracted decision about scoped sync behavior.",
-            decision="Keep scoped sync writes inside alpha only.",
+            body="Alpha extracted decision about scoped ingest behavior.",
+            decision="Keep scoped ingest writes inside alpha only.",
             why="Project-scoped extraction should not mutate beta records.",
             change_reason="scope_extract_update",
         )
         return (
-            ExtractionResult(completion_summary="scope extract complete"),
+            TraceIngestionResult(completion_summary="scope extract complete"),
             _extract_details(kwargs, summary="scope extract complete"),
         )
 
-    monkeypatch.setattr("lerim.server.runtime.run_extraction", _fake_run_extraction)
+    monkeypatch.setattr("lerim.server.runtime.run_trace_ingestion", _fake_run_trace_ingestion)
 
-    result = runtime.sync(trace_path=trace_path, session_id="extract-alpha-run")
+    result = runtime.ingest(trace_path=trace_path, session_id="extract-alpha-run")
     assert result["project_id"] == env.identity_a.project_id
 
     with env.store.connect() as conn:

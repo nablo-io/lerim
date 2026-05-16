@@ -14,7 +14,7 @@ Groups:
   unit          Unit tests (no LLM calls)
   smoke         Smoke tests (quick LLM round-trips)
   integration   Integration tests (real LLM pipelines)
-  e2e           End-to-end tests (full sync/maintain flows)
+  e2e           End-to-end tests (full ingest/curate flows)
   quality       Compile check + pip check
   all           Run all groups in order
 
@@ -111,12 +111,11 @@ print_kv "ZAI_API_KEY" "$(key_status ZAI_API_KEY)"
 print_kv "ZAI_CODING_API_KEY" "$(key_status ZAI_CODING_API_KEY)"
 print_kv "OPENAI_API_KEY" "$(key_status OPENAI_API_KEY)"
 print_kv "OPENROUTER_API_KEY" "$(key_status OPENROUTER_API_KEY)"
-print_kv "ANTHROPIC_API_KEY" "$(key_status ANTHROPIC_API_KEY)"
 print_kv "MINIMAX_API_KEY" "$(key_status MINIMAX_API_KEY)"
 print_kv "OPENCODE_API_KEY" "$(key_status OPENCODE_API_KEY)"
 
 # Config comes from TOML layers now (src/lerim/config/default.toml -> ~/.lerim/config.toml -> project).
-# Only API keys are read from env (ANTHROPIC_API_KEY, OPENROUTER_API_KEY, ZAI_API_KEY).
+# Only API keys are read from env (MINIMAX_API_KEY, OPENROUTER_API_KEY, ZAI_API_KEY).
 # Tests use LERIM_CONFIG env var to point at tests/test_config.toml (auto-applied by conftest.py).
 
 # --- Build pytest command ---

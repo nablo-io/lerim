@@ -6,8 +6,8 @@ Start the HTTP API server and daemon loop in a single process. This repo does no
 
 `lerim serve` is the all-in-one runtime process. It starts:
 
-1. **HTTP API** — JSON endpoints used by CLI commands (`ask`, `sync`, `maintain`, `status`)
-2. **Daemon loop** — Background sync and maintain cycles on configured intervals
+1. **HTTP API** — JSON endpoints used by CLI commands (`answer`, `ingest`, `curate`, `status`)
+2. **Daemon loop** — Background ingest and curate cycles on configured intervals
 
 GET `/` may return a minimal HTML stub when no bundled static assets are present.
 
@@ -76,9 +76,9 @@ lerim serve
 |-----------|-------------|----------|
 | HTTP API | JSON API for CLI commands | `http://<host>:<port>/api/` |
 | Root | Stub HTML or optional assets | `http://<host>:<port>/` |
-| Daemon loop | Background sync/maintain on intervals | — (internal) |
+| Daemon loop | Background ingest/curate on intervals | — (internal) |
 
-The daemon loop uses `sync_interval_minutes` and `maintain_interval_minutes` from your active Lerim config (defaults are in the shipped `default.toml`).
+The daemon loop uses `ingest_interval_minutes` and `curate_interval_minutes` from your active Lerim config (defaults are in the shipped `default.toml`).
 
 ## Exit codes
 
@@ -103,7 +103,7 @@ The daemon loop uses `sync_interval_minutes` and `maintain_interval_minutes` fro
 
     ---
 
-    Sync + maintain intervals (runs inside `serve`)
+    Ingest + curate intervals (runs inside `serve`)
 
     [:octicons-arrow-right-24: Background loop](daemon.md)
 

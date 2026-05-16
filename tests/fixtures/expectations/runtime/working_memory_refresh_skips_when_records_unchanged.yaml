@@ -1,3 +1,0 @@
-case: working_memory_refresh_skips_when_records_unchanged
-expected:
-  skip_reason: "no_records_changed_since_previous_generation"

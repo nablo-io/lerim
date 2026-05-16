@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from lerim.config import settings as config_settings
 from lerim.server.runtime import LerimRuntime
 from tests.live_helpers import build_live_config
 from tests.helpers import make_config
@@ -16,17 +17,30 @@ from tests.helpers import make_config
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 TRACES_DIR = FIXTURES_DIR / "traces"
-EXTRACT_TRACES_DIR = TRACES_DIR / "extract"
+TRACE_INGESTION_TRACES_DIR = TRACES_DIR / "trace_ingestion"
 EXPECTATIONS_DIR = FIXTURES_DIR / "expectations"
-ASK_EXPECTATIONS_DIR = EXPECTATIONS_DIR / "ask"
-EXTRACT_EXPECTATIONS_DIR = EXPECTATIONS_DIR / "extract"
-MAINTAIN_EXPECTATIONS_DIR = EXPECTATIONS_DIR / "maintain"
+ANSWER_EXPECTATIONS_DIR = EXPECTATIONS_DIR / "answer"
+TRACE_INGESTION_EXPECTATIONS_DIR = EXPECTATIONS_DIR / "trace_ingestion"
+CURATE_EXPECTATIONS_DIR = EXPECTATIONS_DIR / "curate"
 RUNTIME_EXPECTATIONS_DIR = EXPECTATIONS_DIR / "runtime"
 SCOPE_EXPECTATIONS_DIR = EXPECTATIONS_DIR / "scope"
 CLOUD_EXPECTATIONS_DIR = EXPECTATIONS_DIR / "cloud"
 QUEUE_EXPECTATIONS_DIR = EXPECTATIONS_DIR / "queue"
 CLI_SURFACE_EXPECTATIONS_DIR = EXPECTATIONS_DIR / "cli_surface"
 TEST_CONFIG_PATH = Path(__file__).parent / "test_config.toml"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_user_config(tmp_path, monkeypatch):
+    """Keep tests independent from the developer machine user config."""
+    monkeypatch.setattr(
+        config_settings,
+        "USER_CONFIG_PATH",
+        tmp_path / "empty-user-config.toml",
+    )
+    config_settings.load_config.cache_clear()
+    yield
+    config_settings.load_config.cache_clear()
 
 
 @pytest.fixture

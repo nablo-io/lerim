@@ -8,7 +8,7 @@ This command prints the current transition message:
 
 - the local dashboard is not bundled in this repo
 - the hosted product surface lives on Lerim Cloud
-- the CLI remains the local control surface for sync, maintain, ask, and queue work
+- the CLI remains the local control surface for ingest, curate, answer, and queue work
 
 ## Syntax
 
@@ -30,10 +30,10 @@ Sample output:
 
   In the meantime, use these CLI commands:
     lerim status     - system overview
-    lerim ask        - query your stored context
+    lerim answer        - query your stored context
     lerim queue      - view session processing queue
-    lerim sync       - process new sessions
-    lerim maintain   - refine stored records
+    lerim ingest       - process new sessions
+    lerim curate   - refine stored records
 ```
 
 ## See also

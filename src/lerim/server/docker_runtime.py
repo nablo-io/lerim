@@ -26,7 +26,6 @@ RUNTIME_IMAGE_ENV = "LERIM_RUNTIME_IMAGE"
 
 
 _API_KEY_ENV_NAMES = (
-    "ANTHROPIC_API_KEY",
     "MINIMAX_API_KEY",
     "OPENAI_API_KEY",
     "OPENCODE_API_KEY",
@@ -113,7 +112,7 @@ def _generate_compose_yml(build_local: bool = False) -> str:
         _add_volume(platform_path, readonly=True)
 
     # Registered project roots must be visible at the same absolute paths for
-    # project-scoped sync, status, and maintain flows inside Docker.
+    # project-scoped ingest, status, and curate flows inside Docker.
     for project_path in (config.projects or {}).values():
         resolved = Path(project_path).expanduser().resolve()
         if resolved.exists():

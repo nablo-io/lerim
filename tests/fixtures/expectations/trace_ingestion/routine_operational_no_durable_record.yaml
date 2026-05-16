@@ -1,0 +1,23 @@
+case: routine_operational_no_durable_record
+summary: Routine maintenance should create only an archived episode and no durable records.
+
+expected:
+  episode_count: 1
+  durable_count: 0
+  must_use_tools:
+    - read_window
+    - save_context
+  must_not_use_tools:
+    - revise_context
+    - get_context
+  episode_text_must_include_any:
+    - routine
+    - cleanup
+    - lint
+    - formatting
+    - formatter
+    - tests
+    - checks
+    - pass
+    - no durable
+    - no project

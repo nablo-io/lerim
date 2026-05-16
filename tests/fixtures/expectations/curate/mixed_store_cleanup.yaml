@@ -1,0 +1,19 @@
+case: mixed_store_cleanup
+summary: Handle archive, supersede, and durable-record rewrite in one curate pass.
+
+expected:
+  must_use_events:
+    - load_inventory
+    - build_similarity_clusters
+    - final_result
+  required_change_kinds:
+    - archive
+    - supersede
+    - update
+  rewritten_text_must_include_all:
+    - provider
+    - adapter
+    - stable contract
+  rewritten_text_must_not_include:
+    - task audit
+    - temporary implementation detail

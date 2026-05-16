@@ -6,7 +6,7 @@ and individual messages in ``bubbleId:<composerId>:<bubbleId>`` rows.
 
 This adapter groups bubbles by composerId, exports each session as a JSONL
 file (composerData first line, then one bubble per line), and returns
-SessionRecords pointing to those files so the downstream sync pipeline can
+SessionRecords pointing to those files so the downstream ingest pipeline can
 read them as plain text.
 """
 

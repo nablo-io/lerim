@@ -24,16 +24,15 @@ def make_config(base: Path) -> Config:
         lexical_shortlist_size=40,
         server_host="127.0.0.1",
         server_port=8765,
-        sync_interval_minutes=5,
-        maintain_interval_minutes=5,
+        ingest_interval_minutes=5,
+        curate_interval_minutes=5,
         agent_role=RoleConfig(
             provider="openrouter",
             model="x-ai/grok-4.1-fast",
         ),
-        sync_window_days=7,
-        sync_max_sessions=50,
+        ingest_window_days=7,
+        ingest_max_sessions=50,
         mlflow_enabled=False,
-        anthropic_api_key=None,
         openai_api_key=None,
         zai_api_key=None,
         openrouter_api_key=None,
@@ -60,7 +59,7 @@ def write_test_config(tmp_path: Path, **sections: dict[str, Any]) -> Path:
 
     Usage::
 
-        write_test_config(tmp_path, **{"roles.agent": {"provider": "anthropic"}})
+        write_test_config(tmp_path, **{"roles.agent": {"provider": "openrouter"}})
     """
     all_sections: dict[str, dict[str, Any]] = {
         "data": {"dir": str(tmp_path)},

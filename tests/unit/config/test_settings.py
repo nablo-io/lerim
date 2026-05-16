@@ -1,8 +1,8 @@
 """Unit tests for settings.py coverage gaps not covered by test_config.py.
 
-Tests: load_toml_file, strict typed readers, _to_fallback_models,
-_parse_string_table, _toml_value, _toml_write_dict,
-save_config_patch, layer precedence, port validation.
+Tests: load_toml_file, strict typed readers, _parse_string_table,
+_toml_value, _toml_write_dict, save_config_patch, layer precedence,
+port validation.
 """
 
 from __future__ import annotations
@@ -13,7 +13,6 @@ import pytest
 
 from lerim.config.settings import (
     _deep_merge,
-    _to_fallback_models,
     _parse_string_table,
     _toml_value,
     _toml_write_dict,
@@ -68,41 +67,6 @@ def test_get_trace_cache_dir_uses_active_data_root(tmp_path, monkeypatch):
     monkeypatch.setenv("LERIM_CONFIG", str(explicit))
 
     assert get_trace_cache_dir("codex") == data_dir / "cache" / "traces" / "codex"
-
-
-def test_fallback_models_from_list():
-    """_to_fallback_models parses a list of model strings."""
-    result = _to_fallback_models(["model-a", "model-b"])
-    assert result == ("model-a", "model-b")
-
-
-def test_fallback_models_from_csv_string():
-    """_to_fallback_models parses comma-separated string."""
-    result = _to_fallback_models("model-a, model-b, model-c")
-    assert result == ("model-a", "model-b", "model-c")
-
-
-def test_fallback_models_filters_blanks():
-    """_to_fallback_models strips whitespace and filters empty items."""
-    result = _to_fallback_models(["model-a", "  ", "", "model-b"])
-    assert result == ("model-a", "model-b")
-
-
-def test_fallback_models_none_is_empty():
-    """_to_fallback_models treats an omitted value as no fallbacks."""
-    assert _to_fallback_models(None) == ()
-
-
-def test_fallback_models_rejects_invalid_scalar_type():
-    """_to_fallback_models rejects unsupported scalar values."""
-    with pytest.raises(ValueError, match="fallback_models must be a string or list"):
-        _to_fallback_models(42)
-
-
-def test_fallback_models_rejects_invalid_list_item_type():
-    """_to_fallback_models rejects non-string list entries."""
-    with pytest.raises(ValueError, match="fallback_models list items must be strings"):
-        _to_fallback_models(["model-a", 42])
 
 
 # ---------------------------------------------------------------------------
@@ -333,8 +297,8 @@ def test_observability_mlflow_enabled_rejects_quoted_boolean(tmp_path, monkeypat
         reload_config()
 
 
-def test_config_rejects_quoted_boolean_role_value(tmp_path, monkeypatch):
-    """Quoted booleans stay strings and must not be coerced truthy."""
+def test_config_rejects_removed_parallel_tool_calls_key(tmp_path, monkeypatch):
+    """Removed role keys should fail loudly instead of being ignored."""
     explicit = tmp_path / "quoted_bool.toml"
     explicit.write_text(
         '[roles.agent]\nparallel_tool_calls = "false"\n',
@@ -342,7 +306,7 @@ def test_config_rejects_quoted_boolean_role_value(tmp_path, monkeypatch):
     )
     monkeypatch.setenv("LERIM_CONFIG", str(explicit))
 
-    with pytest.raises(ValueError, match="parallel_tool_calls must be a boolean"):
+    with pytest.raises(ValueError, match="unknown config key"):
         reload_config()
 
 
@@ -373,29 +337,16 @@ def test_config_rejects_invalid_role_string_scalars(tmp_path, monkeypatch, key):
         reload_config()
 
 
-def test_config_rejects_invalid_fallback_list_items(tmp_path, monkeypatch):
-    """Fallback model list entries must be strings."""
+def test_config_rejects_removed_fallback_models_key(tmp_path, monkeypatch):
+    """Removed fallback configuration should fail loudly."""
     explicit = tmp_path / "bad_fallback_item.toml"
     explicit.write_text(
-        '[roles.agent]\nfallback_models = ["openrouter:x-ai/grok-4.1-fast", 42]\n',
+        '[roles.agent]\nfallback_models = ["openrouter:x-ai/grok-4.1-fast"]\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("LERIM_CONFIG", str(explicit))
 
-    with pytest.raises(ValueError, match="fallback_models list items must be strings"):
-        reload_config()
-
-
-def test_config_rejects_invalid_fallback_scalar(tmp_path, monkeypatch):
-    """Fallback model scalar values must be strings, not coerced values."""
-    explicit = tmp_path / "bad_fallback_scalar.toml"
-    explicit.write_text(
-        "[roles.agent]\nfallback_models = 42\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("LERIM_CONFIG", str(explicit))
-
-    with pytest.raises(ValueError, match="fallback_models must be a string or list"):
+    with pytest.raises(ValueError, match="unknown config key"):
         reload_config()
 
 
@@ -481,8 +432,8 @@ def test_provider_auto_unload_is_not_parsed_as_api_base(tmp_path, monkeypatch):
     assert "auto_unload" not in cfg.provider_api_bases
 
 
-def test_config_accepts_retired_documented_agent_role_keys(tmp_path, monkeypatch):
-    """Old documented role keys are ignored instead of blocking startup."""
+def test_config_rejects_retired_agent_role_keys(tmp_path, monkeypatch):
+    """Retired role keys should fail loudly instead of being ignored."""
     explicit = tmp_path / "retired_role_keys.toml"
     explicit.write_text(
         "[roles.agent]\n"
@@ -492,10 +443,8 @@ def test_config_accepts_retired_documented_agent_role_keys(tmp_path, monkeypatch
     )
     monkeypatch.setenv("LERIM_CONFIG", str(explicit))
 
-    cfg = reload_config()
-
-    assert cfg.agent_role.provider
-    assert cfg.agent_role.model
+    with pytest.raises(ValueError, match="unknown config key"):
+        reload_config()
 
 
 def test_deep_merge_adds_new_keys():
@@ -542,27 +491,27 @@ def test_agent_role_explicit_overrides():
     """
     role = _build_role(
         {
-            "provider": "anthropic",
+            "provider": "openrouter",
             "model": "claude-3",
         },
         default_provider="openrouter",
         default_model="default-model",
     )
-    assert role.provider == "anthropic"
+    assert role.provider == "openrouter"
     assert role.model == "claude-3"
 
 
-def test_agent_role_explicit_request_limits():
-    """_build_role uses explicit maintain/ask request limits when set."""
+def test_agent_role_explicit_agent_budgets():
+    """_build_role uses explicit curate/answer budgets when set."""
     role = _build_role(
         {
             "provider": "ollama",
             "model": "qwen3:8b",
-            "max_iters_maintain": 15,
-            "max_iters_ask": 6,
+            "curate_max_llm_calls": 15,
+            "answer_max_retrieval_actions": 6,
         },
         default_provider="openrouter",
         default_model="default",
     )
-    assert role.max_iters_maintain == 15
-    assert role.max_iters_ask == 6
+    assert role.curate_max_llm_calls == 15
+    assert role.answer_max_retrieval_actions == 6

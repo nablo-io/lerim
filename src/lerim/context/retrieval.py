@@ -29,6 +29,13 @@ class SearchHit:
     valid_until: str | None
     score: float
     sources: list[str]
+    decision: str | None = None
+    why: str | None = None
+    alternatives: str | None = None
+    consequences: str | None = None
+    user_intent: str | None = None
+    what_happened: str | None = None
+    outcomes: str | None = None
 
 
 def search_records(
@@ -103,6 +110,13 @@ def search_records(
                 kind=str(row["kind"]),
                 title=str(row["title"]),
                 body=str(row["body"]),
+                decision=row["decision"],
+                why=row["why"],
+                alternatives=row["alternatives"],
+                consequences=row["consequences"],
+                user_intent=row["user_intent"],
+                what_happened=row["what_happened"],
+                outcomes=row["outcomes"],
                 status=str(row["status"]),
                 created_at=str(row["created_at"]),
                 updated_at=str(row["updated_at"]),
