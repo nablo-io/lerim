@@ -25,7 +25,7 @@ These work on local files, Docker, or config:
 - `lerim context-brief status`
 - `lerim context-brief path`
 - `lerim context-brief refresh`
-- `lerim context cards`
+- `lerim context records`
 
 ## Server-backed commands
 

@@ -96,7 +96,7 @@ nav:
   - Concepts:
     - Business Workflows: concepts/business-workflows.md
     - Signal Packs: concepts/signal-packs.md
-    - Context Cards: concepts/context-cards.md
+    - Context Records: concepts/context-records.md
     - How It Works: concepts/how-it-works.md
     - Context Model: concepts/context-model.md
     - Trace Sources & Adapters: concepts/supported-agents.md

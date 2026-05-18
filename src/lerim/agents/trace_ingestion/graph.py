@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
@@ -245,7 +244,6 @@ def build_trace_ingestion_graph(
         )
         payload = model_payload(result)
         durable_count = len(payload.get("durable_records") or [])
-        update_count = len(payload.get("record_updates") or [])
         return {
             "llm_calls": llm_calls + attempts,
             "synthesized": result,
@@ -254,58 +252,7 @@ def build_trace_ingestion_graph(
                 {
                     "action": "synthesize_records",
                     "ok": True,
-                    "content": (
-                        f"durable_records={durable_count} "
-                        f"record_updates={update_count}"
-                    ),
-                    "args": {},
-                    "done": False,
-                    "completion_summary": "",
-                },
-            ],
-        }
-
-    def review_records(state: TraceIngestionGraphState) -> dict[str, Any]:
-        """Review synthesized records before persistence."""
-        llm_calls = int(state.get("llm_calls") or 0)
-        if llm_calls >= max_llm_calls:
-            raise RuntimeError(
-                f"BAML trace ingestion exceeded max_llm_calls={max_llm_calls}."
-            )
-        if progress:
-            print(f"  trace-ingestion review {llm_calls + 1}/{max_llm_calls}", flush=True)
-        synthesized_payload = model_payload(state.get("synthesized"))
-        result, retry_observations, attempts = call_baml_with_retries(
-            lambda: baml_runtime.ReviewSynthesizedContextRecords(
-                run_instruction=run_instruction,
-                source_profile_context=source_profile_context,
-                durable_findings_summary=_filtered_durable_findings_summary(state),
-                existing_record_manifest=existing_record_manifest or "(none)",
-                synthesized_records_json=json.dumps(
-                    synthesized_payload,
-                    ensure_ascii=True,
-                    indent=2,
-                ),
-            ),
-            stage="review_records",
-            progress=progress,
-            progress_label="trace-ingestion",
-        )
-        payload = model_payload(result)
-        durable_count = len(payload.get("durable_records") or [])
-        update_count = len(payload.get("record_updates") or [])
-        return {
-            "llm_calls": llm_calls + attempts,
-            "synthesized": payload,
-            "observations": [
-                *retry_observations,
-                {
-                    "action": "review_records",
-                    "ok": True,
-                    "content": (
-                        f"durable_records={durable_count} "
-                        f"record_updates={update_count}"
-                    ),
+                    "content": f"durable_records={durable_count}",
                     "args": {},
                     "done": False,
                     "completion_summary": "",
@@ -385,7 +332,6 @@ def build_trace_ingestion_graph(
     graph.add_node("scan_window", scan_window)
     graph.add_node("filter_signals", filter_signals)
     graph.add_node("synthesize_records", synthesize_records)
-    graph.add_node("review_records", review_records)
     graph.add_node("persist_records", persist_records)
     graph.add_edge(START, "resolve_scope")
     graph.add_edge("resolve_scope", "read_window")
@@ -396,8 +342,7 @@ def build_trace_ingestion_graph(
         ["read_window", "filter_signals"],
     )
     graph.add_edge("filter_signals", "synthesize_records")
-    graph.add_edge("synthesize_records", "review_records")
-    graph.add_edge("review_records", "persist_records")
+    graph.add_edge("synthesize_records", "persist_records")
     graph.add_edge("persist_records", END)
     return graph.compile()
 
@@ -474,16 +419,14 @@ def _implementation_summary(state: TraceIngestionGraphState) -> str:
 def _format_finding(finding: dict[str, Any]) -> str:
     """Render one scan finding as one compact bullet."""
     kind = str(finding.get("kind") or "").strip()
-    card_type = str(finding.get("card_type") or "").strip()
     theme = str(finding.get("theme") or "").strip()
     note = str(finding.get("note") or "").strip()
     line = finding.get("line")
     quote = str(finding.get("quote") or "").strip()
-    type_suffix = f" [{card_type}]" if card_type else ""
-    prefix = f"- {kind}{type_suffix}: {theme}" if kind or theme else "-"
+    prefix = f"- {kind}: {theme}" if kind or theme else "-"
     details = note
     if line:
-        details += f" (line {line})"
+        details += f" (line:{line})"
     if quote:
         details += f" Evidence: {quote}"
     return f"{prefix}: {details}".strip()

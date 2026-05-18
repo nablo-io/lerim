@@ -24,7 +24,7 @@ The ingestion path turns raw agent traces into structured context records:
 
 ### Record quality contract
 
-- Durable records should store one reusable rule, decision, fact, preference, constraint, or reference.
+- Durable records should store one reusable rule, decision, fact, preference, or constraint.
 - Durable records should not read like meeting notes or session recap prose.
 - Episode records are short session recaps only. They should stay compact and should not become the main place where durable context lives.
 - Good durable writing is closer to "what is true, why it matters, how to apply it" than to "the user asked, then the agent did X".

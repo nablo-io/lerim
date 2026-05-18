@@ -12,8 +12,7 @@ class SignalPack:
     id: str
     display_name: str
     description: str
-    signal_types: tuple[str, ...]
+    focus_rules: tuple[str, ...]
     reject_as_noise: tuple[str, ...]
-    output_cards: tuple[str, ...]
     evidence_rules: tuple[str, ...]
     scope_rules: tuple[str, ...]

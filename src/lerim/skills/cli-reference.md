@@ -48,7 +48,7 @@ project and records a service run.
 - `dashboard`
 - `answer`
 - `query`
-- `context` (`cards`)
+- `context` (`records`)
 - `profile` (`list`, `show`) (host-only)
 - `status`
 - `queue`
@@ -312,7 +312,7 @@ Rendered artifact shape:
 | `Current Handoff` | Recent episode evidence only; otherwise an explicit no-handoff note |
 | `Decisions` | Durable decision records |
 | `Constraints & Preferences` | Durable constraint and preference records |
-| `Project Facts` | Durable facts and references that prevent mistakes |
+| `Project Facts` | Durable facts that prevent mistakes |
 | `Open Risks / Review Queue` | Records that explicitly identify unresolved work, risks, or review concerns |
 | `Follow-up Queries` | Records that explicitly justify deeper lookup questions |
 | `Sources` | Cited record IDs used by the body |
@@ -429,7 +429,7 @@ what record mix it currently has.
 lerim profile list
 lerim profile show support
 lerim profile show support --kind decision
-lerim profile show support --card-type fact --limit 30
+lerim profile show support --kind fact --limit 30
 ```
 
 | Subcommand | Description |
@@ -440,32 +440,30 @@ lerim profile show support --card-type fact --limit 30
 | Flag | Description |
 |------|-------------|
 | `name` | Source profile to inspect, for example `support`, `ops`, or `coding` |
-| `--kind` | Filter records by kind (`decision`, `fact`, `episode`, `constraint`, `reference`) |
-| `--card-type` | Alias for `--kind` |
+| `--kind` | Filter records by kind (`decision`, `fact`, `episode`, `constraint`, `preference`) |
 | `--limit` | Max records to inspect (default: `20`) |
 
-### `lerim context cards`
+### `lerim context records`
 
-List context cards from durable records using profile/type filters.
+List context records using profile/kind filters.
 
 ```bash
-lerim context cards
-lerim context cards --profile support --type fact --limit 50
-lerim context cards --profile support --type constraint --status active --json
-lerim context cards --source-profile support --type known_fix --project my-repo --limit 25
+lerim context records
+lerim context records --profile support --type fact --limit 50
+lerim context records --profile support --type constraint --status active --json
+lerim context records --source-profile support --type fact --project my-repo --limit 25
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--profile` | Filter by source profile, for example `support`, `ops`, or `coding` |
 | `--source-profile` | Backward-compatible alias for `--profile` |
-| `--type` | Filter by card type (`fact`, `constraint`, `episode`, `reference`, etc.) |
-| `--card-type` | Alias for `--type` |
-| `--status` | Filter by lifecycle status, for example `active` or `proposed` |
+| `--type` | Filter by durable record kind (`fact`, `constraint`, `episode`, `preference`, etc.) |
+| `--status` | Filter by storage record status, for example `active` or `archived` |
 | `--scope` | `all` (default) or `project` |
 | `--project` | Project name/path when `--scope=project` |
-| `--source-session-id` | Filter cards created from one source session |
-| `--limit` | Max cards to show |
+| `--source-session-id` | Filter records created from one source session |
+| `--limit` | Max records to show |
 | `--offset` | Page offset |
 | `--json` | Emit machine-readable JSON |
 

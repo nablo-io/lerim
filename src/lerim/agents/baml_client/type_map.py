@@ -52,9 +52,6 @@ type_map = {
     "types.DurableRecordDraft": types.DurableRecordDraft,
     "stream_types.DurableRecordDraft": stream_types.DurableRecordDraft,
 
-    "types.DurableRecordUpdateDraft": types.DurableRecordUpdateDraft,
-    "stream_types.DurableRecordUpdateDraft": stream_types.DurableRecordUpdateDraft,
-
     "types.EpisodeDraft": types.EpisodeDraft,
     "stream_types.EpisodeDraft": stream_types.EpisodeDraft,
 
@@ -71,10 +68,6 @@ type_map = {
     "stream_types.SynthesizedContextRecords": stream_types.SynthesizedContextRecords,
 
 
-    "types.ApprovalStatus": types.ApprovalStatus,
-
-    "types.CardType": types.CardType,
-
     "types.ContextCuratorActionType": types.ContextCuratorActionType,
 
     "types.ContextCuratorRecordKind": types.ContextCuratorRecordKind,
@@ -84,8 +77,6 @@ type_map = {
     "types.ContextRecordKind": types.ContextRecordKind,
 
     "types.ContextRetrievalActionType": types.ContextRetrievalActionType,
-
-    "types.LifecycleStatus": types.LifecycleStatus,
 
     "types.RecordKind": types.RecordKind,
 

@@ -516,14 +516,14 @@ def test_trace_ingestion_constraint_trace_creates_constraint_record(
 @pytest.mark.integration
 @pytest.mark.llm
 @pytest.mark.agent
-def test_trace_ingestion_reference_trace_creates_reference_record(
+def test_trace_ingestion_source_truth_trace_creates_fact_record(
     live_config,
     live_repo_root,
 ) -> None:
-    """A durable external source-of-truth pointer should become a reference record."""
-    expectation = load_trace_ingestion_expectation("reference_extraction")["expected"]
+    """A durable source-of-truth boundary should become a fact record."""
+    expectation = load_trace_ingestion_expectation("source_truth_fact")["expected"]
     outcome = run_trace_ingestion_case(
-        case_name="reference_extraction",
+        case_name="source_truth_fact",
         live_config=live_config,
         live_repo_root=live_repo_root,
     )
@@ -538,27 +538,25 @@ def test_trace_ingestion_reference_trace_creates_reference_record(
     rows = outcome.rows
     episode_rows = [row for row in rows if row["kind"] == "episode"]
     durable_rows = [row for row in rows if row["kind"] != "episode"]
-    reference_rows = [row for row in rows if row["kind"] == "reference"]
+    fact_rows = [row for row in rows if row["kind"] == "fact"]
 
     assert outcome.result.completion_summary.strip()
     assert len(episode_rows) == expectation["episode_count"]
     assert len(durable_rows) == expectation["durable_count"]
-    assert len(reference_rows) == expectation["reference_count"]
+    assert len(fact_rows) == expectation["fact_count"]
 
-    reference = next(
-        record for record in outcome.records if record["kind"] == "reference"
-    )
-    reference_text = " ".join(
-        str(reference.get(field) or "") for field in ("title", "body")
+    fact = next(record for record in outcome.records if record["kind"] == "fact")
+    fact_text = " ".join(
+        str(fact.get(field) or "") for field in ("title", "body")
     ).lower()
-    for token in expectation["reference_text_must_include_all"]:
-        assert token in reference_text
+    for token in expectation["fact_text_must_include_all"]:
+        assert token in fact_text
     assert any(
-        token in reference_text
-        for token in expectation["reference_text_must_include_any"]
+        token in fact_text
+        for token in expectation["fact_text_must_include_any"]
     )
-    for token in expectation["reference_text_must_not_include"]:
-        assert token not in reference_text
+    for token in expectation["fact_text_must_not_include"]:
+        assert token not in fact_text
 
 
 @pytest.mark.integration

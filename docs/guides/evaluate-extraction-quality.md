@@ -3,14 +3,14 @@
 Do not evaluate Lerim by the number of memories created.
 
 Evaluate whether the compiler produced a small set of useful, supported,
-non-duplicate context cards:
+non-duplicate context records:
 
 - precision
 - usefulness
 - evidence coverage
 - duplicate rate
 - scope compatibility
-- card type accuracy
+- expected record kind alignment
 - future reuse
 
 Use the existing `lerim-cloud/evals` template. Do not create a second eval
@@ -30,6 +30,6 @@ Dataset artifacts stay under the shared eval tree, never under `lerim-cli`:
 ```text
 lerim-cloud/evals/data/traces/
 lerim-cloud/evals/data/labels/
-lerim-cloud/evals/verticals/support_ops/
-lerim-cloud/evals/verticals/incident_ops/
+lerim-cloud/evals/projects/vertical_samples/support_ops/
+lerim-cloud/evals/projects/vertical_samples/incident_ops/
 ```

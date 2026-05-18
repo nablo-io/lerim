@@ -41,7 +41,6 @@ class TestNormalizeCloudKind:
             "preference",
             "constraint",
             "fact",
-            "reference",
             "episode",
         ):
             assert _normalize_cloud_kind(kind) == kind

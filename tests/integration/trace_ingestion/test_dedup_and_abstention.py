@@ -21,11 +21,11 @@ from tests.live_helpers import (
 @pytest.mark.integration
 @pytest.mark.llm
 @pytest.mark.agent
-def test_trace_ingestion_updates_existing_record_instead_of_creating_duplicate(
+def test_trace_ingestion_skips_existing_record_instead_of_creating_duplicate(
     live_config,
     live_repo_root,
 ) -> None:
-    """Trace ingestion should revise one seeded durable record instead of duplicating it."""
+    """Trace ingestion should avoid duplicate writes; curation owns later revisions."""
     expectation = load_trace_ingestion_expectation("duplicate_existing_record")[
         "expected"
     ]
@@ -58,43 +58,11 @@ def test_trace_ingestion_updates_existing_record_instead_of_creating_duplicate(
     created_rows = outcome.rows
     created_episode_rows = [row for row in created_rows if row["kind"] == "episode"]
     created_durable_rows = [row for row in created_rows if row["kind"] != "episode"]
-    changed_records = outcome.changed_records
-    changed_durable_records = [
-        record for record in changed_records if record["kind"] != "episode"
-    ]
-    changed_decisions = [
-        record for record in changed_durable_records if record["kind"] == "decision"
-    ]
 
     assert outcome.result.completion_summary.strip()
     assert len(created_episode_rows) == expectation["episode_count"]
     assert len(created_durable_rows) == expectation["created_durable_count"]
-    assert len(changed_durable_records) == expectation["changed_record_count"]
-    assert len(changed_decisions) == expectation["changed_decision_count"]
-
-    updated_decision = next(
-        record
-        for record in changed_decisions
-        if record["record_id"] == "rec_existing_storage_split"
-    )
-    assert len(updated_decision["versions"]) >= 2
-    latest_change_kinds = {
-        str(version["change_kind"]) for version in updated_decision["versions"][:2]
-    }
-    assert "update" in latest_change_kinds
-
-    updated_text = " ".join(
-        str(updated_decision.get(field) or "")
-        for field in ("title", "body", "decision", "why", "consequences")
-    ).lower()
-    for token in expectation["updated_decision_text_must_include_all"]:
-        assert token in updated_text
-    assert any(
-        token in updated_text
-        for token in expectation["updated_decision_text_must_include_any"]
-    )
-    for token in expectation["updated_decision_text_must_not_include"]:
-        assert token not in updated_text
+    assert len([record for record in outcome.changed_records if record["kind"] != "episode"]) == expectation["changed_record_count"]
 
     with connect_context_db(live_config.context_db_path) as conn:
         durable_total = int(
@@ -111,7 +79,7 @@ def test_trace_ingestion_updates_existing_record_instead_of_creating_duplicate(
         )
 
     assert durable_total == 1
-    assert seeded_version_count >= 2
+    assert seeded_version_count == 1
     assert_clean_context_schema(live_config.context_db_path)
     assert_quality_metrics(audit_context_db(live_config.context_db_path))
 
@@ -328,11 +296,11 @@ def test_trace_ingestion_similar_but_new_decision_creates_new_record(
 @pytest.mark.integration
 @pytest.mark.llm
 @pytest.mark.agent
-def test_trace_ingestion_ambiguous_search_hits_update_only_true_target(
+def test_trace_ingestion_ambiguous_search_hits_skip_duplicate_targets(
     live_config,
     live_repo_root,
 ) -> None:
-    """When multiple nearby records exist, trace ingestion should update only the true target."""
+    """When multiple nearby records exist, ingestion should not revise them inline."""
     expectation = load_trace_ingestion_expectation(
         "ambiguous_search_hits_correct_update_target"
     )["expected"]
@@ -367,28 +335,15 @@ def test_trace_ingestion_ambiguous_search_hits_update_only_true_target(
     for tool_name in expectation["must_not_use_tools"]:
         assert tool_name not in tool_names
 
-    assert len(outcome.rows) == expectation["episode_count"]
+    created_episode_rows = [row for row in outcome.rows if row["kind"] == "episode"]
+    created_durable_rows = [row for row in outcome.rows if row["kind"] != "episode"]
+
+    assert len(created_episode_rows) == expectation["episode_count"]
+    assert len(created_durable_rows) == expectation["created_durable_count"]
     changed_durable_records = [
         record for record in outcome.changed_records if record["kind"] != "episode"
     ]
     assert len(changed_durable_records) == expectation["changed_record_count"]
-    updated = next(
-        record
-        for record in changed_durable_records
-        if record["record_id"] == expectation["updated_record_id"]
-    )
-    updated_text = " ".join(
-        str(updated.get(field) or "")
-        for field in ("title", "body", "decision", "why", "consequences")
-    ).lower()
-    for token in expectation["updated_decision_text_must_include_all"]:
-        assert token in updated_text
-    assert any(
-        token in updated_text
-        for token in expectation["updated_decision_text_must_include_any"]
-    )
-    for token in expectation["updated_decision_text_must_not_include"]:
-        assert token not in updated_text
     changed_record_ids = {str(row["record_id"]) for row in outcome.changed_version_rows}
     for record_id in expectation["unchanged_record_ids"]:
         assert record_id not in changed_record_ids

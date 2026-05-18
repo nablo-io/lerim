@@ -77,12 +77,6 @@ class LlmResponseParser:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ReviewContextGraphLinks", llm_response=llm_response, mode="request")
         return typing.cast(types.ContextGraphPlan, __result__)
 
-    def ReviewSynthesizedContextRecords(
-        self, llm_response: str, baml_options: BamlCallOptions = {},
-    ) -> types.SynthesizedContextRecords:
-        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ReviewSynthesizedContextRecords", llm_response=llm_response, mode="request")
-        return typing.cast(types.SynthesizedContextRecords, __result__)
-
     def SynthesizeContextRecords(
         self, llm_response: str, baml_options: BamlCallOptions = {},
     ) -> types.SynthesizedContextRecords:
@@ -150,12 +144,6 @@ class LlmStreamParser:
     ) -> stream_types.ContextGraphPlan:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ReviewContextGraphLinks", llm_response=llm_response, mode="stream")
         return typing.cast(stream_types.ContextGraphPlan, __result__)
-
-    def ReviewSynthesizedContextRecords(
-        self, llm_response: str, baml_options: BamlCallOptions = {},
-    ) -> stream_types.SynthesizedContextRecords:
-        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ReviewSynthesizedContextRecords", llm_response=llm_response, mode="stream")
-        return typing.cast(stream_types.SynthesizedContextRecords, __result__)
 
     def SynthesizeContextRecords(
         self, llm_response: str, baml_options: BamlCallOptions = {},

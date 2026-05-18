@@ -1,33 +1,26 @@
 id: support
 display_name: Support Operations
 description: Customer support and customer operations traces.
-signal_types:
-  - customer_constraint
-  - known_fix
-  - failed_path
-  - escalation
-  - product_behavior
-  - repeated_waste
-  - guardrail_candidate
+focus_rules:
+  - durable customer-facing policy boundaries, approval gates, and privacy constraints
+  - known fixes or troubleshooting paths only when they change future support behavior
+  - escalation prerequisites, routing rules, and no-action boundaries when they apply beyond one ticket
 reject_as_noise:
   - politeness phrases
   - routine acknowledgements
   - one-off emotional language without reusable follow-up
   - private personal data
   - generic troubleshooting steps with no durable lesson
-output_cards:
-  - customer_constraint
-  - known_fix
-  - failed_path
-  - escalation
-  - product_behavior
-  - repeated_waste
-  - guardrail_candidate
 evidence_rules:
-  - keep ticket or case ids as episode or evidence context unless the reusable card is scoped to that exact active case
-  - keep policy or playbook sources as evidence unless the durable action is to consult that source directly
+  - keep ticket or case ids as episode or evidence context unless the reusable record is scoped to that exact active case
+  - keep policy or playbook sources as evidence or inside the governing fact or constraint
+  - a named policy source alone is not a standalone durable record
+  - fold customer-confirmed failed troubleshooting steps into the escalation or customer workflow record they affect
+  - fold routing and no-action boundaries into the approval or verification rule they govern
+  - escalation prerequisites should name required diagnostics and repeated actions to avoid when the source states them
+  - domain-scoped reusable records should not include ticket ids, case ids, or pending handoff status
   - keep affected product, account, or team only if non-sensitive or redacted
   - attach quote or trace line when possible
 scope_rules:
   - use domain scope for support operations unless a narrower customer-safe scope is provided
-  - do not store private customer details in reusable cards
+  - do not store private customer details in reusable records

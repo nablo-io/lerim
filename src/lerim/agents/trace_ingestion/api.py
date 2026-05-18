@@ -212,7 +212,7 @@ def _build_run_instruction(
         f"Scope: {scope_identity.scope_type}:{scope_identity.scope_id} ({scope_identity.label}). "
         f"Source: {source_text}. "
         "Use the source profile as a signal pack: it narrows extraction priorities, "
-        "rejection rules, card types, evidence expectations, and scope semantics without "
+        "rejection rules, evidence expectations, and scope semantics without "
         "replacing the generic durable-signal rules. "
         "Durable records must be positive canonical context: when source text combines a "
         "durable point with cleanup/noise/ignore guidance, exclude that guidance entirely "

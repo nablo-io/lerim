@@ -652,26 +652,24 @@ def _cmd_query(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_context_cards(args: argparse.Namespace) -> int:
-    """List context cards from durable records with profile/type filters."""
-    requested_card_type = _normalize_card_type(
-        getattr(args, "card_type", None) or getattr(args, "kind", None)
+def _cmd_context_records(args: argparse.Namespace) -> int:
+    """List context records with profile/kind filters."""
+    requested_kind = _normalize_record_kind(
+        getattr(args, "kind", None)
     )
-    requested_lifecycle = _normalize_card_type(getattr(args, "lifecycle_status", None))
     requested_limit = max(1, int(getattr(args, "limit", 20)))
-    filter_multiplier = 5 if requested_card_type or requested_lifecycle else 1
     payload = api_query(
         entity="records",
         mode="list",
         scope=_normalize_scope(getattr(args, "scope", None)),
         project=getattr(args, "project", None),
-        kind=None,
+        kind=requested_kind,
         status=getattr(args, "status", None),
         source_profile=getattr(args, "profile", None)
         or getattr(args, "source_profile", None),
         source_session_id=getattr(args, "source_session_id", None),
         order_by="updated_at",
-        limit=requested_limit * filter_multiplier,
+        limit=requested_limit,
         offset=max(0, int(getattr(args, "offset", 0))),
         include_total=True,
     )
@@ -679,49 +677,35 @@ def _cmd_context_cards(args: argparse.Namespace) -> int:
         _emit(str(payload.get("message") or "query failed"), file=sys.stderr)
         return 1
     rows = payload.get("rows") or []
-    if requested_card_type:
-        rows = [
-            row for row in rows if _card_type_for_row(row) == requested_card_type
-        ][:requested_limit]
-        payload = {**payload, "rows": rows, "count": len(rows)}
-    if requested_lifecycle:
-        rows = [
-            row
-            for row in rows
-            if _normalize_card_type(row.get("lifecycle_status")) == requested_lifecycle
-        ][:requested_limit]
-        payload = {**payload, "rows": rows, "count": len(rows)}
     if args.json:
         grouped = {
-            key: values for key, values in _group_card_rows(rows).items()
+            key: values for key, values in _group_record_rows_by_kind(rows).items()
         }
         _emit(json.dumps({**payload, "groups": grouped}, indent=2, ensure_ascii=True))
         return 0
     profile = getattr(args, "profile", None) or getattr(args, "source_profile", None)
     title = (
-        f"{get_signal_pack(profile).display_name} Context Cards"
+        f"{get_signal_pack(profile).display_name} Context Records"
         if profile
-        else "Context Cards"
+        else "Context Records"
     )
     _emit(title)
-    _emit(f"{len(rows)} cards shown")
-    if requested_card_type:
-        _emit(f"Filter: {_card_type_label(requested_card_type)}")
-    if requested_lifecycle:
-        _emit(f"Lifecycle: {requested_lifecycle}")
+    _emit(f"{len(rows)} records shown")
+    if requested_kind:
+        _emit(f"Kind: {requested_kind}")
     if not rows:
         return 0
-    for card_type, group_rows in _group_card_rows(rows).items():
+    for kind, group_rows in _group_record_rows_by_kind(rows).items():
         _emit("")
-        _emit(_card_type_label(card_type))
+        _emit(_record_kind_label(kind))
         for row in group_rows:
             scope = f"{row.get('scope_type', 'project')}:{row.get('scope_id', 'unknown')}"
-            lifecycle = str(row.get("lifecycle_status") or row.get("status") or "").strip()
+            status = str(row.get("status") or "").strip()
             title_text = str(row.get("title") or "")[:140].replace("\n", " ")
             _emit(f"- {title_text}")
             _emit(
                 "  "
-                f"{row.get('record_id', '')} | {row.get('kind', '')} | {lifecycle} | "
+                f"{row.get('record_id', '')} | {row.get('kind', '')} | {status} | "
                 f"{scope} | {row.get('source_profile', 'coding')}"
             )
             evidence = _evidence_summary(row)
@@ -1308,28 +1292,17 @@ def _normalize_record_kind(kind: Any) -> str | None:
     return text or None
 
 
-def _normalize_card_type(card_type: Any) -> str | None:
-    """Normalize an optional product card type filter."""
-    text = str(card_type or "").strip().lower().replace("-", "_").replace(" ", "_")
-    return text or None
-
-
-def _card_type_for_row(row: dict[str, Any]) -> str:
-    """Return the product card type for a row, falling back to storage kind."""
-    return _normalize_card_type(row.get("card_type")) or str(row.get("kind") or "fact")
-
-
-def _group_card_rows(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
-    """Group rows by product card type while preserving row order."""
+def _group_record_rows_by_kind(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Group rows by durable record kind while preserving row order."""
     grouped: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
-        grouped.setdefault(_card_type_for_row(row), []).append(row)
+        grouped.setdefault(str(row.get("kind") or "fact"), []).append(row)
     return grouped
 
 
-def _card_type_label(card_type: str) -> str:
-    """Render one product card heading."""
-    words = str(card_type or "context").replace("_", " ").strip().split()
+def _record_kind_label(kind: str) -> str:
+    """Render one record-kind heading."""
+    words = str(kind or "context").replace("_", " ").strip().split()
     return " ".join(word.capitalize() for word in words) or "Context"
 
 
@@ -1374,7 +1347,6 @@ def _cmd_profile(args: argparse.Namespace) -> int:
     kind_filter = _normalize_record_kind(
         getattr(args, "kind", None)
     )
-    card_type_filter = _normalize_card_type(getattr(args, "card_type", None))
     limit = max(1, int(getattr(args, "limit", 10)))
 
     if action == "list":
@@ -1399,7 +1371,7 @@ def _cmd_profile(args: argparse.Namespace) -> int:
                 "display_name": pack.display_name,
                 "description": pack.description,
                 "record_count": counts.get(pack.id, 0),
-                "output_cards": list(pack.output_cards),
+                "focus_rules": list(pack.focus_rules),
             }
             for pack in list_signal_packs()
         ]
@@ -1425,19 +1397,12 @@ def _cmd_profile(args: argparse.Namespace) -> int:
             " AND COALESCE(NULLIF(TRIM(LOWER(kind)), ''), 'fact') = ?"
         )
         where_params.append(kind_filter)
-    if card_type_filter:
-        where_clause += (
-            " AND COALESCE(NULLIF(TRIM(LOWER(card_type)), ''), '') = ?"
-        )
-        where_params.append(card_type_filter)
 
     with store.connect() as conn:
         rows = conn.execute(
             """
             SELECT
               source_profile,
-              card_type,
-              lifecycle_status,
               kind,
               status,
               scope_type,
@@ -1455,7 +1420,6 @@ def _cmd_profile(args: argparse.Namespace) -> int:
         ).fetchall()
 
     kind_counts = Counter(str(row["kind"] or "").strip().lower() for row in rows)
-    card_type_counts = Counter(str(row["card_type"] or "").strip().lower() for row in rows)
     status_counts = Counter(str(row["status"] or "").strip().lower() for row in rows)
     scope_counts = Counter(
         f"{str(row['scope_type'] or 'project')}:{str(row['scope_id'] or 'unknown')}"
@@ -1466,23 +1430,16 @@ def _cmd_profile(args: argparse.Namespace) -> int:
         "source_profile": requested_profile,
         "display_name": pack.display_name,
         "description": pack.description,
-        "signal_types": list(pack.signal_types),
-        "output_cards": list(pack.output_cards),
+        "focus_rules": list(pack.focus_rules),
         "kind": kind_filter,
-        "card_type": card_type_filter,
         "records": len(rows),
         "records_by_kind": {name: count for name, count in sorted(kind_counts.items())},
-        "records_by_card_type": {
-            name: count for name, count in sorted(card_type_counts.items()) if name
-        },
         "records_by_status": {name: count for name, count in sorted(status_counts.items())},
         "scope_count": len(scope_counts),
         "top_records": [
             {
                 "kind": row["kind"],
-                "card_type": row["card_type"],
                 "status": row["status"],
-                "lifecycle_status": row["lifecycle_status"],
                 "scope": f"{row['scope_type']}:{row['scope_id']}",
                 "source_name": row["source_name"],
                 "title": row["title"],
@@ -1497,23 +1454,17 @@ def _cmd_profile(args: argparse.Namespace) -> int:
     _emit(f"Source profile: {requested_profile}")
     _emit(f"- Name: {pack.display_name}")
     _emit(f"- Description: {pack.description}")
-    if pack.signal_types:
-        _emit("- Signal types: " + ", ".join(pack.signal_types))
-    if pack.output_cards:
-        _emit("- Output cards: " + ", ".join(pack.output_cards))
+    if pack.focus_rules:
+        _emit("- Focus rules:")
+        for rule in pack.focus_rules:
+            _emit(f"  - {rule}")
     if kind_filter:
         _emit(f"- Kind filter: {kind_filter}")
-    if card_type_filter:
-        _emit(f"- Card type filter: {card_type_filter}")
     _emit(f"- Records: {payload['records']}")
     _emit(f"- Scope count: {payload['scope_count']}")
     if payload["records_by_kind"]:
         _emit("- Kind breakdown:")
         for key, value in payload["records_by_kind"].items():
-            _emit(f"  - {key}: {value}")
-    if payload["records_by_card_type"]:
-        _emit("- Card type breakdown:")
-        for key, value in payload["records_by_card_type"].items():
             _emit(f"  - {key}: {value}")
     if payload["records_by_status"]:
         _emit("- Status breakdown:")
@@ -1523,7 +1474,7 @@ def _cmd_profile(args: argparse.Namespace) -> int:
     for item in payload["top_records"][:5]:
         _emit(
             "  - "
-            f"{item['card_type'] or item['kind']} ({item['lifecycle_status'] or item['status']}) [{item['scope']}] "
+            f"{item['kind']} ({item['status']}) [{item['scope']}] "
             f"source={item['source_name']} title={item['title']}"
         )
     return 0
@@ -2412,59 +2363,49 @@ def build_parser() -> argparse.ArgumentParser:
     context = sub.add_parser(
         "context",
         formatter_class=_F,
-        help="List context cards from durable records",
-        description="List and inspect stored context cards.",
+        help="List context records",
+        description="List and inspect stored context records.",
     )
     context_sub = context.add_subparsers(dest="context_action")
-    context_cards = context_sub.add_parser(
-        "cards",
+    context_records = context_sub.add_parser(
+        "records",
         formatter_class=_F,
-        help="List context cards by profile and type.",
-        description="List context cards from durable records with profile/type filters.",
+        help="List context records by profile and kind.",
+        description="List context records with profile/kind filters.",
     )
-    context_cards.add_argument("--scope", choices=["all", "project"], default="all")
-    context_cards.add_argument(
+    context_records.add_argument("--scope", choices=["all", "project"], default="all")
+    context_records.add_argument(
         "--project", help="Project name/path when --scope=project."
     )
-    context_cards.add_argument(
+    context_records.add_argument(
         "--profile", help="Filter by source profile, for example support or ops."
     )
-    context_cards.add_argument(
+    context_records.add_argument(
         "--source-profile",
         dest="source_profile",
         help="Backward-compatible alias for --profile.",
     )
-    context_cards.add_argument(
+    context_records.add_argument(
         "--type",
         dest="kind",
-        help="Filter by product card type, for example failed_path or handoff.",
+        help="Filter by durable record kind, for example fact or constraint.",
     )
-    context_cards.add_argument(
-        "--card-type",
-        dest="card_type",
-        help="Alias for --type.",
-    )
-    context_cards.add_argument(
+    context_records.add_argument(
         "--status",
         help="Filter by storage record status, for example active or archived.",
     )
-    context_cards.add_argument(
-        "--lifecycle-status",
-        dest="lifecycle_status",
-        help="Filter by card lifecycle, for example proposed, approved, or active.",
-    )
-    context_cards.add_argument(
+    context_records.add_argument(
         "--source-session-id",
-        help="Filter cards created from one source session.",
+        help="Filter records created from one source session.",
     )
-    context_cards.add_argument("--limit", type=int, default=20)
-    context_cards.add_argument("--offset", type=int, default=0)
-    context_cards.add_argument(
+    context_records.add_argument("--limit", type=int, default=20)
+    context_records.add_argument("--offset", type=int, default=0)
+    context_records.add_argument(
         "--json",
         action="store_true",
         help="Emit machine-readable JSON output.",
     )
-    context_cards.set_defaults(func=_cmd_context_cards)
+    context_records.set_defaults(func=_cmd_context_records)
 
     # ── profile ──────────────────────────────────────────────────────
     profile = sub.add_parser(
@@ -2493,11 +2434,6 @@ def build_parser() -> argparse.ArgumentParser:
     profile_show.add_argument(
         "--kind",
         help="Filter only this record kind, for example decision, fact, or episode.",
-    )
-    profile_show.add_argument(
-        "--card-type",
-        dest="card_type",
-        help="Filter only this product card type, for example failed_path or handoff.",
     )
     profile_show.add_argument(
         "--limit",

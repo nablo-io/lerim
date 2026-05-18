@@ -9,7 +9,6 @@ enum ContextRecordKind {
   PREFERENCE @alias("preference")
   CONSTRAINT @alias("constraint")
   FACT @alias("fact")
-  REFERENCE @alias("reference")
   EPISODE @alias("episode")
 }
 
@@ -60,9 +59,9 @@ function PlanContextRetrieval(
     - search: semantic/lexical retrieval for topical questions.
 
     Valid record kind filters:
-    - decision, preference, constraint, fact, reference, episode.
+    - decision, preference, constraint, fact, episode.
     Use null when the question does not explicitly ask for one of those exact record kinds.
-    Provider, setting, mechanism, requirement, state, source-of-truth, policy, and workflow words are topical words, not record-kind filters. Use kind null for them unless the user explicitly asks for a decision, preference, constraint, fact, reference, or episode record.
+    Provider, setting, mechanism, requirement, state, source-of-truth, policy, and workflow words are topical words, not record-kind filters. Use kind null for them unless the user explicitly asks for a decision, preference, constraint, fact, or episode record.
 
     Planning rules:
     - Use count for "how many" questions.

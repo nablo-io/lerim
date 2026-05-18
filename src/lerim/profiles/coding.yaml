@@ -1,32 +1,18 @@
 id: coding
 display_name: Coding Agents
 description: Software engineering agent traces and repository workflow sessions.
-signal_types:
-  - decision
-  - failed_path
-  - handoff
-  - source_of_truth
-  - repo_convention
-  - architecture_decision
-  - setup_fact
-  - test_lesson
-  - release_handoff
-  - constraint
+focus_rules:
+  - stable user preferences and repository conventions
+  - explicit architecture or workflow decisions with source-supported rationale
+  - durable runtime, setup, dependency, path, or environment facts
+  - failed paths only when they prevent likely repeated work
+  - release or handoff details only when they preserve a still-open future action
 reject_as_noise:
   - raw command output without a reusable lesson
   - one-off debug steps
   - temporary implementation details
   - branch-local cleanup
   - stale status observations
-output_cards:
-  - decision
-  - constraint
-  - handoff
-  - source_of_truth
-  - failed_path
-  - setup_fact
-  - test_lesson
-  - release_handoff
 evidence_rules:
   - keep file or command evidence when it supports a future-facing rule
   - attach trace line references when available

@@ -2,9 +2,9 @@
 
 Lerim turns completed agent traces into reusable operating context.
 
-It filters noisy execution history into evidence-backed context cards:
-decisions, constraints, handoffs, source-of-truth records, failed paths,
-repeated-waste patterns, and guardrail candidates.
+It filters noisy execution history into evidence-backed context records:
+decisions, preferences, constraints, facts, references, and compact episode
+history.
 
 ## Summary
 
@@ -36,7 +36,7 @@ The operating model is simple:
 ## Focused workflows
 
 - Coding agents preserve repo conventions, architecture decisions, setup facts, failed commands, test lessons, and release handoffs.
-- Support operations preserve customer constraints, known fixes, failed fixes, escalation reasons, policy references, and handoffs.
+- Support operations preserve customer constraints, known fixes, failed fixes, escalation reasons, policy-backed facts, and handoffs.
 - Operations and incidents preserve root causes, mitigations, rejected hypotheses, runbook gaps, incident handoffs, and follow-up risks.
 
 ## Start here
@@ -45,7 +45,7 @@ The operating model is simple:
 - [Quickstart](quickstart.md)
 - [Business Workflows](concepts/business-workflows.md)
 - [Signal Packs](concepts/signal-packs.md)
-- [Context Cards](concepts/context-cards.md)
+- [Context Records](concepts/context-records.md)
 - [Custom Trace Folders](guides/custom-trace-folders.md)
 - [How It Works](concepts/how-it-works.md)
 - [Context Brief](concepts/context-brief.md)

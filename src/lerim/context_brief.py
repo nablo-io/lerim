@@ -24,21 +24,19 @@ KIND_PRIORITY = {
     "preference": 1,
     "constraint": 2,
     "fact": 3,
-    "reference": 4,
-    "episode": 5,
+    "episode": 4,
 }
 KIND_BUDGETS = {
     "decision": 20,
     "preference": 10,
     "constraint": 14,
     "fact": 14,
-    "reference": 8,
     "episode": 8,
 }
 SECTION_KIND_RULES = {
     "decisions": {"decision"},
     "constraints_preferences": {"constraint", "preference"},
-    "project_facts": {"fact", "reference"},
+    "project_facts": {"fact"},
 }
 
 

@@ -18,7 +18,6 @@ from lerim.context.spec import (
     MAX_EPISODE_USER_INTENT_CHARS,
     MAX_EPISODE_WHAT_HAPPENED_CHARS,
     MAX_RECORD_TITLE_CHARS,
-    normalize_card_type,
     normalize_record_kind,
     normalize_record_status,
 )
@@ -154,22 +153,13 @@ def persist_synthesized_extraction(
         )
         if record is not None
     ]
-    record_updates = [
-        update
-        for update in (
-            _prepare_durable_update(item)
-            for item in payload.get("record_updates") or []
-        )
-        if update is not None
-    ]
     completion_summary = _completion_summary(
         durable_record_count=len(durable_records),
-        record_update_count=len(record_updates),
     )
     episode = _prepare_episode(
         payload.get("episode") or {},
         completion_summary,
-        archive_when_durable_signal=bool(durable_records or record_updates),
+        archive_when_durable_signal=bool(durable_records),
     )
 
     observations: list[dict[str, Any]] = []
@@ -229,72 +219,6 @@ def persist_synthesized_extraction(
             break
         if index == 0 and not observation.ok:
             break
-    else:
-        for update in record_updates:
-            record_id = str(update.get("record_id") or "").strip()
-            changes = {
-                key: value
-                for key, value in update.items()
-                if key != "record_id"
-            }
-            try:
-                result = store.update_record(
-                    record_id=record_id,
-                    session_id=ctx.session_id,
-                    project_ids=[ctx.project_identity.project_id]
-                    if ctx.project_identity
-                    else None,
-                    changes=changes,
-                    change_reason="baml_trace_ingestion",
-                )
-                observation = PersistenceObservation(
-                    action="save_context",
-                    ok=True,
-                    content=json.dumps(
-                        {
-                            "ok": True,
-                            "updated_record_id": record_id,
-                            "result": result,
-                        },
-                        ensure_ascii=True,
-                        indent=2,
-                    ),
-                    args=update,
-                )
-            except ValueError as exc:
-                if str(exc) == "no_changes":
-                    observation = PersistenceObservation(
-                        action="save_context",
-                        ok=True,
-                        content=json.dumps(
-                            {
-                                "ok": True,
-                                "skipped": "no_changes",
-                                "record_id": record_id,
-                            },
-                            ensure_ascii=True,
-                            indent=2,
-                        ),
-                        args=update,
-                    )
-                else:
-                    observation = PersistenceObservation(
-                        action="save_context",
-                        ok=False,
-                        content=f"Record update failed: {type(exc).__name__}: {exc}",
-                        args=update,
-                    )
-            except Exception as exc:
-                observation = PersistenceObservation(
-                    action="save_context",
-                    ok=False,
-                    content=f"Record update failed: {type(exc).__name__}: {exc}",
-                    args=update,
-                )
-            observations.append(observation_to_state(observation))
-            if not observation.ok:
-                break
-
     episode_count = count_current_session_episodes(ctx)
     done = episode_count == 1
     final_observation = PersistenceObservation(
@@ -353,18 +277,12 @@ def _duplicate_episode_observation(
     )
 
 
-def _completion_summary(*, durable_record_count: int, record_update_count: int) -> str:
+def _completion_summary(*, durable_record_count: int) -> str:
     """Return a deterministic ingestion summary from write intent counts."""
-    parts: list[str] = []
     if durable_record_count:
         label = "record" if durable_record_count == 1 else "records"
-        parts.append(f"{durable_record_count} durable {label} created")
-    if record_update_count:
-        label = "record" if record_update_count == 1 else "records"
-        parts.append(f"{record_update_count} {label} updated")
-    if not parts:
-        return "Trace ingestion completed: no reusable durable context found."
-    return "Trace ingestion completed: " + ", ".join(parts) + "."
+        return f"Trace ingestion completed: {durable_record_count} durable {label} created."
+    return "Trace ingestion completed: no reusable durable context found."
 
 
 def observation_to_state(observation: PersistenceObservation) -> dict[str, Any]:
@@ -456,20 +374,9 @@ def _prepare_durable_record(value: Any) -> dict[str, Any] | None:
     evidence_refs = _reference_list(record.get("evidence_refs"))
     return {
         "kind": kind,
-        "card_type": normalize_card_type(_enum_text(record.get("card_type"))),
         "title": title,
         "body": body,
         "status": _status_value(record.get("status")) or "active",
-        "lifecycle_status": _empty_to_none(_enum_text(record.get("lifecycle_status"))),
-        "approval_status": _empty_to_none(_enum_text(record.get("approval_status"))),
-        "confidence": _optional_float(record.get("confidence")),
-        "evidence_count": _evidence_count(source_event_refs, evidence_refs),
-        "used_count": _optional_int(record.get("used_count")) or 0,
-        "last_used_at": _empty_to_none(record.get("last_used_at")),
-        "review_notes": _empty_to_none(record.get("review_notes")),
-        "superseded_by": _empty_to_none(record.get("superseded_by")),
-        "valid_from": _empty_to_none(record.get("valid_from")),
-        "valid_until": _empty_to_none(record.get("valid_until")),
         "decision": decision if kind == "decision" else None,
         "why": why if kind == "decision" else None,
         "alternatives": _empty_to_none(record.get("alternatives"))
@@ -486,18 +393,6 @@ def _prepare_durable_record(value: Any) -> dict[str, Any] | None:
     }
 
 
-def _prepare_durable_update(value: Any) -> dict[str, Any] | None:
-    """Normalize one existing-record update into ContextStore changes."""
-    record = model_payload(value)
-    record_id = str(record.get("record_id") or "").strip()
-    if not record_id:
-        return None
-    durable = _prepare_durable_record(record)
-    if durable is None:
-        return None
-    return {"record_id": record_id, **durable}
-
-
 def _reference_list(value: Any) -> list[str] | None:
     """Return a compact list of source/evidence references."""
     if value is None:
@@ -510,28 +405,6 @@ def _reference_list(value: Any) -> list[str] | None:
         return items or None
     text = str(value).strip()
     return [text] if text else None
-
-
-def _optional_float(value: Any) -> float | None:
-    """Normalize an optional float emitted by the model."""
-    if value is None or value == "":
-        return None
-    return float(value)
-
-
-def _optional_int(value: Any) -> int | None:
-    """Normalize an optional integer emitted by the model."""
-    if value is None or value == "":
-        return None
-    return int(value)
-
-
-def _evidence_count(
-    source_event_refs: list[str] | None,
-    evidence_refs: list[str] | None,
-) -> int:
-    """Count direct evidence references attached to a record."""
-    return len(source_event_refs or []) + len(evidence_refs or [])
 
 
 def _status_value(value: Any) -> str:

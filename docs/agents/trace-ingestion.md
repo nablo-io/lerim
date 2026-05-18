@@ -18,17 +18,15 @@ graph TD;
     scan_window(scan_window)
     filter_signals(filter_signals)
     synthesize_records(synthesize_records)
-    review_records(review_records)
     persist_records(persist_records)
     __end__([<p>__end__</p>]):::last
     __start__ --> resolve_scope;
     filter_signals --> synthesize_records;
     read_window --> scan_window;
     resolve_scope --> read_window;
-    review_records --> persist_records;
     scan_window -.-> filter_signals;
     scan_window -.-> read_window;
-    synthesize_records --> review_records;
+    synthesize_records --> persist_records;
     persist_records --> __end__;
     classDef default fill:#f2f0ff,line-height:1.2
     classDef first fill-opacity:0
@@ -49,8 +47,7 @@ graph TD;
 3. `scan_window` observes candidate findings and loops until the trace is read.
 4. `filter_signals` keeps only reusable signal.
 5. `synthesize_records` drafts episode and durable records.
-6. `review_records` checks whether records are useful and well-shaped.
-7. `persist_records` writes validated records and provenance.
+6. `persist_records` writes validated records and provenance.
 
 ## Output
 

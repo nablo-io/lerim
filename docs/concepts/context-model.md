@@ -15,15 +15,10 @@ High-level record kinds include:
 - `decision`
 - `preference`
 - `constraint`
-- `reference`
 
-Record kind is the storage ontology. Card type is the product surface.
-
-Examples:
-
-- a support `constraint` can render as an `escalation` card
-- an ops `fact` can render as a `root_cause` card
-- a coding `reference` can render as a `source_of_truth` card
+Record kind is the only ingestion taxonomy. Product insights, review surfaces,
+and workflow views can be built later from these records, but ingestion does not
+persist those labels.
 
 Each record can carry:
 
@@ -32,8 +27,6 @@ Each record can carry:
 - structured payload
 - status
 - `source_profile`
-- `card_type`
-- lifecycle and approval status
 - validity window
 - graph links to related records
 - evidence from traces
@@ -46,7 +39,7 @@ The database is the source of truth.
 Raw traces are not the product surface. Durable records are.
 
 Most traces should produce no new durable record unless they contain reusable
-decisions, preferences, constraints, facts, references, or handoff context.
+decisions, preferences, constraints, facts, or handoff context.
 
 ## What curate does
 

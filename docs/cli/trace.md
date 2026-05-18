@@ -81,7 +81,7 @@ payloads, screenshots, binary blobs, and source-specific noise.
 
 Lerim's ingestion flow is selective about durable signal: routine traces can
 produce no permanent durable record, and useful records are compacted into
-evidence-backed context cards. That filtering is not a replacement for
+evidence-backed context records. That filtering is not a replacement for
 customer-owned privacy, retention, or compliance cleaning before a trace enters
 Lerim.
 

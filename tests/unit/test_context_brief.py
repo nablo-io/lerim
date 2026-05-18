@@ -220,7 +220,6 @@ def test_validate_draft_accepts_matching_fixed_section_kinds():
         ),
         project_facts=(
             MemoryLine("CLI code lives under src", ("rec_fact",)),
-            MemoryLine("External status lives in dashboard", ("rec_reference",)),
         ),
     )
 
@@ -231,14 +230,12 @@ def test_validate_draft_accepts_matching_fixed_section_kinds():
             "rec_preference",
             "rec_constraint",
             "rec_fact",
-            "rec_reference",
         },
         record_kinds={
             "rec_decision": "decision",
             "rec_preference": "preference",
             "rec_constraint": "constraint",
             "rec_fact": "fact",
-            "rec_reference": "reference",
         },
     )
 
@@ -278,13 +275,13 @@ def test_rendered_markdown_uses_fixed_section_order_and_sections_fallback(tmp_pa
         }
         for record_id, kind, title in (
             ("rec_summary", "decision", "Summary line"),
-            ("rec_start", "reference", "Use the package directory"),
+            ("rec_start", "fact", "Use the package directory"),
             ("rec_handoff", "episode", "Resume the handoff"),
             ("rec_decision", "decision", "Keep SQLite canonical"),
             ("rec_constraint", "constraint", "Respect the no-fallback rule"),
             ("rec_fact", "fact", "CLI code lives under src"),
             ("rec_risk", "episode", "Review queue still has risk"),
-            ("rec_query", "reference", "Query the newest records"),
+            ("rec_query", "fact", "Query the newest records"),
             ("rec_legacy", "episode", "Render older agent sections last"),
         )
     ]

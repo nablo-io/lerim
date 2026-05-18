@@ -35,9 +35,8 @@ def format_signal_pack_context(profile: str | None) -> str:
     """Render a compact prompt context block for a source profile."""
     pack = get_signal_pack(profile)
     sections = [
-        ("Domain signal priorities", pack.signal_types),
+        ("Focus rules", pack.focus_rules),
         ("Reject as noise", pack.reject_as_noise),
-        ("Output cards", pack.output_cards),
         ("Evidence rules", pack.evidence_rules),
         ("Scope rules", pack.scope_rules),
     ]
@@ -70,9 +69,8 @@ def _pack_from_payload(payload: dict[str, Any]) -> SignalPack:
         id=_required_text(payload, "id"),
         display_name=_required_text(payload, "display_name"),
         description=_required_text(payload, "description"),
-        signal_types=_text_tuple(payload.get("signal_types")),
+        focus_rules=_text_tuple(payload.get("focus_rules")),
         reject_as_noise=_text_tuple(payload.get("reject_as_noise")),
-        output_cards=_text_tuple(payload.get("output_cards")),
         evidence_rules=_text_tuple(payload.get("evidence_rules")),
         scope_rules=_text_tuple(payload.get("scope_rules")),
     )

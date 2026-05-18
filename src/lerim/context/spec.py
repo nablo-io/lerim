@@ -16,7 +16,6 @@ class RecordKind(StrEnum):
     PREFERENCE = "preference"
     CONSTRAINT = "constraint"
     FACT = "fact"
-    REFERENCE = "reference"
     EPISODE = "episode"
 
 
@@ -25,54 +24,6 @@ class RecordStatus(StrEnum):
 
     ACTIVE = "active"
     ARCHIVED = "archived"
-
-
-class CardType(StrEnum):
-    """Product-facing context card categories."""
-
-    DECISION = "decision"
-    CONSTRAINT = "constraint"
-    HANDOFF = "handoff"
-    SOURCE_OF_TRUTH = "source_of_truth"
-    FAILED_PATH = "failed_path"
-    REPEATED_WASTE = "repeated_waste"
-    GUARDRAIL_CANDIDATE = "guardrail_candidate"
-    KNOWN_FIX = "known_fix"
-    ESCALATION = "escalation"
-    RUNBOOK_GAP = "runbook_gap"
-    CUSTOMER_CONSTRAINT = "customer_constraint"
-    ROOT_CAUSE = "root_cause"
-    MITIGATION = "mitigation"
-    REJECTED_HYPOTHESIS = "rejected_hypothesis"
-    POLICY_REFERENCE = "policy_reference"
-    PRODUCT_BEHAVIOR = "product_behavior"
-    OWNER_DECISION = "owner_decision"
-    FOLLOW_UP_RISK = "follow_up_risk"
-    REPO_CONVENTION = "repo_convention"
-    ARCHITECTURE_DECISION = "architecture_decision"
-    SETUP_FACT = "setup_fact"
-    TEST_LESSON = "test_lesson"
-    RELEASE_HANDOFF = "release_handoff"
-
-
-class LifecycleStatus(StrEnum):
-    """Review lifecycle for product-facing context cards."""
-
-    PROPOSED = "proposed"
-    APPROVED = "approved"
-    ACTIVE = "active"
-    NEEDS_REVIEW = "needs_review"
-    SUPERSEDED = "superseded"
-    RETIRED = "retired"
-    REJECTED = "rejected"
-
-
-class ApprovalStatus(StrEnum):
-    """Human review state for context cards."""
-
-    PENDING = "pending"
-    APPROVED = "approved"
-    REJECTED = "rejected"
 
 
 class RecordChangeKind(StrEnum):
@@ -86,9 +37,6 @@ class RecordChangeKind(StrEnum):
 
 ALLOWED_KINDS = tuple(kind.value for kind in RecordKind)
 ALLOWED_STATUSES = tuple(status.value for status in RecordStatus)
-ALLOWED_CARD_TYPES = tuple(card_type.value for card_type in CardType)
-ALLOWED_LIFECYCLE_STATUSES = tuple(status.value for status in LifecycleStatus)
-ALLOWED_APPROVAL_STATUSES = tuple(status.value for status in ApprovalStatus)
 ALLOWED_CHANGE_KINDS = tuple(change_kind.value for change_kind in RecordChangeKind)
 MAX_RECORD_TITLE_CHARS = 120
 MAX_EPISODE_BODY_CHARS = 1200
@@ -105,7 +53,7 @@ RECORD_TYPED_FIELDS = (
     "what_happened",
     "outcomes",
 )
-SEARCH_TEXT_FIELDS = ("card_type", "source_profile", "title", "body", *RECORD_TYPED_FIELDS)
+SEARCH_TEXT_FIELDS = ("source_profile", "title", "body", *RECORD_TYPED_FIELDS)
 
 
 @dataclass(frozen=True)
@@ -165,11 +113,6 @@ RECORD_KIND_SPECS = {
     ),
     RecordKind.FACT.value: RecordKindSpec(
         name=RecordKind.FACT.value,
-        body_max_chars=MAX_DURABLE_BODY_CHARS,
-        body_too_long_code="record_body_too_long",
-    ),
-    RecordKind.REFERENCE.value: RecordKindSpec(
-        name=RecordKind.REFERENCE.value,
         body_max_chars=MAX_DURABLE_BODY_CHARS,
         body_too_long_code="record_body_too_long",
     ),
@@ -248,22 +191,6 @@ def normalize_record_kind(value: Any) -> str:
 def normalize_record_status(value: Any, default: str = "active") -> str:
     """Normalize one record status candidate."""
     return str(value or default).strip().lower()
-
-
-def normalize_card_type(value: Any) -> str | None:
-    """Normalize one optional product-facing card type."""
-    text = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
-    return text or None
-
-
-def normalize_lifecycle_status(value: Any, default: str = "active") -> str:
-    """Normalize one optional context-card lifecycle status."""
-    return str(value or default).strip().lower().replace("-", "_").replace(" ", "_")
-
-
-def normalize_approval_status(value: Any, default: str = "approved") -> str:
-    """Normalize one optional context-card approval status."""
-    return str(value or default).strip().lower().replace("-", "_").replace(" ", "_")
 
 
 def format_durable_record_kinds() -> str:

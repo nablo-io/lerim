@@ -3,7 +3,6 @@ enum ContextCuratorRecordKind {
   PREFERENCE @alias("preference") @description("A stable user or workflow preference.")
   CONSTRAINT @alias("constraint") @description("A durable invariant, limit, or must/cannot rule.")
   FACT @alias("fact") @description("A durable project fact or setup truth.")
-  REFERENCE @alias("reference") @description("A pointer to an external source of truth.")
   EPISODE @alias("episode") @description("A session recap record.")
 }
 

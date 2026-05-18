@@ -47,7 +47,6 @@ TRACE_INGESTION_EVENT_NAMES = frozenset(
         "scan_window",
         "filter_signals",
         "synthesize_records",
-        "review_records",
         "save_context",
         "model_retry",
     }

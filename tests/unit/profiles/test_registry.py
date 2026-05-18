@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from lerim.profiles import (
-    CARD_KIND_DEFAULTS,
     format_signal_pack_context,
     get_signal_pack,
     normalize_signal_pack_id,
@@ -23,23 +22,16 @@ def test_format_signal_pack_context_excludes_eval_schema() -> None:
     rendered = format_signal_pack_context("ops")
 
     assert "Evaluation gold schema" not in rendered
-    assert "Domain signal priorities:" in rendered
-    assert "Output cards:" in rendered
+    assert "Focus rules:" in rendered
+    assert "Output cards:" not in rendered
+    assert "card_type" not in rendered
 
 
-def test_signal_pack_cards_use_canonical_card_types() -> None:
-    """Bundled profile cards should map through the shared card semantics."""
-    support_cards = set(get_signal_pack("support").output_cards)
-    ops_cards = set(get_signal_pack("ops").output_cards)
-
-    assert "handoff" not in support_cards
-    assert "source_of_truth" not in support_cards
-    assert "source_of_truth" in ops_cards
-    assert support_cards <= set(CARD_KIND_DEFAULTS)
-    assert ops_cards <= set(CARD_KIND_DEFAULTS)
-
-
-def test_signal_pack_priorities_use_canonical_card_terms() -> None:
-    """Profile priorities should not introduce a second card taxonomy."""
+def test_signal_pack_focus_is_guidance_not_output_taxonomy() -> None:
+    """Profiles should guide extraction without defining product card outputs."""
     for profile in ("coding", "support", "ops"):
-        assert set(get_signal_pack(profile).signal_types) <= set(CARD_KIND_DEFAULTS)
+        pack = get_signal_pack(profile)
+
+        assert pack.focus_rules
+        assert not hasattr(pack, "output_cards")
+        assert not hasattr(pack, "signal_types")

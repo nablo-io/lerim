@@ -9,7 +9,7 @@ class ContextBriefDraftOutput {
   current_handoff ContextBriefLineDraft[]
   decisions ContextBriefLineDraft[] @description("Only cite candidate records whose kind is decision.")
   constraints_preferences ContextBriefLineDraft[] @description("Only cite candidate records whose kind is preference or constraint.")
-  project_facts ContextBriefLineDraft[] @description("Only cite candidate records whose kind is fact or reference.")
+  project_facts ContextBriefLineDraft[] @description("Only cite candidate records whose kind is fact.")
   open_risks ContextBriefLineDraft[]
   follow_up_queries ContextBriefLineDraft[]
 }
@@ -33,10 +33,10 @@ function CompileContextBrief(
     - Keep current_handoff empty unless candidate records explicitly describe recent flow, current work, open loops, or next actions.
     - Keep open_risks empty unless candidate records explicitly describe an unresolved risk, blocker, requested follow-up, or review queue item.
     - Treat validation/build/check results as historical persisted evidence; line text must say "Persisted record says ..." and "rerun relevant checks after edits."
-    - Prefer decisions, preferences, constraints, stable facts, and high-value references over episode detail.
-    - Respect source kinds exactly: decisions may cite only decision records; constraints_preferences may cite only preference or constraint records; project_facts may cite only fact or reference records.
+    - Prefer decisions, preferences, constraints, and stable facts over episode detail.
+    - Respect source kinds exactly: decisions may cite only decision records; constraints_preferences may cite only preference or constraint records; project_facts may cite only fact records.
     - Leave a section empty when there are no candidate records for that section's allowed kinds.
-    - Do not place a fact, constraint, preference, or reference in decisions just because it sounds important or rule-like.
+    - Do not place a fact, constraint, or preference in decisions just because it sounds important or rule-like.
     - Do not duplicate the same point in multiple detail sections. Choose the one section that matches the cited record kind.
     - Do not invent current workspace state beyond stored records.
     - Do not repeat the same memory across fields.

@@ -5,7 +5,7 @@
 <h3 align="center">Trace-to-context compiler for AI agent workflows.</h3>
 
 <p align="center">
-  Lerim turns completed agent runs into evidence-backed context cards so the next agent starts with trusted operating context instead of another raw transcript.
+  Lerim turns completed agent runs into evidence-backed context records so the next agent starts with trusted operating context instead of another raw transcript.
 </p>
 
 <p align="center">
@@ -32,17 +32,15 @@ Lerim is a post-trace learning compiler for AI agent workflows.
 
 Observability shows what happened. Lerim decides what was worth learning from it.
 
-Lerim reads completed agent traces, filters noisy execution history into durable signals, and writes reviewed context cards for future runs.
+Lerim reads completed agent traces, filters noisy execution history into durable signals, and writes compact context records for future runs.
 
 Instead of replaying raw traces or losing what happened after each run, Lerim keeps:
 
 - decisions
 - constraints
+- preferences
+- facts
 - handoffs
-- source-of-truth records
-- failed paths
-- repeated-waste patterns
-- guardrail candidates
 - evidence linked back to the source session
 
 ## Why Lerim
@@ -63,7 +61,7 @@ Lerim fixes that by turning raw traces into reusable context records and making 
 The current package focuses on three paths:
 
 - coding agents: repo conventions, architecture decisions, setup facts, failed paths, test lessons, release handoffs
-- support operations: customer constraints, known fixes, failed fixes, escalation reasons, policy references, handoffs
+- support operations: customer constraints, known fixes, failed fixes, escalation reasons, policy evidence, handoffs
 - operations and incidents: root causes, mitigations, rejected hypotheses, runbook gaps, incident handoffs, follow-up risks
 
 ## Key Capabilities
@@ -73,12 +71,12 @@ The current package focuses on three paths:
 - Context curation. Lerim consolidates overlap, archives weak records, and keeps the context layer compact.
 - Living context graph. Lerim links related decisions, constraints, evidence, facts, and handoffs so teams can inspect how reusable context connects.
 - Query and startup context. Agents can ask questions against accumulated context or start from a compact context brief.
-- Evidence-backed memory. Useful decisions, constraints, preferences, references, and handoffs stay linked to the work that produced them.
-- Source profiles and signal packs. Coding, support, and incident workflows share one compiler, but each profile defines what reusable signal, noise, card types, evidence, and scope mean.
+- Evidence-backed memory. Useful decisions, constraints, preferences, facts, and handoffs stay linked to the work that produced them.
+- Source profiles and signal packs. Coding, support, and incident workflows share one compiler, but each profile defines focus, noise, evidence, and scope rules.
 
 ## Focused Workflows
 
-- Support operations: preserve triage decisions, escalation evidence, policy references, known fixes, and customer constraints.
+- Support operations: preserve triage decisions, escalation evidence, policy-backed facts, known fixes, and customer constraints.
 - Operations and incidents: preserve root causes, mitigations, rejected hypotheses, runbook gaps, owner decisions, and follow-up risks.
 - Coding agents: retain architecture decisions, failed paths, repo conventions, setup facts, release handoffs, and constraints.
 
@@ -123,8 +121,8 @@ lerim trace import ../lerim-cloud/evals/data/traces/support_refund_escalation_00
   --scope-type domain \
   --scope support-ops
 
-lerim context cards --profile support
-lerim context cards --profile support --type failed_path
+lerim context records --profile support
+lerim context records --profile support --type fact
 ```
 
 ## Quick Start
@@ -280,8 +278,8 @@ Most routine traces should produce no new durable record. Lerim's value is compa
 
 Records have two dimensions:
 
-- `kind` is the storage ontology: fact, decision, preference, constraint, reference, or episode.
-- `card_type` is the product shape: known fix, failed path, handoff, source of truth, root cause, mitigation, runbook gap, and similar workflow cards.
+- `kind` is the durable record shape: fact, decision, preference, constraint, or episode.
+- `source_profile` records where the signal came from, such as coding, support, or ops.
 
 Retrieval blends semantic and lexical signals so agents get compact, relevant
 context instead of a raw trace dump.

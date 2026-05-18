@@ -89,34 +89,6 @@ class FakeBamlRuntime:
                     "why": "This prevents local evidence from becoming future-agent context.",
                 }
             ],
-            "record_updates": [],
-        }
-
-    def ReviewSynthesizedContextRecords(self, **kwargs):
-        """Return the synthesized payload unchanged after final review."""
-        assert "general trace filtering" in kwargs["durable_findings_summary"]
-        assert "local command output" not in kwargs["durable_findings_summary"]
-        return {
-            "completion_summary": "Extraction completed.",
-            "episode": {
-                "title": "Trace filtering extraction",
-                "body": "The trace was scanned, filtered, reviewed, and persisted.",
-                "status": "active",
-                "user_intent": "Extract durable signal.",
-                "what_happened": "The graph filtered candidates before synthesis.",
-                "outcomes": "One durable decision was created.",
-            },
-            "durable_records": [
-                {
-                    "kind": "decision",
-                    "title": "Filter trace signal before synthesis",
-                    "body": "Lerim should keep reusable trace signal and reject local evidence before writing durable records.",
-                    "status": "active",
-                    "decision": "Filter durable trace candidates before synthesis.",
-                    "why": "This prevents local evidence from becoming future-agent context.",
-                }
-            ],
-            "record_updates": [],
         }
 
 
@@ -161,24 +133,6 @@ class NoDurableFakeBamlRuntime:
                 "outcomes": "No durable records were created.",
             },
             "durable_records": [],
-            "record_updates": [],
-        }
-
-    def ReviewSynthesizedContextRecords(self, **kwargs):
-        """Review should also receive no durable signal."""
-        assert kwargs["durable_findings_summary"] == "(none)"
-        return {
-            "completion_summary": "No reusable context found.",
-            "episode": {
-                "title": "No reusable context",
-                "body": "The source session did not contain reusable project context.",
-                "status": "archived",
-                "user_intent": "Ingest the source session.",
-                "what_happened": "The trace was scanned and no reusable durable context was found.",
-                "outcomes": "No durable records were created.",
-            },
-            "durable_records": [],
-            "record_updates": [],
         }
 
 
@@ -203,7 +157,7 @@ def test_extract_graph_filters_candidates_before_synthesis(tmp_path, monkeypatch
         trace_path=trace_path,
         config=make_config(tmp_path / ".lerim"),
         return_details=True,
-        max_llm_calls=4,
+        max_llm_calls=3,
     )
 
     assert result.completion_summary == "Trace ingestion completed: 1 durable record created."
@@ -213,7 +167,6 @@ def test_extract_graph_filters_candidates_before_synthesis(tmp_path, monkeypatch
         "scan_window",
         "filter_signals",
         "synthesize_records",
-        "review_records",
         "save_context",
         "save_context",
         "final_result",
@@ -250,7 +203,7 @@ def test_extract_graph_keeps_discarded_details_out_of_synthesis(tmp_path, monkey
         trace_path=trace_path,
         config=make_config(tmp_path / ".lerim"),
         return_details=True,
-        max_llm_calls=4,
+        max_llm_calls=3,
     )
 
     assert result.completion_summary == "Trace ingestion completed: no reusable durable context found."

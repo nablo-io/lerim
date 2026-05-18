@@ -206,7 +206,6 @@ class TestConstants:
             "preference",
             "constraint",
             "fact",
-            "reference",
             "episode",
         )
 
@@ -853,17 +852,6 @@ class TestCreateRecord:
         assert rec["evidence_refs"] == '["Customer-provided cleaned trace"]'
         assert rec["versions"][0]["source_event_refs"] == '["line:12","line:18"]'
         assert rec["versions"][0]["evidence_refs"] == '["Customer-provided cleaned trace"]'
-
-    def test_create_reference(self, mock_seeded):
-        store, pid = mock_seeded
-        rec = store.create_record(
-            project_id=pid,
-            session_id="sess_test",
-            kind="reference",
-            title="sqlite-vec docs",
-            body="Virtual table API for vector search.",
-        )
-        assert rec["kind"] == "reference"
 
     def test_create_episode(self, mock_seeded):
         store, pid = mock_seeded

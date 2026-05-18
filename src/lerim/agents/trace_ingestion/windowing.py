@@ -100,7 +100,7 @@ def read_trace_window(
                     line[:TRACE_MAX_LINE_BYTES]
                     + f" ... [truncated {dropped} chars from this line]"
                 )
-            rendered = f"{line_number}\t{line}"
+            rendered = f"line:{line_number}\t{line}"
             if numbered and current_chars + len(rendered) + 1 > char_budget:
                 break
             numbered.append(rendered)
@@ -109,7 +109,7 @@ def read_trace_window(
             if current_chars >= char_budget:
                 break
     if not numbered and start_line <= total_lines:
-        numbered.append(f"{start_line}\t")
+        numbered.append(f"line:{start_line}\t")
         end_line = start_line
     header = f"[{total_lines} lines, window {start_line}-{end_line}]"
     if end_line < total_lines:

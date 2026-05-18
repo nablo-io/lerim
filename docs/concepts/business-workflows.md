@@ -8,7 +8,7 @@ The pattern is:
 1. an agent completes work inside a business process
 2. the trace contains evidence, decisions, constraints, open questions, and handoffs
 3. Lerim extracts the reusable signal
-4. Lerim writes reviewed context cards with source evidence
+4. Lerim writes compact context records with source evidence
 5. the next agent starts with compact, cited context instead of a raw transcript
 
 The first product wedge is coding agents plus support and incident operations.
@@ -18,7 +18,7 @@ extensions, not separate pipelines today.
 ## Support operations
 
 Support teams preserve customer constraints, known fixes, failed fixes,
-escalation reasons, policy references, source-of-truth links, and handoffs.
+escalation reasons, policy-backed facts, source-of-truth evidence, and handoffs.
 
 Example import:
 
@@ -40,7 +40,7 @@ lerim answer "What do we already know about this customer escalation pattern?"
 
 Operations teams preserve confirmed root causes, rejected hypotheses,
 mitigations, failed mitigations, runbook gaps, owner decisions, source-of-truth
-references, and follow-up risks.
+facts, and follow-up risks.
 
 Example question:
 
@@ -72,7 +72,7 @@ For custom agents today, the practical path is:
 ```bash
 lerim project add ~/lerim-traces/support-clean --type custom
 lerim ingest --agent custom
-lerim context cards --profile support
+lerim context records --profile support
 ```
 
 If the source trace contains customer-specific noise or sensitive fields, run a

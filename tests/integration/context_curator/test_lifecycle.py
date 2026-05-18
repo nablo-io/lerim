@@ -465,8 +465,8 @@ def test_curate_obsolete_low_value_durable_archived(
         live_repo_root=live_repo_root,
         seed_records=[
             {
-                "record_id": "rec_obsolete_reference",
-                "kind": "reference",
+                "record_id": "rec_obsolete_fact",
+                "kind": "fact",
                 "title": "Temporary rollout scratchpad",
                 "body": "Temporary scratchpad for one rollout audit that no longer serves as a source of truth.",
                 "backdate_hours": 240,

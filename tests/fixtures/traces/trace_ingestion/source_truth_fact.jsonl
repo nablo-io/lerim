@@ -1,4 +1,4 @@
 {"role": "user", "content": "Find the lasting record from this debugging session."}
-{"role": "assistant", "content": "I will keep only the reusable pointer."}
+{"role": "assistant", "content": "I will keep only the reusable source-of-truth boundary."}
 {"role": "user", "content": "The repo is not the source of truth for ingest incidents. Future pipeline bug context lives in the external Linear project INGEST."}
 {"role": "assistant", "content": "Understood. The durable lesson is where to look next time, not the local notes from this session."}
