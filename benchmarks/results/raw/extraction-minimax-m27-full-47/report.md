@@ -1,12 +1,12 @@
 # Lerim Extraction Quality Benchmark
 
-- Generated: `2026-05-20T04:12:26.133034+00:00`
+- Generated: `2026-05-20T09:09:06.436301+00:00`
 - Command: `benchmarks/lerim_evidence/extraction_quality.py --source-report '<private-source-report>' --output-dir benchmarks/results/raw/extraction-minimax-m27-full-47`
 - Source artifact: `private first-party extraction eval artifact`
 - Source visibility: `private`
-- Source digest: `b933d8037ca3068f3c771ed05366f255f42fd6a94e03069d94d3e77b1bd18ffc`
+- Source digest: `db0bb32710b439a4de86fd185f15d4fabea80a97fdfc02092ebc76411e782e16`
 - Agent model: `minimax / MiniMax-M2.7`
-- Judge model: `MiniMax-M2.7`
+- Judge model: `MiniMax-M2.5`
 - Dataset cases: `47`
 - Aggregate-only public artifact: `True`
 - Publication status: `development_baseline_not_launch_grade`
@@ -16,18 +16,18 @@
 | Metric | Result |
 |---|---:|
 | Task completion | 96.97% |
-| Quality average | 62.45% |
-| Quality gate pass | 46.81% |
-| Hard gate pass | 21.28% |
-| Concept recall average | 61.16% |
-| Required concept coverage | 59.57% |
-| Kind alignment | 93.97% |
-| Record precision average | 70.34% |
-| Faithfulness average | 69.20% |
-| Claim faithfulness | 40.43% |
-| Negative precision | 35.71% |
-| Signal filtering | 29.79% |
-| Evidence coverage | 99.65% |
+| Quality average | 60.07% |
+| Quality gate pass | 51.06% |
+| Hard gate pass | 19.15% |
+| Concept recall average | 68.99% |
+| Required concept coverage | 68.09% |
+| Kind alignment | 91.49% |
+| Record precision average | 76.16% |
+| Faithfulness average | 78.21% |
+| Claim faithfulness | 51.06% |
+| Negative precision | 28.57% |
+| Signal filtering | 25.53% |
+| Evidence coverage | 100.00% |
 | Evidence validity | 100.00% |
 
 ## Dataset Coverage

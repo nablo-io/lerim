@@ -8,14 +8,14 @@
     "source_total_cases": 47
   },
   "environment": {
-    "lerim_git_commit": "36e806a89a3ccd6b20d2ffb1435a84016e4af35b",
+    "lerim_git_commit": "0b862d3073d1f651ec67879f1649f815d567d042",
     "lerim_git_dirty": true,
     "lerim_git_status_short": "<dirty worktree; rerun from clean commit before launch>",
     "machine": "arm64",
     "platform": "macOS-26.4.1-arm64-arm-64bit",
     "python": "3.12.12"
   },
-  "generated_at": "2026-05-20T04:12:26.145634+00:00",
+  "generated_at": "2026-05-20T09:09:06.465895+00:00",
   "limitations": [
     "This diagnostic is derived from the negative/noise cases in the 47-case LLM-backed extraction artifact.",
     "It measures whether Lerim avoids durable records when labeled source sessions have no durable signal.",
@@ -38,7 +38,7 @@
   "model_provider": {
     "agent_model": "MiniMax-M2.7",
     "agent_provider": "minimax",
-    "judge_model": "MiniMax-M2.7",
+    "judge_model": "MiniMax-M2.5",
     "llm_in_loop": true,
     "semantic_judge_in_loop": true
   },
@@ -50,38 +50,38 @@
   ],
   "results": {
     "headline": {
-      "false_positive_case_count": 9,
-      "false_positive_case_rate_pct": 64.29,
-      "forbidden_concept_score_avg": 0.828,
-      "hard_gate_score_avg": 0.2143,
+      "false_positive_case_count": 10,
+      "false_positive_case_rate_pct": 71.43,
+      "forbidden_concept_score_avg": 0.7405,
+      "hard_gate_score_avg": 0.2857,
       "negative_case_count": 14,
-      "negative_precision_rate_pct": 35.71,
-      "no_durable_case_count": 5,
-      "quality_gate_score_avg": 0.3571,
-      "signal_filtering_score_avg": 0.2143,
-      "total_durable_records_on_negative_cases": 52,
-      "total_llm_calls_on_negative_cases": 81,
-      "total_records_on_negative_cases": 66
+      "negative_precision_rate_pct": 28.57,
+      "no_durable_case_count": 4,
+      "quality_gate_score_avg": 0.2857,
+      "signal_filtering_score_avg": 0.2857,
+      "total_durable_records_on_negative_cases": 65,
+      "total_llm_calls_on_negative_cases": 91,
+      "total_records_on_negative_cases": 79
     },
     "summary": {
-      "false_positive_case_count": 9,
-      "false_positive_case_rate_pct": 64.29,
-      "forbidden_concept_score_avg": 0.828,
-      "hard_gate_score_avg": 0.2143,
+      "false_positive_case_count": 10,
+      "false_positive_case_rate_pct": 71.43,
+      "forbidden_concept_score_avg": 0.7405,
+      "hard_gate_score_avg": 0.2857,
       "negative_case_count": 14,
-      "negative_precision_rate_pct": 35.71,
-      "no_durable_case_count": 5,
-      "quality_gate_score_avg": 0.3571,
-      "signal_filtering_score_avg": 0.2143,
-      "total_durable_records_on_negative_cases": 52,
-      "total_llm_calls_on_negative_cases": 81,
-      "total_records_on_negative_cases": 66
+      "negative_precision_rate_pct": 28.57,
+      "no_durable_case_count": 4,
+      "quality_gate_score_avg": 0.2857,
+      "signal_filtering_score_avg": 0.2857,
+      "total_durable_records_on_negative_cases": 65,
+      "total_llm_calls_on_negative_cases": 91,
+      "total_records_on_negative_cases": 79
     }
   },
   "schema_version": 1,
   "source_artifact": {
     "label": "private first-party extraction eval artifact",
-    "sha256": "b933d8037ca3068f3c771ed05366f255f42fd6a94e03069d94d3e77b1bd18ffc",
+    "sha256": "db0bb32710b439a4de86fd185f15d4fabea80a97fdfc02092ebc76411e782e16",
     "visibility": "private"
   }
 }
