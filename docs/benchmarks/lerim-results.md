@@ -17,8 +17,8 @@ reported only as first-party diagnostic numbers.
 | LongMemEval-S retrieval, hybrid | R@5 96.2%, R@10 98.6%, R@20 99.6%, NDCG@10 88.4%, MRR 88.1% on 500 questions | Full retrieval-only artifact; clean release worktree | `benchmarks/results/raw/longmemeval-hybrid-full/report.json` |
 | LongMemEval-S retrieval, lexical | R@5 77.0%, R@10 82.0%, R@20 89.8%, NDCG@10 62.7%, MRR 64.0% on 500 questions | Full retrieval-only artifact; clean release worktree | `benchmarks/results/raw/longmemeval-lexical-full/report.json` |
 | Context budget, hybrid top-10 | 75.3% context reduction with 98.6% recall | Full retrieval-only artifact; clean release worktree | `benchmarks/results/raw/context-budget-hybrid-full/report.json` |
-| Retrieval latency | 100 records p50 8.4 ms, p99 9.6 ms; 1,000 records p50 31.1 ms, p99 47.5 ms | Local retrieval artifact; clean release worktree | `benchmarks/results/raw/retrieval-latency-longmemeval/report.json` |
-| Trace ingestion cost/performance | 3/3 traces passed; avg ingestion 106,303.6 ms; avg 5.0 LLM calls/trace; avg DB growth 581,632 bytes/trace; cost not available | Small LongMemEval-S public-trace sample; clean release worktree | `benchmarks/results/raw/trace-ingestion-cost-longmemeval-s-sample/report.json` |
+| Retrieval latency | 100 records p50 9.6 ms, p99 20.4 ms; 1,000 records p50 35.4 ms, p99 55.0 ms | Local retrieval artifact; clean release worktree | `benchmarks/results/raw/retrieval-latency-longmemeval/report.json` |
+| Trace ingestion cost/performance | 3/3 traces passed; avg ingestion 96,994.9 ms; avg 5.0 LLM calls/trace; avg DB growth 581,632 bytes/trace; cost not available | Small LongMemEval-S public-trace sample; clean release worktree | `benchmarks/results/raw/trace-ingestion-cost-longmemeval-s-sample/report.json` |
 | MCP integration | 15/15 config probes, doctor 14 passed/1 skipped, local context call passed, trace-submit idempotency passed, synthetic trace-submit extraction probe passed, 3 anonymized connection-visibility checks; separate Gemini CLI artifact records 1 installed-client connection and 1 live `lerim_context_brief` tool-call acceptance. Other clients are not live-tool-call validated yet. | Integration artifacts; clean release worktree; per-client local inventory omitted | `benchmarks/results/raw/mcp-integration-full/report.json`, `benchmarks/results/raw/mcp-gemini-live-tool-call/report.json` |
 | Extraction quality | Diagnostic aggregate: quality 60.07%, quality gate 51.06%, hard gate 19.15% across 47 cases | Internal LLM-backed eval; aggregate-only public report | `benchmarks/results/raw/extraction-minimax-m27-full-47/report.json` |
 | False-positive extraction | Negative precision 28.57%; 10 false-positive cases; 65 durable records created across 14 negative cases | Internal LLM-backed eval slice; aggregate-only public report | `benchmarks/results/raw/false-positive-extraction-minimax-m27-negative-cases/report.json` |
@@ -130,8 +130,8 @@ Source artifact: `benchmarks/results/raw/retrieval-latency-longmemeval/report.js
 
 | Corpus size | Ops | Average hit count | p50 | p90 | p95 | p99 |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 100 records | 75 | 20.0 | 8.4 ms | 8.9 ms | 9.1 ms | 9.6 ms |
-| 1,000 records | 75 | 20.0 | 31.1 ms | 32.4 ms | 32.7 ms | 47.5 ms |
+| 100 records | 75 | 20.0 | 9.6 ms | 14.4 ms | 15.6 ms | 20.4 ms |
+| 1,000 records | 75 | 20.0 | 35.4 ms | 39.9 ms | 48.8 ms | 55.0 ms |
 
 These numbers are useful engineering evidence, but they are not a hosted load
 test and should not be marketed as server throughput.
@@ -160,8 +160,8 @@ Source artifact:
 | --- | ---: |
 | Public traces evaluated | 3 |
 | Passed traces | 3 |
-| Average ingestion time | 106,303.6 ms |
-| p95 ingestion time | 118,911.5 ms |
+| Average ingestion time | 96,994.9 ms |
+| p95 ingestion time | 111,169.5 ms |
 | Average LLM calls per trace | 5.0 |
 | Total LLM calls | 15 |
 | Average context DB growth per trace | 581,632 bytes |

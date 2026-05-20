@@ -1,7 +1,7 @@
 {
   "artifact_scope": "aggregate_only",
   "benchmark": "lerim_extraction_quality_minimax_m27_full_47",
-  "command": "benchmarks/lerim_evidence/extraction_quality.py --source-report '<private-source-report>' --output-dir benchmarks/results/raw/extraction-minimax-m27-full-47",
+  "command": "benchmarks/lerim_evidence/extraction_quality.py --source-report '<private-source-report>' --output-dir /tmp/lerim-clean-artifacts/extraction-minimax-m27-full-47",
   "dataset": {
     "case_failures": 0,
     "cases": 47,
@@ -10,14 +10,14 @@
     "full_dataset_case_count": 47
   },
   "environment": {
-    "lerim_git_commit": "0b862d3073d1f651ec67879f1649f815d567d042",
+    "lerim_git_commit": "f75fad8cd4fa3c5d07ce8cb8a272d9ee78c4ed55",
     "lerim_git_dirty": false,
     "lerim_git_status_short": "",
     "machine": "arm64",
     "platform": "macOS-26.4.1-arm64-arm-64bit",
     "python": "3.12.12"
   },
-  "generated_at": "2026-05-20T09:09:06.436301+00:00",
+  "generated_at": "2026-05-20T09:49:10.020803+00:00",
   "limitations": [
     "This is an aggregate-only public report derived from a full LLM-backed extraction artifact.",
     "Raw traces, extracted record text, tool payloads, case identifiers, per-case metrics, and judge details are intentionally excluded.",

@@ -1,7 +1,7 @@
 # Lerim Extraction Quality Benchmark
 
-- Generated: `2026-05-20T09:09:06.436301+00:00`
-- Command: `benchmarks/lerim_evidence/extraction_quality.py --source-report '<private-source-report>' --output-dir benchmarks/results/raw/extraction-minimax-m27-full-47`
+- Generated: `2026-05-20T09:49:10.020803+00:00`
+- Command: `benchmarks/lerim_evidence/extraction_quality.py --source-report '<private-source-report>' --output-dir /tmp/lerim-clean-artifacts/extraction-minimax-m27-full-47`
 - Source artifact: `private first-party extraction eval artifact`
 - Source visibility: `private`
 - Source digest: `db0bb32710b439a4de86fd185f15d4fabea80a97fdfc02092ebc76411e782e16`

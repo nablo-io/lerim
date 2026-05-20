@@ -1,7 +1,7 @@
 # Lerim False-Positive Extraction Diagnostic
 
-- Generated: `2026-05-20T09:09:06.465895+00:00`
-- Command: `benchmarks/lerim_evidence/false_positive_extraction.py --source-report '<private-source-report>' --output-dir benchmarks/results/raw/false-positive-extraction-minimax-m27-negative-cases`
+- Generated: `2026-05-20T09:49:10.040839+00:00`
+- Command: `benchmarks/lerim_evidence/false_positive_extraction.py --source-report '<private-source-report>' --output-dir /tmp/lerim-clean-artifacts/false-positive-extraction-minimax-m27-negative-cases`
 - Source artifact: `private first-party extraction eval artifact`
 - Source visibility: `private`
 - Source digest: `db0bb32710b439a4de86fd185f15d4fabea80a97fdfc02092ebc76411e782e16`

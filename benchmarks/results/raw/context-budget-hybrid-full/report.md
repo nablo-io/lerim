@@ -1,7 +1,7 @@
 # Lerim Context Budget Benchmark
 
-- Generated: `2026-05-20T08:58:35.954343+00:00`
-- Command: `benchmarks/scripts/run_context_budget_full.py --local-files-only --progress-every 25 --output-dir benchmarks/results/raw/context-budget-hybrid-full`
+- Generated: `2026-05-20T10:03:31.155750+00:00`
+- Command: `benchmarks/scripts/run_context_budget_full.py --output-dir /tmp/lerim-clean-artifacts/context-budget-hybrid-full`
 - Dataset snapshot: `98d7416c24c778c2fee6e6f3006e7a073259d48f`
 - Questions evaluated: `500`
 - Tokenizer: `mixedbread-ai/mxbai-embed-xsmall-v1`

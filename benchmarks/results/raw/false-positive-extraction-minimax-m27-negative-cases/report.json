@@ -1,21 +1,21 @@
 {
   "artifact_scope": "aggregate_only_negative_slice",
   "benchmark": "lerim_false_positive_extraction_minimax_m27_negative_cases",
-  "command": "benchmarks/lerim_evidence/false_positive_extraction.py --source-report '<private-source-report>' --output-dir benchmarks/results/raw/false-positive-extraction-minimax-m27-negative-cases",
+  "command": "benchmarks/lerim_evidence/false_positive_extraction.py --source-report '<private-source-report>' --output-dir /tmp/lerim-clean-artifacts/false-positive-extraction-minimax-m27-negative-cases",
   "dataset": {
     "negative_cases": 14,
     "selection_rule": "case.category == 'negative'",
     "source_total_cases": 47
   },
   "environment": {
-    "lerim_git_commit": "0b862d3073d1f651ec67879f1649f815d567d042",
-    "lerim_git_dirty": true,
-    "lerim_git_status_short": "<dirty worktree; rerun from clean commit before launch>",
+    "lerim_git_commit": "f75fad8cd4fa3c5d07ce8cb8a272d9ee78c4ed55",
+    "lerim_git_dirty": false,
+    "lerim_git_status_short": "",
     "machine": "arm64",
     "platform": "macOS-26.4.1-arm64-arm-64bit",
     "python": "3.12.12"
   },
-  "generated_at": "2026-05-20T09:09:06.465895+00:00",
+  "generated_at": "2026-05-20T09:49:10.040839+00:00",
   "limitations": [
     "This diagnostic is derived from the negative/noise cases in the 47-case LLM-backed extraction artifact.",
     "It measures whether Lerim avoids durable records when labeled source sessions have no durable signal.",
