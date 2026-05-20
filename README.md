@@ -31,15 +31,15 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/lerim-trace-to-answer.gif" alt="Lerim imports a completed trace, extracts durable context, and answers with cited records" width="860">
+  <img src="docs/assets/lerim-trace-to-answer.gif" alt="Lerim compiles completed source sessions into a reusable memory graph and cited answer slices" width="860">
 </p>
 
 <p align="center">
-  <em>Trace to answer: support trace input, Lerim CLI import, MiniMax/BAML extraction, stored context, and cited answer.</em>
+  <em>Completed source sessions become a reusable memory graph; future agents retrieve compact cited slices.</em>
 </p>
 
 <p align="center">
-  <strong>Completed session in</strong> -> <strong>durable context out</strong> -> <strong>the next agent starts with evidence</strong>
+  <strong>Sessions in</strong> -> <strong>memory graph compiled</strong> -> <strong>cited context out</strong>
 </p>
 
 # Lerim

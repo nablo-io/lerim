@@ -6,8 +6,9 @@ that are safe to ship with the docs site.
 - `lerim.png` is the docs-site logo and favicon copy.
 - `lerim-architecture.svg` is the public source-session context compiler diagram.
 - `support-boundary.svg` is the public integration-boundary diagram.
-- `lerim-trace-to-answer.gif` is the public README demo. Keep the visible
-  caption clear about synthetic input and the CLI extraction path.
+- `lerim-trace-to-answer.gif` is the public README demo captured from the
+  landing-page hero graph. Keep its README caption focused on the product flow,
+  not benchmark or extraction-quality claims.
 - `integration-matrix-screenshot.png` is a non-authoritative public docs
   screenshot, not a benchmark artifact. Regenerate it from the integration
   matrix page before release.
