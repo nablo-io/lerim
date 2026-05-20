@@ -59,9 +59,11 @@ clustered_record_ids  # noqa
 active_record_count  # noqa
 cluster_count  # noqa
 records_changed_since_generation  # noqa
+records_missing_since_generation  # noqa
 latest_run_folder  # noqa
 suggested_action  # noqa
 records_changed_since_previous  # noqa
+episode_update_refs  # noqa
 skip_reason  # noqa
 
 # Pydantic validators registered by decorators
@@ -69,6 +71,7 @@ validate_level  # noqa
 
 # Public configuration/provider APIs
 get_config_sources  # noqa
+get_project_env_path  # noqa
 
 # Lazy module protocol and enum members used through import/attribute access
 __dir__  # noqa
@@ -83,6 +86,15 @@ SUPERSEDE  # noqa
 graph_optimization_level  # noqa
 index_health  # noqa
 _prepare_search_indexes  # noqa
+_upsert_embedding  # noqa
 to_span_attrs  # noqa
 is_server_healthy  # noqa
 _mlflow_run_span  # noqa
+
+# MCP tool functions registered by FastMCP decorators
+lerim_context_brief  # noqa
+lerim_context_answer  # noqa
+lerim_context_search  # noqa
+lerim_records_list  # noqa
+lerim_trace_submit  # noqa
+lerim_ingest_status  # noqa
