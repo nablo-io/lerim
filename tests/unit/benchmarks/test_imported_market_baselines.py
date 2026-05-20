@@ -1,4 +1,4 @@
-"""Unit tests for AgentMemory pinned baseline normalization."""
+"""Unit tests for imported market-baseline normalization."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from benchmarks.competitors.agentmemory_baseline import (
+from benchmarks.competitors.imported_market_baselines import (
     build_latency_boundary,
     metric_delta_pp,
     normalize_load_result,
@@ -41,7 +41,7 @@ def test_normalize_longmemeval_result_extracts_headline_metrics() -> None:
 
 
 def test_normalize_longmemeval_result_requires_agentmemory_fields() -> None:
-    """Pinned baseline parsing fails loudly for malformed source artifacts."""
+    """Imported source parsing fails loudly for malformed source artifacts."""
     with pytest.raises(ValueError, match="agentmemory_longmemeval_missing_fields"):
         normalize_longmemeval_result("source.json", {"mode": "hybrid"})
 

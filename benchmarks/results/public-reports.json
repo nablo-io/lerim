@@ -38,7 +38,7 @@
       "why": "Installed-client MCP tool-call acceptance result used in public integration docs."
     },
     {
-      "artifact": "agentmemory-pinned-baseline",
+      "artifact": "imported-market-baselines",
       "why": "Imported market baseline source artifact used in public comparison tables."
     }
   ]

@@ -11,7 +11,7 @@
       "source_type": "pinned_upstream_raw_artifact",
       "url": "https://github.com/rohitg00/agentmemory/blob/68fddd418e1bbcc41d32a1c61b7a78d91eb7c4dc/benchmark/LONGMEMEVAL.md",
       "accessed": "2026-05-19",
-      "normalized_artifact": "benchmarks/results/raw/agentmemory-pinned-baseline/report.json",
+      "normalized_artifact": "benchmarks/results/raw/imported-market-baselines/report.json",
       "claims": [
         {
           "system": "AgentMemory",

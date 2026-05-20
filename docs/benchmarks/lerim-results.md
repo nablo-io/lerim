@@ -13,7 +13,7 @@ clean commit and update the raw reports.
 
 | Surface | Current result | Evidence status | Source |
 | --- | --- | --- | --- |
-| LongMemEval-S retrieval, hybrid | R@5 96.4%, R@10 98.6%, R@20 99.4%, NDCG@10 88.6%, MRR 88.4% on 500 questions | Full retrieval-only artifact; dirty development tree | `benchmarks/results/raw/longmemeval-hybrid-full/report.json` |
+| LongMemEval-S retrieval, hybrid | R@5 96.2%, R@10 98.6%, R@20 99.6%, NDCG@10 88.4%, MRR 88.1% on 500 questions | Full retrieval-only artifact; dirty development tree | `benchmarks/results/raw/longmemeval-hybrid-full/report.json` |
 | LongMemEval-S retrieval, lexical | R@5 77.0%, R@10 82.0%, R@20 89.8%, NDCG@10 62.7%, MRR 64.0% on 500 questions | Full retrieval-only artifact; dirty development tree | `benchmarks/results/raw/longmemeval-lexical-full/report.json` |
 | Context budget, hybrid top-10 | 75.2% context reduction with 98.6% recall | Full retrieval-only artifact; dirty development tree | `benchmarks/results/raw/context-budget-hybrid-full/report.json` |
 | Retrieval latency | 100 records p50 8.7 ms, p99 9.7 ms; 1,000 records p50 32.4 ms, p99 54.5 ms | Partial local artifact; dirty development tree | `benchmarks/results/raw/retrieval-latency-longmemeval/report.json` |
@@ -59,7 +59,7 @@ fusion (`rrf_k=2`, semantic weight `0.7`, lexical weight `0.3`).
 
 | Mode | Questions | R@1 | R@3 | R@5 | R@10 | R@20 | NDCG@10 | MRR | Raw artifact |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| Hybrid | 500 | 82.2% | 93.4% | 96.4% | 98.6% | 99.4% | 88.6% | 88.4% | `benchmarks/results/raw/longmemeval-hybrid-full/report.json` |
+| Hybrid | 500 | 81.8% | 93.0% | 96.2% | 98.6% | 99.6% | 88.4% | 88.1% | `benchmarks/results/raw/longmemeval-hybrid-full/report.json` |
 | Lexical | 500 | 54.0% | 71.0% | 77.0% | 82.0% | 89.8% | 62.7% | 64.0% | `benchmarks/results/raw/longmemeval-lexical-full/report.json` |
 
 Run the full hybrid retrieval artifact:

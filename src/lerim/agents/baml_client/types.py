@@ -86,7 +86,7 @@ class RecordStatus(str, Enum):
     ARCHIVED = "ARCHIVED"
 
 # #########################################################################
-# Generated classes (20)
+# Generated classes (23)
 # #########################################################################
 
 class CodingEvalPolishedContextRecords(BaseModel):
@@ -97,6 +97,7 @@ class CodingEvalPolishedContextRecords(BaseModel):
     user_strategy_records: typing.List["DurableRecordDraft"] = Field(description='Visible user feedback, user preferences, cost/locality/provider constraints, teacher-model preferences, and model-size priorities. Use [] when absent.')
     role_split_record: typing.Optional["DurableRecordDraft"] = Field(default=None, description='Semantic project decision assigning local models and cloud providers to different roles. Null when absent.')
     upstream_bug_report_record: typing.Optional["DurableRecordDraft"] = Field(default=None, description='Externally reported upstream bug or issue/PR fact, without local workaround mechanics. Null when absent.')
+    project_identity_fact: typing.Optional["FixedKindRecordDraft"] = Field(default=None, description='Configured external service/project identity as a fact, including project name or dashboard/workspace URL when source-stated and reusable. Null when absent.')
     model_setting_fact: typing.Optional["FixedKindRecordDraft"] = Field(default=None, description='Validated model/runtime setting as a fact. Null when absent.')
     adapter_decision: typing.Optional["FixedKindRecordDraft"] = Field(default=None, description='Adopted adapter approach as a decision. Null when absent.')
     prompt_structure_decision: typing.Optional["FixedKindRecordDraft"] = Field(default=None, description='Adopted prompt-structure approach as a decision. Null when absent.')
@@ -104,6 +105,19 @@ class CodingEvalPolishedContextRecords(BaseModel):
     deferred_design_fact: typing.Optional["FixedKindRecordDraft"] = Field(default=None, description='Explicitly deferred concrete design as a fact. Null when absent.')
     other_records: typing.List["DurableRecordDraft"] = Field(description='Other durable coding records that do not fit the eval/debug slots, especially stable user feedback, user preferences, product strategy, architecture decisions, cost/locality constraints, and cloud/local role decisions.')
     completion_summary: typing.Optional[str] = Field(default=None, description='Brief summary of ingestion work for final_result/reporting.')
+
+class CodingProjectIdentitySlotRecords(BaseModel):
+    project_identity_fact: typing.Optional["FixedKindRecordDraft"] = Field(default=None, description='Configured external service/project identity as a fact, including project/service name or dashboard/workspace/project URL when source-stated. Null when absent.')
+
+class CodingRecordRetentionDecision(BaseModel):
+    record_index: int = Field(description='Zero-based index of the candidate durable record in final_records_json.durable_records.')
+    keep: bool = Field(description='True only when the record is durable future context rather than current-task implementation debris.')
+    reason: str = Field(description='Short reason for keeping or dropping this record.')
+
+class CodingRecordRetentionResult(BaseModel):
+    save_any: bool = Field(description='False when the coding session should be archived with no durable records at all.')
+    session_reason: str = Field(description='Short session-level reason for saving or dropping all durable records.')
+    decisions: typing.List["CodingRecordRetentionDecision"] = Field(description='One keep/drop decision per candidate durable record.')
 
 class CodingStrategySlotRecords(BaseModel):
     silent_change_feedback_record: typing.Optional["DurableRecordDraft"] = Field(default=None, description='Visible user correction for an unapproved model/provider/scope/architecture/cost-tier change. Null when absent.')

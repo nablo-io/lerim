@@ -184,10 +184,10 @@ def test_render_index_uses_general_market_label_for_competitor_baselines(
     """Generated report index keeps the benchmark surface market-wide."""
     raw_dir = tmp_path / "benchmarks" / "results" / "raw"
     reports_dir = tmp_path / "benchmarks" / "results" / "reports"
-    report_path = raw_dir / "agentmemory-pinned-baseline" / "report.json"
+    report_path = raw_dir / "imported-market-baselines" / "report.json"
     _write_report(
         report_path,
-        "agentmemory_pinned_upstream_baseline",
+        "imported_market_baselines",
         agentmemory={"baseline_type": "pinned_upstream_raw_artifacts"},
         environment={"lerim_git_dirty": True},
     )
@@ -203,6 +203,7 @@ def test_render_index_uses_general_market_label_for_competitor_baselines(
 
     assert "| imported_market_baselines | `pinned_upstream_raw_artifacts` |" in rendered
     assert "agentmemory_pinned_upstream_baseline" not in rendered
+    assert "agentmemory-pinned-baseline" not in rendered
 
 
 def test_build_index_copies_market_baseline_to_general_report_name(
@@ -212,11 +213,11 @@ def test_build_index_copies_market_baseline_to_general_report_name(
     """Generated reports do not use a single competitor as the public headline."""
     raw_dir = tmp_path / "benchmarks" / "results" / "raw"
     reports_dir = tmp_path / "benchmarks" / "results" / "reports"
-    report_dir = raw_dir / "agentmemory-pinned-baseline"
+    report_dir = raw_dir / "imported-market-baselines"
     report_path = report_dir / "report.json"
     _write_report(
         report_path,
-        "agentmemory_pinned_upstream_baseline",
+        "imported_market_baselines",
         agentmemory={"baseline_type": "pinned_upstream_raw_artifacts"},
     )
     report_dir.joinpath("report.md").write_text("# Imported Baseline\n", encoding="utf-8")
@@ -236,11 +237,11 @@ def test_collect_reports_sorts_imported_baselines_after_lerim_rows(
 ) -> None:
     """Generated index should start with first-party rows, not imported baselines."""
     raw_dir = tmp_path / "benchmarks" / "results" / "raw"
-    imported = raw_dir / "agentmemory-pinned-baseline" / "report.json"
+    imported = raw_dir / "imported-market-baselines" / "report.json"
     lerim = raw_dir / "longmemeval-hybrid-full" / "report.json"
     _write_report(
         imported,
-        "agentmemory_pinned_upstream_baseline",
+        "imported_market_baselines",
         agentmemory={"baseline_type": "pinned_upstream_raw_artifacts"},
     )
     _write_report(
@@ -255,7 +256,7 @@ def test_collect_reports_sorts_imported_baselines_after_lerim_rows(
 
     assert [item["benchmark"] for item in reports] == [
         "longmemeval_s_retrieval_only",
-        "agentmemory_pinned_upstream_baseline",
+        "imported_market_baselines",
     ]
 
 

@@ -1,8 +1,9 @@
-"""Pin AgentMemory's upstream benchmark artifacts for fair comparison.
+"""Import pinned upstream market benchmark artifacts for comparison.
 
-This runner does not rerun AgentMemory. It downloads AgentMemory's own raw
-benchmark JSON files at an explicit git commit, stores them as source artifacts,
-and emits a normalized report that can be compared with Lerim-first reports.
+The current imported source is AgentMemory. This runner does not rerun that
+system. It downloads the upstream raw benchmark JSON files at an explicit git
+commit, stores them as source artifacts, and emits a normalized report that can
+be compared with Lerim-first reports.
 """
 
 from __future__ import annotations
@@ -296,12 +297,12 @@ def build_report(
     commit: str,
     source_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Build the normalized AgentMemory pinned baseline report."""
+    """Build the normalized imported market-baseline report."""
     normalized_results = [row["normalized"] for row in source_rows]
     git_status = git_value(["status", "--short"])
     return {
         "schema_version": 1,
-        "benchmark": "agentmemory_pinned_upstream_baseline",
+        "benchmark": "imported_market_baselines",
         "generated_at": utc_now(),
         "command": " ".join(sys.argv),
         "agentmemory": {
@@ -447,7 +448,7 @@ def write_outputs(report: dict[str, Any], output_dir: Path) -> None:
 
 
 def run(args: argparse.Namespace) -> Path:
-    """Fetch, normalize, and write AgentMemory baseline artifacts."""
+    """Fetch, normalize, and write imported market-baseline artifacts."""
     output_dir = args.output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     source_rows = fetch_and_write_sources(
@@ -462,9 +463,9 @@ def run(args: argparse.Namespace) -> Path:
 
 
 def parse_args() -> argparse.Namespace:
-    """Parse CLI arguments for the AgentMemory baseline runner."""
+    """Parse CLI arguments for the imported market-baseline runner."""
     parser = argparse.ArgumentParser(
-        description="Pin AgentMemory upstream benchmark artifacts.",
+        description="Pin upstream market benchmark artifacts.",
     )
     parser.add_argument(
         "--agentmemory-commit",
@@ -480,16 +481,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("benchmarks/results/raw/agentmemory-pinned-baseline"),
+        default=Path("benchmarks/results/raw/imported-market-baselines"),
     )
     parser.add_argument("--timeout-seconds", type=float, default=30.0)
     return parser.parse_args()
 
 
 def main() -> None:
-    """Run the AgentMemory pinned baseline CLI."""
+    """Run the imported market-baseline CLI."""
     output_dir = run(parse_args())
-    print(f"AgentMemory pinned baseline report written to {output_dir}")
+    print(f"Imported market baseline report written to {output_dir}")
 
 
 if __name__ == "__main__":

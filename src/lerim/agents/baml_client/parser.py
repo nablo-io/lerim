@@ -47,6 +47,12 @@ class LlmResponseParser:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="CurateRecordHealthBatch", llm_response=llm_response, mode="request")
         return typing.cast(types.ContextCurationPlan, __result__)
 
+    def ExtractCodingProjectIdentitySlot(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> types.CodingProjectIdentitySlotRecords:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ExtractCodingProjectIdentitySlot", llm_response=llm_response, mode="request")
+        return typing.cast(types.CodingProjectIdentitySlotRecords, __result__)
+
     def ExtractCodingStrategySlots(
         self, llm_response: str, baml_options: BamlCallOptions = {},
     ) -> types.CodingStrategySlotRecords:
@@ -101,6 +107,12 @@ class LlmResponseParser:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ReviewContextGraphLinks", llm_response=llm_response, mode="request")
         return typing.cast(types.ContextGraphPlan, __result__)
 
+    def SelectCodingDurableRecords(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> types.CodingRecordRetentionResult:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="SelectCodingDurableRecords", llm_response=llm_response, mode="request")
+        return typing.cast(types.CodingRecordRetentionResult, __result__)
+
     def SynthesizeContextRecords(
         self, llm_response: str, baml_options: BamlCallOptions = {},
     ) -> types.SynthesizedContextRecords:
@@ -138,6 +150,12 @@ class LlmStreamParser:
     ) -> stream_types.ContextCurationPlan:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="CurateRecordHealthBatch", llm_response=llm_response, mode="stream")
         return typing.cast(stream_types.ContextCurationPlan, __result__)
+
+    def ExtractCodingProjectIdentitySlot(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> stream_types.CodingProjectIdentitySlotRecords:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ExtractCodingProjectIdentitySlot", llm_response=llm_response, mode="stream")
+        return typing.cast(stream_types.CodingProjectIdentitySlotRecords, __result__)
 
     def ExtractCodingStrategySlots(
         self, llm_response: str, baml_options: BamlCallOptions = {},
@@ -192,6 +210,12 @@ class LlmStreamParser:
     ) -> stream_types.ContextGraphPlan:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ReviewContextGraphLinks", llm_response=llm_response, mode="stream")
         return typing.cast(stream_types.ContextGraphPlan, __result__)
+
+    def SelectCodingDurableRecords(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> stream_types.CodingRecordRetentionResult:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="SelectCodingDurableRecords", llm_response=llm_response, mode="stream")
+        return typing.cast(stream_types.CodingRecordRetentionResult, __result__)
 
     def SynthesizeContextRecords(
         self, llm_response: str, baml_options: BamlCallOptions = {},

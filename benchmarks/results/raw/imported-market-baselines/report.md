@@ -4,7 +4,7 @@ This generated audit artifact supports the market-wide comparison page. It is no
 
 Current imported source rows cover the pinned upstream artifacts listed below. Add more market systems here only when their source artifacts and provenance are pinned with the same care.
 
-- Generated: `2026-05-20T01:44:58.197461+00:00`
+- Generated: `2026-05-20T12:05:04.821199+00:00`
 - Source system: `AgentMemory`
 - Source repository: `https://github.com/rohitg00/agentmemory`
 - Source commit: `68fddd418e1bbcc41d32a1c61b7a78d91eb7c4dc`

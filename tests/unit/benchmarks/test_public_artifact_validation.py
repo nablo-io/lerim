@@ -85,7 +85,7 @@ def _write_generated_report_copies(root: Path) -> None:
         if not source_md.exists():
             continue
         report = json.loads(report_path.read_text(encoding="utf-8"))
-        if report.get("benchmark") == "agentmemory_pinned_upstream_baseline":
+        if report.get("benchmark") == "imported_market_baselines":
             target_name = "imported-market-baselines.md"
         else:
             target_name = f"{report_path.parent.name}.md"
@@ -979,9 +979,9 @@ def test_validate_public_artifacts_rejects_pinned_baseline_claiming_rerun(
     report_dir = tmp_path / "benchmarks" / "results" / "raw" / "market-baseline"
     report_dir.mkdir(parents=True, exist_ok=True)
     report = {
-        "benchmark": "agentmemory_pinned_upstream_baseline",
+        "benchmark": "imported_market_baselines",
         "generated_at": "2026-05-19T00:00:00+00:00",
-        "command": "benchmarks/scripts/run_agentmemory_baseline.py",
+        "command": "benchmarks/scripts/run_imported_market_baselines.py",
         "environment": {"lerim_git_commit": "abc123", "lerim_git_dirty": True},
         "agentmemory": {"rerun_in_this_environment": True},
     }
@@ -1005,9 +1005,9 @@ def test_validate_public_artifacts_rejects_pinned_baseline_without_sources(
     report_dir = tmp_path / "benchmarks" / "results" / "raw" / "market-baseline"
     report_dir.mkdir(parents=True, exist_ok=True)
     report = {
-        "benchmark": "agentmemory_pinned_upstream_baseline",
+        "benchmark": "imported_market_baselines",
         "generated_at": "2026-05-19T00:00:00+00:00",
-        "command": "benchmarks/scripts/run_agentmemory_baseline.py",
+        "command": "benchmarks/scripts/run_imported_market_baselines.py",
         "environment": {"lerim_git_commit": "abc123", "lerim_git_dirty": True},
         "agentmemory": {"rerun_in_this_environment": False},
         "results": [],
@@ -1034,9 +1034,9 @@ def test_validate_public_artifacts_rejects_pinned_baseline_digest_mismatch(
     source_dir.mkdir(parents=True, exist_ok=True)
     (source_dir / "source.json").write_text('{"ok": true}\n', encoding="utf-8")
     report = {
-        "benchmark": "agentmemory_pinned_upstream_baseline",
+        "benchmark": "imported_market_baselines",
         "generated_at": "2026-05-19T00:00:00+00:00",
-        "command": "benchmarks/scripts/run_agentmemory_baseline.py",
+        "command": "benchmarks/scripts/run_imported_market_baselines.py",
         "environment": {"lerim_git_commit": "abc123", "lerim_git_dirty": True},
         "agentmemory": {"rerun_in_this_environment": False},
         "source_artifacts": [
@@ -1073,9 +1073,9 @@ def test_validate_public_artifacts_require_clean_allows_pinned_imported_baseline
     source_file = source_dir / "source.json"
     source_file.write_text('{"ok": true}\n', encoding="utf-8")
     report = {
-        "benchmark": "agentmemory_pinned_upstream_baseline",
+        "benchmark": "imported_market_baselines",
         "generated_at": "2026-05-19T00:00:00+00:00",
-        "command": "benchmarks/scripts/run_agentmemory_baseline.py",
+        "command": "benchmarks/scripts/run_imported_market_baselines.py",
         "environment": {"lerim_git_commit": "abc123", "lerim_git_dirty": True},
         "agentmemory": {"rerun_in_this_environment": False},
         "source_artifacts": [

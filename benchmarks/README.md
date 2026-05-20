@@ -147,7 +147,7 @@ artifact set at a fixed commit and emits a normalized market-comparison report.
 It is source-backed, but it is not a fresh local competitor rerun.
 
 ```bash
-uv run python benchmarks/scripts/run_agentmemory_baseline.py
+uv run python benchmarks/scripts/run_imported_market_baselines.py
 ```
 
 ### Extraction Quality

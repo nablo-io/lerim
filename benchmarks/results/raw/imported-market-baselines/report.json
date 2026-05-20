@@ -5,8 +5,8 @@
     "repo": "https://github.com/rohitg00/agentmemory",
     "rerun_in_this_environment": false
   },
-  "benchmark": "agentmemory_pinned_upstream_baseline",
-  "command": "benchmarks/scripts/run_agentmemory_baseline.py",
+  "benchmark": "imported_market_baselines",
+  "command": "benchmarks/scripts/run_imported_market_baselines.py",
   "comparisons": {
     "latency": {
       "agentmemory_artifact_available": true,
@@ -41,14 +41,14 @@
     ]
   },
   "environment": {
-    "lerim_git_commit": "36e806a89a3ccd6b20d2ffb1435a84016e4af35b",
+    "lerim_git_commit": "acb26e51a67757c886b9c5a92aa5ce1dcba4ae32",
     "lerim_git_dirty": true,
     "lerim_git_status_short": "<dirty worktree; rerun from clean commit before launch>",
     "machine": "arm64",
     "platform": "macOS-26.4.1-arm64-arm-64bit",
     "python": "3.12.12"
   },
-  "generated_at": "2026-05-20T01:44:58.197461+00:00",
+  "generated_at": "2026-05-20T12:05:04.821199+00:00",
   "publication_rules": [
     "Say pinned upstream competitor artifact, not fresh local competitor rerun.",
     "Do not compare latency winner claims across HTTP and local-store boundaries.",

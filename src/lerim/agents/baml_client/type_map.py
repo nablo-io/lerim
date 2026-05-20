@@ -19,6 +19,15 @@ type_map = {
     "types.CodingEvalPolishedContextRecords": types.CodingEvalPolishedContextRecords,
     "stream_types.CodingEvalPolishedContextRecords": stream_types.CodingEvalPolishedContextRecords,
 
+    "types.CodingProjectIdentitySlotRecords": types.CodingProjectIdentitySlotRecords,
+    "stream_types.CodingProjectIdentitySlotRecords": stream_types.CodingProjectIdentitySlotRecords,
+
+    "types.CodingRecordRetentionDecision": types.CodingRecordRetentionDecision,
+    "stream_types.CodingRecordRetentionDecision": stream_types.CodingRecordRetentionDecision,
+
+    "types.CodingRecordRetentionResult": types.CodingRecordRetentionResult,
+    "stream_types.CodingRecordRetentionResult": stream_types.CodingRecordRetentionResult,
+
     "types.CodingStrategySlotRecords": types.CodingStrategySlotRecords,
     "stream_types.CodingStrategySlotRecords": stream_types.CodingStrategySlotRecords,
 

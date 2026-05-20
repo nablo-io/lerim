@@ -96,7 +96,7 @@ def _headline_metric(report: dict[str, Any]) -> str:
                 f"{summary.get('installed_client_connection_acceptance_count', 0)}, "
                 f"{installed_tool_call_headline}"
             )
-    if benchmark == "agentmemory_pinned_upstream_baseline":
+    if benchmark == "imported_market_baselines":
         results = report.get("results") or []
         if isinstance(results, list):
             rows: list[str] = []
@@ -188,7 +188,7 @@ def collect_reports(raw_dir: Path, *, repo_root: Path | None = None) -> list[dic
 def _report_sort_key(item: dict[str, Any]) -> tuple[int, str, str]:
     """Sort first-party rows before imported market baselines."""
     benchmark = str(item.get("benchmark") or "")
-    if benchmark == "agentmemory_pinned_upstream_baseline":
+    if benchmark == "imported_market_baselines":
         return (2, benchmark, str(item.get("run") or ""))
     return (0, benchmark, str(item.get("run") or ""))
 
@@ -199,7 +199,7 @@ def _is_full_report(report: dict[str, Any], benchmark: str) -> bool:
         bool(report.get("is_full_filtered_run"))
         or bool(report.get("is_full_integration_run"))
         or bool(report.get("public_sanitized"))
-        or benchmark == "agentmemory_pinned_upstream_baseline"
+        or benchmark == "imported_market_baselines"
     )
 
 
@@ -218,7 +218,7 @@ def _is_no_judge_retrieval_report(report: dict[str, Any], benchmark: str) -> boo
 
 def _scope_label(report: dict[str, Any], benchmark: str) -> str:
     """Return a public scope label for the generated index."""
-    if benchmark == "agentmemory_pinned_upstream_baseline":
+    if benchmark == "imported_market_baselines":
         return "pinned upstream retrieval-only"
     if benchmark == "longmemeval_s_trace_ingestion_cost_performance":
         return "sample"
@@ -260,14 +260,14 @@ def _question_count(report: dict[str, Any]) -> Any:
 
 def _display_benchmark_label(benchmark: str) -> str:
     """Return a user-facing benchmark label for generated report tables."""
-    if benchmark == "agentmemory_pinned_upstream_baseline":
+    if benchmark == "imported_market_baselines":
         return "imported_market_baselines"
     return benchmark
 
 
 def _markdown_report_filename(item: dict[str, Any]) -> str:
     """Return the generated Markdown filename for one report row."""
-    if item["benchmark"] == "agentmemory_pinned_upstream_baseline":
+    if item["benchmark"] == "imported_market_baselines":
         return "imported-market-baselines.md"
     if item["display_benchmark"] != item["benchmark"]:
         return f"{item['display_benchmark'].replace('_', '-')}.md"
@@ -321,7 +321,7 @@ def _worktree_label(report: dict[str, Any]) -> str:
 
 def _evidence_status(report: dict[str, Any], benchmark: str) -> str:
     """Return a compact publication-status label for a report row."""
-    if benchmark == "agentmemory_pinned_upstream_baseline":
+    if benchmark == "imported_market_baselines":
         return "imported; pinned upstream; not local rerun"
     if benchmark in {
         "lerim_extraction_quality_minimax_m27_full_47",

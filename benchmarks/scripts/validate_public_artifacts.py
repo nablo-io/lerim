@@ -307,7 +307,7 @@ def _is_imported_market_baseline(report: dict[str, Any]) -> bool:
     """Return whether a report is a source-imported market baseline."""
     baseline = report.get("agentmemory")
     return (
-        report.get("benchmark") == "agentmemory_pinned_upstream_baseline"
+        report.get("benchmark") == "imported_market_baselines"
         and isinstance(baseline, dict)
         and baseline.get("rerun_in_this_environment") is False
     )
@@ -975,7 +975,7 @@ def _validate_known_report_contracts(report_path: Path, report: dict[str, Any], 
                 if int(detail.get("llm_calls") or 0) < 1:
                     errors.append(f"{details_path}:{line_number}: llm_calls must be measured")
 
-    if benchmark == "agentmemory_pinned_upstream_baseline":
+    if benchmark == "imported_market_baselines":
         baseline = report.get("agentmemory")
         if not isinstance(baseline, dict):
             errors.append(f"{report_path}: market baseline must include source baseline metadata")
@@ -1216,9 +1216,9 @@ def _validate_generated_index(
         errors.append(f"{index_path}: missing generated benchmark index")
         return
     text = index_path.read_text(encoding="utf-8")
-    if "agentmemory_pinned_upstream_baseline" in text:
+    if "agentmemory_pinned_upstream_baseline" in text or "agentmemory-pinned-baseline" in text:
         errors.append(f"{index_path}: public index should use general market baseline label")
-    imported_baseline_exists = (raw_dir / "agentmemory-pinned-baseline" / "report.json").exists()
+    imported_baseline_exists = (raw_dir / "imported-market-baselines" / "report.json").exists()
     if imported_baseline_exists and "imported_market_baselines" not in text:
         errors.append(f"{index_path}: missing general imported baseline row")
     from benchmarks.scripts.build_report_index import collect_reports, render_index
@@ -1235,7 +1235,7 @@ def _validate_generated_index(
 def _report_markdown_filename(report_path: Path, report: dict[str, Any]) -> str:
     """Return the generated report filename for one raw report."""
     benchmark = str(report.get("benchmark") or "")
-    if benchmark == "agentmemory_pinned_upstream_baseline":
+    if benchmark == "imported_market_baselines":
         return "imported-market-baselines.md"
     return f"{report_path.parent.name}.md"
 
@@ -1908,7 +1908,7 @@ def _validate_benchmark_doc_numbers(
 
     baseline = _load_doc_report(
         raw_dir=raw_dir,
-        artifact_name="agentmemory-pinned-baseline",
+        artifact_name="imported-market-baselines",
         page=market_page,
         text=text,
         errors=errors,
@@ -1931,7 +1931,7 @@ def _validate_benchmark_doc_numbers(
             label="market imported baseline hybrid",
             row_needles=(
                 "| AgentMemory | BM25+Vector |",
-                "agentmemory-pinned-baseline/report.json",
+                "imported-market-baselines/report.json",
             ),
             expected_values=_baseline_detailed_values(baseline, mode="hybrid"),
             errors=errors,
@@ -1942,7 +1942,7 @@ def _validate_benchmark_doc_numbers(
             label="market imported baseline BM25",
             row_needles=(
                 "| AgentMemory | BM25-only |",
-                "agentmemory-pinned-baseline/report.json",
+                "imported-market-baselines/report.json",
             ),
             expected_values=_baseline_detailed_values(baseline, mode="bm25"),
             errors=errors,

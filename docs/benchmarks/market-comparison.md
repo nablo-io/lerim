@@ -34,7 +34,7 @@ Lerim benchmark run and is exempt from first-party clean-run publication gates.
 
 | System | Product type | Benchmark number tracked today | Benchmark boundary | Source / provenance | Comparable to Lerim LongMemEval-S retrieval? |
 | --- | --- | --- | --- | --- | --- |
-| Lerim | Source-session context compiler | Hybrid R@5 96.4%, R@10 98.6%, NDCG@10 88.6%, MRR 88.4%; lexical R@5 77.0%, R@10 82.0%, NDCG@10 62.7%, MRR 64.0% | LongMemEval-S retrieval-only over 500 questions | First-party raw artifacts: `benchmarks/results/raw/longmemeval-hybrid-full/report.json` and `benchmarks/results/raw/longmemeval-lexical-full/report.json`; dirty development tree, not launch-grade until rerun from a clean release candidate | Yes, first-party baseline |
+| Lerim | Source-session context compiler | Hybrid R@5 96.2%, R@10 98.6%, NDCG@10 88.4%, MRR 88.1%; lexical R@5 77.0%, R@10 82.0%, NDCG@10 62.7%, MRR 64.0% | LongMemEval-S retrieval-only over 500 questions | First-party raw artifacts: `benchmarks/results/raw/longmemeval-hybrid-full/report.json` and `benchmarks/results/raw/longmemeval-lexical-full/report.json`; dirty development tree, not launch-grade until rerun from a clean release candidate | Yes, first-party baseline |
 | AgentMemory | Local memory engine plus MCP server | Hybrid R@5 95.2%, R@10 98.6%, NDCG@10 87.9%, MRR 88.2%; BM25 R@5 86.2%, R@10 94.6%, NDCG@10 73.0%, MRR 71.5% | LongMemEval-S retrieval-only over 500 questions | Pinned upstream raw artifact normalized in this repo at commit `68fddd418e1bbcc41d32a1c61b7a78d91eb7c4dc`; pinned public docs at <https://github.com/rohitg00/agentmemory/blob/68fddd418e1bbcc41d32a1c61b7a78d91eb7c4dc/benchmark/LONGMEMEVAL.md>, accessed 2026-05-19 | Pinned upstream artifact, not local rerun |
 | MemPalace | Memory system | Pinned public docs report raw ChromaDB full-500 R@5 96.6%; later held-out-450 hybrid_v4 no-rerank R@5 98.4%, R@10 99.8%; neither row is normalized locally | LongMemEval retrieval recall, but raw artifacts and method are not normalized here | MemPalace benchmark docs: <https://github.com/MemPalace/mempalace/blob/1b94f4efb4949765d6965936476c236df13fd108/benchmarks/BENCHMARKS.md>, develop commit checked 2026-05-20; not normalized in this repo yet | Not yet |
 | Mem0 | Memory API / cloud platform | Official Mem0 docs report LongMemEval overall 93.4 and LoCoMo overall 91.6 | Official answer/judge metrics, not Lerim's retrieval-only boundary | Mem0 official evaluation docs: <https://docs.mem0.ai/core-concepts/memory-evaluation>, accessed 2026-05-19; not pinned or normalized locally yet | No |
@@ -65,32 +65,32 @@ scores.
 
 | System | Mode | Questions | R@5 | R@10 | R@20 | NDCG@10 | MRR | Evidence |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| Lerim | Hybrid | 500 | 96.4% | 98.6% | 99.4% | 88.6% | 88.4% | `benchmarks/results/raw/longmemeval-hybrid-full/report.json` |
+| Lerim | Hybrid | 500 | 96.2% | 98.6% | 99.6% | 88.4% | 88.1% | `benchmarks/results/raw/longmemeval-hybrid-full/report.json` |
 | Lerim | Lexical | 500 | 77.0% | 82.0% | 89.8% | 62.7% | 64.0% | `benchmarks/results/raw/longmemeval-lexical-full/report.json` |
-| AgentMemory | BM25+Vector | 500 | 95.2% | 98.6% | 99.4% | 87.9% | 88.2% | `benchmarks/results/raw/agentmemory-pinned-baseline/report.json` |
-| AgentMemory | BM25-only | 500 | 86.2% | 94.6% | 98.6% | 73.0% | 71.5% | `benchmarks/results/raw/agentmemory-pinned-baseline/report.json` |
+| AgentMemory | BM25+Vector | 500 | 95.2% | 98.6% | 99.4% | 87.9% | 88.2% | `benchmarks/results/raw/imported-market-baselines/report.json` |
+| AgentMemory | BM25-only | 500 | 86.2% | 94.6% | 98.6% | 73.0% | 71.5% | `benchmarks/results/raw/imported-market-baselines/report.json` |
 | MemPalace | Raw ChromaDB full set | 500 | 96.6% | Not available | Not available | Not available | Not available | Public docs only; not normalized locally |
 | MemPalace | hybrid_v4 no-rerank held-out set | 450 | 98.4% | 99.8% | Not available | Not available | Not available | Public docs only; not normalized locally |
 
 These rows are retrieval-only. They are not official LongMemEval QA scores, do
 not call an LLM judge, and do not score generated answers.
-AgentMemory rows are pinned upstream raw artifacts from commit
-`68fddd418e1bbcc41d32a1c61b7a78d91eb7c4dc`, normalized locally; they are not
-fresh local reruns.
+Imported competitor rows are pinned upstream raw artifacts normalized locally;
+they are not fresh local reruns. The imported LongMemEval-S rows currently
+available in this repo come from commit
+`68fddd418e1bbcc41d32a1c61b7a78d91eb7c4dc`.
 
 ## Extraction Comparison Status
 
 Lerim's trace-to-context extraction eval is a private first-party benchmark.
-It has not been run against AgentMemory, Mem0, Letta, Cognee, or any other
-competitor.
+No competitor row below has been run on that private extraction eval yet.
 
 | System | Status on Lerim's private extraction eval |
 | --- | --- |
 | Lerim | Internal diagnostic aggregate exists; see [Lerim Results](lerim-results.md) for the current extraction-quality and false-positive numbers. |
 | AgentMemory | Not available yet; not run on this private eval. |
-| Mem0 | Not available yet; not run on this private eval. |
-| Letta | Not available yet; not run on this private eval. |
 | Cognee | Not available yet; not run on this private eval. |
+| Letta | Not available yet; not run on this private eval. |
+| Mem0 | Not available yet; not run on this private eval. |
 
 Do not substitute LongMemEval-S retrieval numbers, LoCoMo answer scores, feature
 tables, or public marketing rows for extraction-quality scores. A fair
@@ -133,7 +133,7 @@ for market awareness, not as pinned reproducibility artifacts.
 
 - Lerim raw artifacts: `benchmarks/results/raw/`
 - Normalized imported LongMemEval-S baseline currently available:
-  `benchmarks/results/raw/agentmemory-pinned-baseline/`, upstream commit
+  `benchmarks/results/raw/imported-market-baselines/`, upstream commit
   `68fddd418e1bbcc41d32a1c61b7a78d91eb7c4dc`.
 - Public benchmark docs for that imported baseline:
   <https://github.com/rohitg00/agentmemory/blob/68fddd418e1bbcc41d32a1c61b7a78d91eb7c4dc/benchmark/LONGMEMEVAL.md>,

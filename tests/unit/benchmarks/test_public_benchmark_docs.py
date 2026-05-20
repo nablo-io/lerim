@@ -235,7 +235,7 @@ def test_market_comparison_doc_matches_same_boundary_raw_artifacts() -> None:
     text = _doc("market-comparison.md")
     lerim = _load_report("longmemeval-hybrid-full")["results"]["headline"]
     lerim_lexical = _load_report("longmemeval-lexical-full")["results"]["headline"]
-    baseline = _load_report("agentmemory-pinned-baseline")["results"]
+    baseline = _load_report("imported-market-baselines")["results"]
     baseline_by_mode = {row["mode"]: row["headline"] for row in baseline if "headline" in row}
 
     assert (

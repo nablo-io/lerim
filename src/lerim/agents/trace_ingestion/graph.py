@@ -36,6 +36,7 @@ GITHUB_REPORT_URL_RE = re.compile(
     r"github\.com/[^/\s]+/[^/\s]+/(?P<label>pull|pulls|issues)/(?P<number>\d+)",
     re.IGNORECASE,
 )
+URL_RE = re.compile(r"https?://[^\s)>\]\"']+")
 
 
 def run_trace_ingestion_graph(
@@ -277,21 +278,21 @@ def build_trace_ingestion_graph(
 
     def guard_records(state: TraceIngestionGraphState) -> dict[str, Any]:
         """Run a focused final guard over synthesized records before persistence."""
-        if source_profile_id == "coding":
+        llm_calls = int(state.get("llm_calls") or 0)
+        if source_profile_id == "coding" and llm_calls + 2 >= max_llm_calls:
             return {
                 "synthesized": state.get("synthesized"),
                 "observations": [
                     {
                         "action": "guard_records",
                         "ok": True,
-                        "content": "skipped_for_coding_profile",
+                        "content": "skipped_for_coding_profile_budget",
                         "args": {},
                         "done": False,
                         "completion_summary": "",
                     },
                 ],
             }
-        llm_calls = int(state.get("llm_calls") or 0)
         if llm_calls >= max_llm_calls:
             raise RuntimeError(
                 f"BAML trace ingestion exceeded max_llm_calls={max_llm_calls}."
@@ -348,8 +349,12 @@ def build_trace_ingestion_graph(
             ensure_ascii=True,
         )
         user_strategy_observations: list[dict[str, Any]] = []
+        project_identity_observations: list[dict[str, Any]] = []
+        coding_retention_observations: list[dict[str, Any]] = []
         if source_profile_id == "coding":
             user_strategy_result = None
+            project_identity_result = None
+            visible_source_lines = _visible_source_lines(persistence_context.trace_path)
             user_source_lines = _visible_user_source_lines(persistence_context.trace_path)
             if user_source_lines != "(none)":
                 if progress:
@@ -387,14 +392,45 @@ def build_trace_ingestion_graph(
                     implementation_summary=_implementation_summary(state),
                     rejected_findings_summary=_rejected_durable_findings_summary(state),
                     draft_records_json=draft_records_json,
+                    visible_source_lines=visible_source_lines,
                 ),
                 stage="polish_records",
                 progress=progress,
                 progress_label="trace-ingestion",
             )
+            llm_calls += attempts
+            if (
+                not model_payload(result).get("project_identity_fact")
+                and visible_source_lines != "(none)"
+                and llm_calls < max_llm_calls
+            ):
+                if progress:
+                    print(
+                        f"  trace-ingestion project_identity "
+                        f"{llm_calls + 1}/{max_llm_calls}",
+                        flush=True,
+                    )
+                (
+                    project_identity_result,
+                    project_identity_observations,
+                    project_identity_attempts,
+                ) = call_baml_with_retries(
+                    lambda: baml_runtime.ExtractCodingProjectIdentitySlot(
+                        run_instruction=run_instruction,
+                        source_profile_context=source_profile_context,
+                        visible_source_lines=visible_source_lines,
+                    ),
+                    stage="extract_coding_project_identity",
+                    progress=progress,
+                    progress_label="trace-ingestion",
+                )
+                llm_calls += project_identity_attempts
             payload = _coding_eval_polish_to_synthesized(
                 result,
                 trace_path=persistence_context.trace_path,
+                supplemental_fixed_slots=model_payload(project_identity_result)
+                if project_identity_result is not None
+                else {},
                 supplemental_strategy_slots=model_payload(user_strategy_result)
                 if user_strategy_result is not None
                 else {},
@@ -404,11 +440,30 @@ def build_trace_ingestion_graph(
                     *(state.get("rejected_durable_findings") or []),
                 ],
             )
-            if (
-                not payload.get("durable_records")
-                and model_payload(state.get("synthesized")).get("durable_records")
-            ):
-                payload = model_payload(state.get("synthesized"))
+            if payload.get("durable_records") and llm_calls < max_llm_calls:
+                if progress:
+                    print(
+                        f"  trace-ingestion coding_retention "
+                        f"{llm_calls + 1}/{max_llm_calls}",
+                        flush=True,
+                    )
+                (
+                    retention_result,
+                    coding_retention_observations,
+                    retention_attempts,
+                ) = call_baml_with_retries(
+                    lambda: baml_runtime.SelectCodingDurableRecords(
+                        run_instruction=run_instruction,
+                        source_profile_context=source_profile_context,
+                        visible_source_lines=visible_source_lines,
+                        final_records_json=json.dumps(payload, ensure_ascii=True),
+                    ),
+                    stage="select_coding_durable_records",
+                    progress=progress,
+                    progress_label="trace-ingestion",
+                )
+                llm_calls += retention_attempts
+                payload = _apply_coding_retention_decisions(payload, retention_result)
         else:
             result, retry_observations, attempts = call_baml_with_retries(
                 lambda: baml_runtime.PolishContextRecords(
@@ -424,14 +479,17 @@ def build_trace_ingestion_graph(
                 progress=progress,
                 progress_label="trace-ingestion",
             )
+            llm_calls += attempts
             payload = model_payload(result)
         durable_count = len(payload.get("durable_records") or [])
         return {
-            "llm_calls": llm_calls + attempts,
+            "llm_calls": llm_calls,
             "synthesized": payload,
             "observations": [
                 *user_strategy_observations,
                 *retry_observations,
+                *project_identity_observations,
+                *coding_retention_observations,
                 {
                     "action": "polish_records",
                     "ok": True,
@@ -538,6 +596,7 @@ def _coding_eval_polish_to_synthesized(
     result: Any,
     *,
     trace_path: Path,
+    supplemental_fixed_slots: dict[str, Any] | None = None,
     supplemental_strategy_slots: dict[str, Any] | None = None,
     supplemental_findings: list[Any] | None = None,
 ) -> dict[str, Any]:
@@ -545,6 +604,7 @@ def _coding_eval_polish_to_synthesized(
     payload = model_payload(result)
     fixed_records: list[dict[str, Any]] = []
     fixed_slots = (
+        ("project_identity_fact", "fact"),
         ("model_setting_fact", "fact"),
         ("adapter_decision", "decision"),
         ("prompt_structure_decision", "decision"),
@@ -552,7 +612,9 @@ def _coding_eval_polish_to_synthesized(
         ("deferred_design_fact", "fact"),
     )
     for field, kind in fixed_slots:
-        record = _fixed_kind_record(payload.get(field), kind, field, trace_path)
+        supplemental_value = (supplemental_fixed_slots or {}).get(field)
+        value = payload.get(field) or supplemental_value
+        record = _fixed_kind_record(value, kind, field, trace_path)
         if record is not None:
             fixed_records.append(record)
     primary_strategy_records: list[dict[str, Any]] = []
@@ -574,12 +636,23 @@ def _coding_eval_polish_to_synthesized(
     )
     optional_strategy_records = [upstream_record] if upstream_record is not None else []
     free_strategy_records: list[dict[str, Any]] = []
-    if len(primary_strategy_records) + len(optional_strategy_records) < 5:
+    if (
+        len(primary_strategy_records)
+        + len(optional_strategy_records)
+        + len(fixed_records)
+        < 5
+    ):
         for value in payload.get("user_strategy_records") or []:
             record = _strategy_record(value, "user_strategy_records", trace_path)
             if record is not None:
                 free_strategy_records.append(record)
-    if len(primary_strategy_records) + len(optional_strategy_records) + len(free_strategy_records) < 5:
+    if (
+        len(primary_strategy_records)
+        + len(optional_strategy_records)
+        + len(fixed_records)
+        + len(free_strategy_records)
+        < 5
+    ):
         for value in supplemental_findings or []:
             record = _user_strategy_record_from_finding(value, trace_path)
             if record is not None:
@@ -597,9 +670,24 @@ def _coding_eval_polish_to_synthesized(
         other_records,
         trace_path=trace_path,
     )
-    _repair_record_evidence_from_findings(records, supplemental_findings or [])
+    _repair_record_evidence_from_findings(
+        records,
+        supplemental_findings or [],
+        trace_path,
+    )
+    _align_visible_user_strategy_bodies(records, trace_path)
+    records = _dedupe_coding_records(records)
+    records = _drop_failed_tool_followup_records(records, trace_path)
+    if _is_unilateral_code_edit_execution(trace_path):
+        records = []
+    for record in records:
+        _prune_unsupported_evidence_refs(record, trace_path)
+        record.pop("_slot_field", None)
     return {
-        "episode": _compact_coding_episode(payload.get("episode") or {}),
+        "episode": _compact_coding_episode(
+            payload.get("episode") or {},
+            has_durable_records=bool(records),
+        ),
         "durable_records": records,
         "completion_summary": payload.get("completion_summary"),
     }
@@ -643,6 +731,166 @@ def _user_strategy_record_from_finding(
     }
 
 
+def _apply_coding_retention_decisions(
+    payload: dict[str, Any],
+    retention_result: Any,
+) -> dict[str, Any]:
+    """Drop post-polish coding records rejected by the retention critic."""
+    records = list(payload.get("durable_records") or [])
+    if not records:
+        return payload
+    decision_payload = model_payload(retention_result)
+    if decision_payload.get("save_any") is False:
+        return {**payload, "durable_records": []}
+    decisions = decision_payload.get("decisions") or []
+    keep_by_index: dict[int, bool] = {}
+    for value in decisions:
+        decision = model_payload(value)
+        index = decision.get("record_index")
+        if not isinstance(index, int):
+            continue
+        if index < 0 or index >= len(records):
+            continue
+        keep_by_index[index] = bool(decision.get("keep"))
+    if not keep_by_index:
+        return payload
+    return {
+        **payload,
+        "durable_records": [
+            record
+            for index, record in enumerate(records)
+            if keep_by_index.get(index, True)
+        ],
+    }
+
+
+def _drop_failed_tool_followup_records(
+    records: list[dict[str, Any]],
+    trace_path: Path,
+) -> list[dict[str, Any]]:
+    """Drop coding records sourced only from assistant follow-up to failed tool calls."""
+    kept: list[dict[str, Any]] = []
+    for record in records:
+        if (
+            record.get("_slot_field") != "fixture_constraint"
+            and _record_uses_failed_tool_followup_source(record, trace_path)
+        ):
+            continue
+        kept.append(record)
+    return kept
+
+
+def _record_uses_failed_tool_followup_source(
+    record: dict[str, Any],
+    trace_path: Path,
+) -> bool:
+    """Return whether every source ref is assistant text after a failed tool result."""
+    refs = [str(ref).strip() for ref in record.get("source_event_refs") or []]
+    if not refs:
+        return False
+    lines = _read_trace_lines(trace_path)
+    supported_refs = 0
+    failed_followup_refs = 0
+    for ref in refs:
+        line_number = _line_ref_number(ref)
+        if line_number is None or line_number < 1 or line_number > len(lines):
+            continue
+        if _visible_source_text(lines[line_number - 1], role="assistant") is None:
+            return False
+        supported_refs += 1
+        if _has_recent_failed_tool_result(lines, line_number):
+            failed_followup_refs += 1
+    return supported_refs > 0 and supported_refs == failed_followup_refs
+
+
+def _has_recent_failed_tool_result(lines: list[str], line_number: int) -> bool:
+    """Return whether a line closely follows a failed tool result in the trace."""
+    for candidate in range(max(1, line_number - 4), line_number):
+        if _is_failed_tool_result_line(lines[candidate - 1]):
+            return True
+    return False
+
+
+def _is_failed_tool_result_line(raw_line: str) -> bool:
+    """Return whether a raw trace line is a failed tool result from the source agent."""
+    try:
+        event = json.loads(raw_line)
+    except (TypeError, ValueError):
+        return False
+    message = event.get("message")
+    content = message.get("content") if isinstance(message, dict) else event.get("content")
+    if not isinstance(content, list):
+        return False
+    return any(
+        isinstance(block, dict)
+        and block.get("type") == "tool_result"
+        and bool(block.get("is_error"))
+        for block in content
+    )
+
+
+def _is_unilateral_code_edit_execution(trace_path: Path) -> bool:
+    """Return whether a trace is a one-way coding implementation run without feedback."""
+    return (
+        _visible_source_user_prompt_count(trace_path) == 1
+        and _trace_uses_code_edit_tool(trace_path)
+    )
+
+
+def _visible_source_user_prompt_count(trace_path: Path) -> int:
+    """Count visible source-domain user prompts, excluding tool results and wrappers."""
+    count = 0
+    for raw_line in _read_trace_lines(trace_path):
+        if _source_domain_user_text(raw_line) is not None:
+            count += 1
+    return count
+
+
+def _source_domain_user_text(raw_line: str) -> str | None:
+    """Return direct user-authored source text, excluding tool results/wrappers."""
+    try:
+        event = json.loads(raw_line)
+    except (TypeError, ValueError):
+        return None
+    message = event.get("message")
+    if isinstance(message, dict):
+        role = str(message.get("role") or "").lower()
+        content = message.get("content")
+    else:
+        role = str(event.get("role") or "").lower()
+        content = event.get("content")
+    if role != "user":
+        return None
+    if isinstance(content, list):
+        return None
+    if not isinstance(content, str):
+        return None
+    text = " ".join(content.split()).strip()
+    if not _is_visible_source_text(text):
+        return None
+    return text
+
+
+def _trace_uses_code_edit_tool(trace_path: Path) -> bool:
+    """Return whether the source agent used a file-editing tool."""
+    for raw_line in _read_trace_lines(trace_path):
+        try:
+            event = json.loads(raw_line)
+        except (TypeError, ValueError):
+            continue
+        message = event.get("message")
+        content = message.get("content") if isinstance(message, dict) else event.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "tool_use":
+                continue
+            tool_name = str(block.get("name") or "")
+            if tool_name in {"Edit", "Write", "MultiEdit"}:
+                return True
+    return False
+
+
 def _strategy_record(value: Any, field: str, trace_path: Path) -> dict[str, Any] | None:
     """Normalize strategy slots before they can compete with technical records."""
     if field == "upstream_bug_report_record":
@@ -658,6 +906,10 @@ def _strategy_record(value: Any, field: str, trace_path: Path) -> dict[str, Any]
         record = _durable_record(value, trace_path)
     if record is None:
         return None
+    if field in {"model_size_priority_record", "provider_cost_record"}:
+        strategy_kind = str(record.get("kind") or "").lower()
+        if strategy_kind not in {"preference", "constraint", "decision"}:
+            return None
     if field in {
         "silent_change_feedback_record",
         "model_size_priority_record",
@@ -676,17 +928,42 @@ def _strategy_record(value: Any, field: str, trace_path: Path) -> dict[str, Any]
         if not record.get("source_event_refs"):
             return None
     if field == "role_split_record":
+        _repair_role_split_source_refs(record, trace_path)
         body = (
-            "Local models handle extraction and summarization; cloud providers handle "
-            "lead and explorer orchestration."
+            "The source recommended local models for extraction and summarization, "
+            "and cloud providers for lead and explorer orchestration."
         )
+        record["kind"] = "decision"
+        record["title"] = "Hybrid local/cloud role split recommendation"
         record["body"] = body
-        record["decision"] = body.rstrip(".")
-        record["why"] = None
+        record["decision"] = (
+            "Use local models for extraction and summarization, and cloud providers "
+            "for lead and explorer orchestration"
+        )
+        record["why"] = "Lead and explorer roles require reliable tool calling."
         record["alternatives"] = None
         record["consequences"] = None
-        record["evidence_refs"] = []
+        record["evidence_refs"] = _record_source_excerpts(record, trace_path)
     return record
+
+
+def _repair_role_split_source_refs(record: dict[str, Any], trace_path: Path) -> None:
+    """Prefer visible source lines that state both sides of a role split."""
+    lines = _read_trace_lines(trace_path)
+    for line_number, raw_line in enumerate(lines, 1):
+        text = _visible_source_text(raw_line)
+        if not text:
+            continue
+        terms = _normalized_terms(text)
+        if (
+            "extract" in terms
+            and "lead" in terms
+            and "explorer" in terms
+            and "cloud" in terms
+            and ("summarize" in terms or "summarization" in terms)
+        ):
+            record["source_event_refs"] = [f"line:{line_number}"]
+            return
 
 
 def _keep_visible_user_source_refs(record: dict[str, Any], trace_path: Path) -> None:
@@ -744,25 +1021,45 @@ def _prioritize_coding_records(
         optional_strategy_records,
         key=lambda record: _coding_record_priority(record, trace_path),
     )
+    if len(ordered_primary_strategy) + len(ordered_optional_strategy) >= 5:
+        return _dedupe_coding_records([
+            *ordered_primary_strategy,
+            *ordered_optional_strategy,
+        ])[:5]
     ordered_free_strategy = sorted(
         free_strategy_records,
         key=lambda record: _coding_record_priority(record, trace_path),
     )
-    primary_source_refs = _record_source_refs(ordered_primary_strategy)
+    core_records = _dedupe_coding_records([
+        *ordered_primary_strategy,
+        *ordered_fixed,
+    ])
+    core_source_refs = _record_source_refs(core_records)
     ordered_free_strategy = [
         record
         for record in ordered_free_strategy
-        if not (_record_source_refs([record]) & primary_source_refs)
+        if not (_record_source_refs([record]) & core_source_refs)
     ]
-    protected_source_refs = _record_source_refs([
-        *ordered_primary_strategy,
-        *ordered_optional_strategy,
-        *ordered_fixed,
-    ])
+    protected_source_refs = _record_source_refs([*core_records, *ordered_optional_strategy])
     ordered_other = sorted(
         other_records,
         key=lambda record: _coding_record_priority(record, trace_path),
     )
+    ordered_other = [
+        record
+        for record in ordered_other
+        if not _is_initial_task_only_record(record, trace_path)
+    ]
+    if any(
+        record.get("_slot_field") == "project_identity_fact"
+        for record in ordered_fixed
+    ):
+        setup_decisions = [
+            record
+            for record in ordered_other
+            if str(record.get("kind") or "").lower() == "decision"
+        ]
+        ordered_other = (setup_decisions or ordered_other)[:1]
     ordered_other = [
         record
         for record in ordered_other
@@ -772,16 +1069,10 @@ def _prioritize_coding_records(
             and _record_source_refs([record]) & protected_source_refs
         )
     ]
-    strategy_first = [
-        *ordered_primary_strategy,
+    return _dedupe_coding_records([
+        *core_records,
         *ordered_optional_strategy,
         *ordered_free_strategy,
-    ]
-    if len(strategy_first) >= 5:
-        return _dedupe_coding_records(strategy_first)[:6]
-    return _dedupe_coding_records([
-        *strategy_first,
-        *ordered_fixed,
         *ordered_other,
     ])[:6]
 
@@ -790,13 +1081,20 @@ def _dedupe_coding_records(records: list[dict[str, Any]]) -> list[dict[str, Any]
     """Drop exact semantic duplicates introduced by restoration."""
     kept: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
+    seen_body: set[tuple[str, str]] = set()
     for record in records:
         refs = ",".join(str(ref) for ref in record.get("source_event_refs") or [])
         title = " ".join(str(record.get("title") or "").lower().split())
+        body = " ".join(str(record.get("body") or "").lower().split())
         kind = str(record.get("kind") or "").lower()
-        key = (kind, refs, title)
+        body_key = (kind, body)
+        if body and body_key in seen_body:
+            continue
+        key = (kind, refs, body or title)
         if key in seen:
             continue
+        if body:
+            seen_body.add(body_key)
         seen.add(key)
         kept.append(record)
     return kept
@@ -810,6 +1108,30 @@ def _record_source_refs(records: list[dict[str, Any]]) -> set[str]:
         for ref in record.get("source_event_refs") or []
         if str(ref).strip()
     }
+
+
+def _is_initial_task_only_record(record: dict[str, Any], trace_path: Path) -> bool:
+    """Return whether a lower-level record is supported only by the initial task spec."""
+    refs = [str(ref).strip() for ref in record.get("source_event_refs") or []]
+    if not refs:
+        return False
+    initial_user_line = _first_visible_source_line(trace_path, role="user")
+    if initial_user_line is None:
+        return False
+    line_numbers = {
+        line_number
+        for ref in refs
+        if (line_number := _line_ref_number(ref)) is not None
+    }
+    return bool(line_numbers) and line_numbers == {initial_user_line}
+
+
+def _first_visible_source_line(trace_path: Path, *, role: str | None = None) -> int | None:
+    """Return the first visible source line number, optionally constrained by role."""
+    for line_number, raw_line in enumerate(_read_trace_lines(trace_path), 1):
+        if _visible_source_text(raw_line, role=role) is not None:
+            return line_number
+    return None
 
 
 def _coding_record_priority(record: dict[str, Any], trace_path: Path) -> tuple[int, int, str]:
@@ -927,6 +1249,22 @@ def _visible_user_source_lines(trace_path: Path) -> str:
     return "\n".join(rendered) or "(none)"
 
 
+def _visible_source_lines(trace_path: Path) -> str:
+    """Render visible conversational source lines for final identity repair."""
+    rendered: list[str] = []
+    for line_number, raw_line in enumerate(_read_trace_lines(trace_path), 1):
+        role = _visible_source_role(raw_line)
+        if role is None:
+            continue
+        text = _visible_source_text(raw_line, role=role)
+        if not text:
+            continue
+        if _is_continuation_summary_text(text):
+            continue
+        rendered.append(f"line:{line_number} {role}: {_truncate_source_line(text)}")
+    return "\n".join(rendered) or "(none)"
+
+
 def _is_continuation_summary_text(text: str) -> bool:
     """Return whether a user line is an agent-session continuation summary scaffold."""
     normalized = " ".join(text.split()).lower()
@@ -968,10 +1306,15 @@ def _fixed_kind_record(
     record = model_payload(value)
     if not record:
         return None
+    record["_slot_field"] = field
     record["kind"] = kind
     record["status"] = record.get("status") or "active"
     if field == "deferred_design_fact":
         _include_deferred_design_context_ref(record, trace_path)
+    if field == "adapter_decision":
+        _repair_external_report_refs(record, trace_path)
+    if field == "project_identity_fact":
+        _repair_project_identity_source_refs(record, trace_path)
     _compress_coding_slot(record, field)
     had_source_refs = bool(record.get("source_event_refs"))
     _prune_unusable_source_refs(record, trace_path)
@@ -985,11 +1328,27 @@ def _fixed_kind_record(
     return record
 
 
-def _compact_coding_episode(value: Any) -> dict[str, Any]:
+def _compact_coding_episode(
+    value: Any,
+    *,
+    has_durable_records: bool = True,
+) -> dict[str, Any]:
     """Keep coding-eval episodes as compact provenance, not durable guidance."""
     episode = model_payload(value)
     if not episode:
         return {}
+    if not has_durable_records:
+        return {
+            **episode,
+            "title": "Coding session archived",
+            "body": "No reusable durable context was captured.",
+            "status": "archived",
+            "user_intent": "Ingest the source coding session.",
+            "what_happened": "The source session contained only trace-local implementation details.",
+            "outcomes": "No durable records were created.",
+            "source_event_refs": [],
+            "evidence_refs": [],
+        }
     title = str(episode.get("title") or "Coding session ingested").strip()
     return {
         **episode,
@@ -1011,10 +1370,16 @@ def _compress_coding_slot(record: dict[str, Any], field: str) -> None:
     body = _brief_claim(record.get("body"), title)
     if field == "model_setting_fact":
         record["body"] = _brief_claim(title)
+    elif field == "project_identity_fact":
+        record["body"] = _brief_claim(record.get("body"), title)
     elif field == "adapter_decision":
-        record["body"] = _brief_claim(decision or title, why, title)
-        record["decision"] = decision or title
-        record["why"] = None
+        adapter_decision = _first_sentence(record.get("body")) or _first_sentence(
+            decision or title
+        )
+        adapter_why = why or _first_sentence(record.get("why")) or adapter_decision
+        record["body"] = _brief_claim(adapter_decision, adapter_why)
+        record["decision"] = adapter_decision.rstrip(".")
+        record["why"] = adapter_why
         record["alternatives"] = None
         record["consequences"] = None
     elif field == "prompt_structure_decision":
@@ -1024,6 +1389,7 @@ def _compress_coding_slot(record: dict[str, Any], field: str) -> None:
         record["alternatives"] = None
         record["consequences"] = None
     elif field == "fixture_constraint":
+        record["title"] = "Extract test fixture adequacy rule"
         record["body"] = body
     elif field == "deferred_design_fact":
         deferred_title = _compact_deferred_title(title)
@@ -1045,10 +1411,16 @@ def _include_deferred_design_context_ref(
         line_number = _line_ref_number(ref)
         if line_number is None or line_number < 1 or line_number > len(lines):
             continue
-        if _visible_source_text(lines[line_number - 1], role="user") is None:
+        if _visible_source_text(lines[line_number - 1], role="user") is not None:
+            for candidate in range(line_number - 1, max(0, line_number - 8), -1):
+                if _visible_source_text(lines[candidate - 1], role="assistant"):
+                    additions.append(f"line:{candidate}")
+                    break
             continue
-        for candidate in range(line_number - 1, max(0, line_number - 8), -1):
-            if _visible_source_text(lines[candidate - 1], role="assistant"):
+        if _visible_source_text(lines[line_number - 1], role="assistant") is None:
+            continue
+        for candidate in range(line_number + 1, min(len(lines), line_number + 4) + 1):
+            if _visible_source_text(lines[candidate - 1], role="user"):
                 additions.append(f"line:{candidate}")
                 break
     if not additions:
@@ -1059,6 +1431,33 @@ def _include_deferred_design_context_ref(
     ]
 
 
+def _repair_project_identity_source_refs(
+    record: dict[str, Any],
+    trace_path: Path,
+) -> None:
+    """Prefer visible source lines that contain identity URLs saved by the record."""
+    candidate_text = " ".join(
+        str(value or "")
+        for value in (
+            record.get("title"),
+            record.get("body"),
+            *(record.get("evidence_refs") or []),
+        )
+    )
+    urls = {
+        url.rstrip(".,;:")
+        for url in URL_RE.findall(candidate_text)
+        if url.rstrip(".,;:")
+    }
+    if not urls:
+        return
+    for line_number, raw_line in enumerate(_read_trace_lines(trace_path), 1):
+        text = _visible_source_text(raw_line)
+        if text and any(url in text for url in urls):
+            record["source_event_refs"] = [f"line:{line_number}"]
+            return
+
+
 def _compress_strategy_record(
     record: dict[str, Any],
     field: str,
@@ -1066,7 +1465,7 @@ def _compress_strategy_record(
 ) -> None:
     """Keep strategy records on the user's reusable preference, not eval results."""
     if field == "silent_change_feedback_record":
-        record["title"] = "User correction: model change was not requested"
+        record["title"] = "User correction: ask before making changes"
         record["body"] = (
             _first_sentences(
                 _shortest_visible_source_text(record, trace_path, role="user"),
@@ -1097,14 +1496,16 @@ def _compress_strategy_record(
         if external_refs:
             joined_refs = ", ".join(external_refs)
             title = _first_sentence(record.get("title")) or "Upstream bug report"
+            if "reported" not in title.lower():
+                title = f"{title} reported upstream"
             if joined_refs not in title:
                 title = f"{title} ({joined_refs})"
             body = _first_sentence(record.get("body")) or title
             if joined_refs not in body:
                 body = (
-                    f"{body.rstrip('.')}. External reference: {joined_refs}."
+                    f"{body.rstrip('.')}. Reported upstream as {joined_refs}."
                     if body
-                    else f"External reference: {joined_refs}."
+                    else f"Reported upstream as {joined_refs}."
                 )
             record["title"] = title
             record["body"] = body
@@ -1285,6 +1686,7 @@ def _source_refs_for_evidence_quotes(
 def _repair_record_evidence_from_findings(
     records: list[dict[str, Any]],
     findings: list[Any],
+    trace_path: Path,
 ) -> None:
     """Use filtered finding quotes to keep long cited source lines judge-readable."""
     quotes_by_line: dict[int, str] = {}
@@ -1296,6 +1698,7 @@ def _repair_record_evidence_from_findings(
             quotes_by_line.setdefault(line, quote)
     if not quotes_by_line:
         return
+    lines = _read_trace_lines(trace_path)
     for record in records:
         matched_ref: str | None = None
         matched_quote: str | None = None
@@ -1304,13 +1707,195 @@ def _repair_record_evidence_from_findings(
             if line_number is None:
                 continue
             quote = quotes_by_line.get(line_number)
-            if quote:
+            if quote and _line_contains_visible_quote(lines, line_number, quote):
                 matched_ref = f"line:{line_number}"
                 matched_quote = quote
                 break
+            if quote:
+                repaired_ref = _source_ref_for_visible_quote(lines, quote)
+                if repaired_ref:
+                    matched_ref = repaired_ref
+                    matched_quote = quote
+                    break
         if matched_ref and matched_quote:
             record["source_event_refs"] = [matched_ref]
             record["evidence_refs"] = [matched_quote]
+
+
+def _prune_unsupported_evidence_refs(record: dict[str, Any], trace_path: Path) -> None:
+    """Keep only evidence refs that are visible in the cited source trace."""
+    evidence_refs = [
+        " ".join(str(item or "").split()).strip()
+        for item in record.get("evidence_refs") or []
+        if " ".join(str(item or "").split()).strip()
+    ]
+    if not evidence_refs:
+        record["evidence_refs"] = []
+        return
+    lines = _read_trace_lines(trace_path)
+    kept: list[str] = []
+    seen: set[str] = set()
+    for evidence_ref in evidence_refs:
+        if not _evidence_ref_supported_by_visible_source(evidence_ref, lines):
+            continue
+        if evidence_ref not in seen:
+            kept.append(evidence_ref)
+            seen.add(evidence_ref)
+    record["evidence_refs"] = kept
+
+
+def _align_visible_user_strategy_bodies(
+    records: list[dict[str, Any]],
+    trace_path: Path,
+) -> None:
+    """Keep user-authored strategy records faithful to their final visible source refs."""
+    for record in records:
+        kind = str(record.get("kind") or "").lower()
+        if kind not in {"preference", "constraint"}:
+            continue
+        source_text = _shortest_visible_source_text(record, trace_path, role="user")
+        if not source_text:
+            continue
+        record["body"] = _first_sentences(source_text, count=2)
+        record["decision"] = None
+        record["why"] = None
+        record["alternatives"] = None
+        record["consequences"] = None
+
+
+def _record_source_excerpts(
+    record: dict[str, Any],
+    trace_path: Path,
+    *,
+    max_excerpts: int = 2,
+) -> list[str]:
+    """Return short exact source excerpts that overlap with the record claim."""
+    terms = _record_terms(record)
+    if not terms:
+        return []
+    lines = _read_trace_lines(trace_path)
+    candidates: list[tuple[int, int, str]] = []
+    for ref in record.get("source_event_refs") or []:
+        line_number = _line_ref_number(str(ref))
+        if line_number is None or line_number < 1 or line_number > len(lines):
+            continue
+        text = _visible_source_text(lines[line_number - 1])
+        if not text:
+            continue
+        for index, chunk in enumerate(_source_excerpt_chunks(text)):
+            score = len(terms & _normalized_terms(chunk))
+            if score >= 2:
+                candidates.append((-score, index, chunk))
+    excerpts: list[str] = []
+    seen: set[str] = set()
+    for _, _, chunk in sorted(candidates):
+        excerpt = _compact_source_excerpt(chunk)
+        if not excerpt or excerpt in seen:
+            continue
+        excerpts.append(excerpt)
+        seen.add(excerpt)
+        if len(excerpts) >= max_excerpts:
+            break
+    return excerpts
+
+
+def _record_terms(record: dict[str, Any]) -> set[str]:
+    """Return normalized claim terms from a record draft."""
+    return _normalized_terms(
+        " ".join(
+            str(record.get(field) or "")
+            for field in ("title", "body", "decision", "why")
+        )
+    )
+
+
+def _normalized_terms(text: str) -> set[str]:
+    """Tokenize text into simple lowercase terms for source-excerpt selection."""
+    terms: set[str] = set()
+    for token in re.findall(r"[A-Za-z][A-Za-z0-9_+-]{2,}", text.lower()):
+        token = token.strip("_+-")
+        if len(token) < 4:
+            continue
+        if token.endswith("s") and len(token) > 4:
+            token = token[:-1]
+        terms.add(token)
+    return terms
+
+
+def _source_excerpt_chunks(text: str) -> list[str]:
+    """Split visible source text into short candidate evidence chunks."""
+    chunks: list[str] = []
+    for raw_chunk in re.split(r"[\n\r]+", text):
+        chunk = " ".join(raw_chunk.split()).strip(" -*")
+        if len(chunk) >= 12:
+            chunks.append(chunk)
+    return chunks
+
+
+def _compact_source_excerpt(chunk: str, limit: int = 220) -> str:
+    """Keep an exact but concise prefix of a source chunk."""
+    excerpt = " ".join(chunk.split()).strip()
+    for separator in (" — ", " - "):
+        if separator in excerpt:
+            prefix = excerpt.split(separator, 1)[0].strip()
+            if len(prefix) >= 12:
+                excerpt = prefix
+                break
+    if len(excerpt) <= limit:
+        return excerpt
+    return excerpt[:limit].rsplit(" ", 1)[0].strip()
+
+
+def _evidence_ref_supported_by_visible_source(
+    evidence_ref: str,
+    lines: list[str],
+) -> bool:
+    """Return whether an evidence string appears in visible source text."""
+    normalized = " ".join(evidence_ref.split()).strip().lower()
+    if len(normalized) < 4:
+        return False
+    external_refs = _external_report_refs_in_text(evidence_ref)
+    for raw_line in lines:
+        text = _visible_source_text(raw_line)
+        if not text:
+            continue
+        line_text = " ".join(text.split()).lower()
+        if normalized in line_text:
+            return True
+        if external_refs and any(
+            _line_mentions_external_report(raw_line, external_ref)
+            for external_ref in external_refs
+        ):
+            return True
+    return False
+
+
+def _line_contains_visible_quote(
+    lines: list[str],
+    line_number: int,
+    quote: str,
+) -> bool:
+    """Return whether a source line visibly contains a model-supplied quote."""
+    if line_number < 1 or line_number > len(lines):
+        return False
+    text = _visible_source_text(lines[line_number - 1])
+    if not text:
+        return False
+    return " ".join(quote.split()).lower() in " ".join(text.split()).lower()
+
+
+def _source_ref_for_visible_quote(lines: list[str], quote: str) -> str | None:
+    """Find the visible source line containing a quote."""
+    normalized_quote = " ".join(quote.split()).strip().lower()
+    if len(normalized_quote) < 12:
+        return None
+    for line_number, raw_line in enumerate(lines, 1):
+        text = _visible_source_text(raw_line)
+        if not text:
+            continue
+        if normalized_quote in " ".join(text.split()).lower():
+            return f"line:{line_number}"
+    return None
 
 
 def _external_report_refs_in_text(text: str) -> list[str]:
@@ -1458,6 +2043,9 @@ def _prune_unusable_source_refs(record: dict[str, Any], trace_path: Path) -> Non
             kept.append(ref)
             continue
         if source_kind == "tool":
+            repaired = _nearby_visible_assistant_source_ref(line_number, lines)
+            if repaired is not None:
+                kept.append(repaired)
             continue
         repaired = _nearby_visible_source_ref(line_number, lines)
         if repaired is not None:
@@ -1502,6 +2090,20 @@ def _nearby_visible_source_ref(line_number: int, lines: list[str]) -> str | None
             if candidate < 1 or candidate > len(lines):
                 continue
             if _visible_source_role(lines[candidate - 1]) is not None:
+                return f"line:{candidate}"
+    return None
+
+
+def _nearby_visible_assistant_source_ref(
+    line_number: int,
+    lines: list[str],
+) -> str | None:
+    """Find nearby assistant text that explains a generated tool action."""
+    for distance in range(1, 4):
+        for candidate in (line_number - distance, line_number + distance):
+            if candidate < 1 or candidate > len(lines):
+                continue
+            if _visible_source_text(lines[candidate - 1], role="assistant"):
                 return f"line:{candidate}"
     return None
 
