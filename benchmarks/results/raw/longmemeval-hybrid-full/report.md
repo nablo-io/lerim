@@ -1,6 +1,6 @@
 # Lerim LongMemEval-S Retrieval-Only Benchmark
 
-- Generated: `2026-05-20T08:11:31.375530+00:00`
+- Generated: `2026-05-20T08:24:54.331388+00:00`
 - Command: `benchmarks/lerim_evidence/longmemeval.py --retrieval-mode hybrid --local-files-only --output-dir benchmarks/results/raw/longmemeval-hybrid-full`
 - Retrieval mode: `hybrid`
 - Dataset: `xiaowu0162/longmemeval-cleaned/longmemeval_s_cleaned.json`
@@ -20,9 +20,9 @@
 | Recall any @ 20 | 99.6% |
 | NDCG @ 10 | 88.4% |
 | MRR | 88.1% |
-| Retrieval p50 | 8.14 ms |
-| Retrieval p95 | 9.37 ms |
-| Indexing p50 | 1526.66 ms |
+| Retrieval p50 | 7.98 ms |
+| Retrieval p95 | 9.06 ms |
+| Indexing p50 | 1505.91 ms |
 
 ## By Question Type
 
