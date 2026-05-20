@@ -27,8 +27,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--tag",
-        default=os.getenv("GITHUB_REF_NAME"),
-        help="Release tag such as v0.3.0. Defaults to GITHUB_REF_NAME.",
+        help=(
+            "Release tag such as v0.3.0. When neither --tag nor --version is "
+            "provided, defaults to GITHUB_REF_NAME if it looks like a release tag."
+        ),
     )
     parser.add_argument(
         "--version",
@@ -62,6 +64,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Timeout in seconds for the PyPI duplicate-release check.",
     )
     return parser.parse_args(argv)
+
+
+def default_release_tag() -> str | None:
+    """Return the GitHub tag ref when the current ref is a release tag."""
+    ref_name = os.getenv("GITHUB_REF_NAME")
+    if ref_name and ref_name.startswith("v"):
+        return ref_name
+    return None
 
 
 def tag_to_version(tag: str) -> str:
@@ -180,7 +190,10 @@ def highest_pypi_final_version(package_name: str, timeout_seconds: float) -> str
 
 def validate_release(args: argparse.Namespace) -> str:
     """Validate release metadata and return the accepted version."""
-    expected_version = expected_release_version(args.tag, args.version)
+    tag = args.tag
+    if tag is None and args.version is None:
+        tag = default_release_tag()
+    expected_version = expected_release_version(tag, args.version)
     metadata = project_metadata(args.pyproject)
     package_version = metadata["version"]
     if package_version != expected_version:
