@@ -1,6 +1,6 @@
 # Lerim Trace Ingestion Cost/Performance Benchmark
 
-- Generated: `2026-05-19T23:32:36.351190+00:00`
+- Generated: `2026-05-20T09:08:12.236102+00:00`
 - Command: `benchmarks/lerim_evidence/trace_ingestion_cost_performance.py --limit 3 --output-dir benchmarks/results/raw/trace-ingestion-cost-longmemeval-s-sample`
 - Dataset snapshot: `98d7416c24c778c2fee6e6f3006e7a073259d48f`
 - Source profile: `support`
@@ -12,8 +12,8 @@
 | Metric | Value |
 | --- | ---: |
 | Passed traces | 3 / 3 |
-| Avg ingestion time | 62185.4 ms |
-| p95 ingestion time | 71501.9 ms |
+| Avg ingestion time | 106303.6 ms |
+| p95 ingestion time | 118911.5 ms |
 | Avg LLM calls per trace | 5.0 |
 | Total LLM calls | 15 |
 | Avg DB growth per trace | 581,632 bytes |

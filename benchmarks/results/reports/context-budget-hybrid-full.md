@@ -1,6 +1,6 @@
 # Lerim Context Budget Benchmark
 
-- Generated: `2026-05-19T07:31:56.288860+00:00`
+- Generated: `2026-05-20T08:58:35.954343+00:00`
 - Command: `benchmarks/scripts/run_context_budget_full.py --local-files-only --progress-every 25 --output-dir benchmarks/results/raw/context-budget-hybrid-full`
 - Dataset snapshot: `98d7416c24c778c2fee6e6f3006e7a073259d48f`
 - Questions evaluated: `500`
@@ -12,11 +12,11 @@
 
 | Window | Avg selected tokens | Avg tokens reduced | Avg reduction | Recall any |
 |---|---:|---:|---:|---:|
-| Top 1 | 2985 | 107342 | 97.3% | 82.2% |
-| Top 3 | 8810 | 101516 | 92.0% | 93.4% |
-| Top 5 | 14217 | 96109 | 87.1% | 96.4% |
-| Top 10 | 27346 | 82981 | 75.2% | 98.6% |
-| Top 20 | 52583 | 57744 | 52.3% | 99.4% |
+| Top 1 | 2984 | 107343 | 97.3% | 81.8% |
+| Top 3 | 8814 | 101512 | 92.0% | 93.0% |
+| Top 5 | 14260 | 96067 | 87.1% | 96.2% |
+| Top 10 | 27304 | 83023 | 75.3% | 98.6% |
+| Top 20 | 52561 | 57765 | 52.4% | 99.6% |
 
 ## Methodology Notes
 

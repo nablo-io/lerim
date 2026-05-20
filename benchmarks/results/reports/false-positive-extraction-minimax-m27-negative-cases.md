@@ -1,12 +1,12 @@
 # Lerim False-Positive Extraction Diagnostic
 
-- Generated: `2026-05-20T04:12:26.145634+00:00`
+- Generated: `2026-05-20T09:09:06.465895+00:00`
 - Command: `benchmarks/lerim_evidence/false_positive_extraction.py --source-report '<private-source-report>' --output-dir benchmarks/results/raw/false-positive-extraction-minimax-m27-negative-cases`
 - Source artifact: `private first-party extraction eval artifact`
 - Source visibility: `private`
-- Source digest: `b933d8037ca3068f3c771ed05366f255f42fd6a94e03069d94d3e77b1bd18ffc`
+- Source digest: `db0bb32710b439a4de86fd185f15d4fabea80a97fdfc02092ebc76411e782e16`
 - Agent model: `minimax / MiniMax-M2.7`
-- Judge model: `MiniMax-M2.7`
+- Judge model: `MiniMax-M2.5`
 - Source cases: `47`
 - Negative cases: `14`
 - Aggregate-only public artifact: `True`
@@ -17,13 +17,13 @@
 | Metric | Result |
 |---|---:|
 | Negative cases | 14 |
-| No-durable cases | 5 |
-| False-positive cases | 9 |
-| Negative precision | 35.71% |
-| False-positive case rate | 64.29% |
-| Durable records on negative cases | 52 |
-| Forbidden-concept score average | 82.80% |
-| Signal-filtering score average | 21.43% |
+| No-durable cases | 4 |
+| False-positive cases | 10 |
+| Negative precision | 28.57% |
+| False-positive case rate | 71.43% |
+| Durable records on negative cases | 65 |
+| Forbidden-concept score average | 74.05% |
+| Signal-filtering score average | 28.57% |
 
 ## Dataset Slice
 

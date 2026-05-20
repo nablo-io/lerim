@@ -1,20 +1,20 @@
 # Lerim MCP Integration Benchmark
 
-- Generated: `2026-05-19T10:41:46.832985+00:00`
+- Generated: `2026-05-20T09:00:41.436388+00:00`
 - Command: `benchmarks/lerim_evidence/integration.py --include-real-doctor --include-installed-client-probes --include-stdio-trace-submit-extraction --stdio-extraction-timeout-seconds 300 --output-dir benchmarks/results/raw/mcp-integration-full`
 - Mode: `local-integration`
-- Overall status: `pass`
+- Overall status: `fail`
 - Known MCP targets: `15`
 - Config targets checked: `15`
 - Config probe pass/fail: `15` / `0`
 - Stdio tools-list pass/fail: `1` / `0`
-- Stdio context tool-call pass/fail: `1` / `0`
-- Local context tool-call acceptances: `1`
-- Stdio trace-submit pass/fail: `2` / `0`
+- Stdio context tool-call pass/fail: `0` / `1`
+- Local context tool-call acceptances: `0`
+- Stdio trace-submit pass/fail: `1` / `1`
 - Trace-submit idempotency acceptances: `1`
-- Trace-submit extraction acceptances: `1`
+- Trace-submit extraction acceptances: `0`
 - Real config validation probes: `15`
-- Real config validation statuses: `{'pass': 14, 'skip': 1}`
+- Real config validation statuses: `{'skip': 15}`
 - Installed client probes: `4`
 - Installed client statuses: `{'pass': 4}`
 - Installed client connection acceptances: `3`
@@ -26,16 +26,16 @@
 
 ## Acceptance Boundary
 
-- Temporary config fixtures exercise Lerim writer and validation code paths but do not prove a real agent is installed or can launch Lerim.
+- Temporary config fixtures exercise Lerim writer and validation code paths but do not prove an agent is installed or can launch Lerim.
 - The stdio tools-list probe starts Lerim's MCP server directly and lists tools; it does not prove every external MCP client can launch the command.
 - The stdio context tool-call probe calls lerim_context_brief through the MCP protocol and proves Lerim's local tool path; it does not prove an external client selected the tool.
 - The default stdio trace-submit probe calls lerim_trace_submit through the MCP protocol on an idempotent duplicate trace; it proves submission and normalization plumbing but not LLM extraction quality.
 - The opt-in stdio trace-submit extraction probe calls the same MCP tool on a synthetic submitted trace and requires BAML/LangGraph extraction to create one episode record plus at least one durable record.
+- The opt-in stdio trace-submit extraction probe uses a synthetic submitted trace fixture; the MCP submission and BAML/LangGraph extraction path are real, but this is not organic client-session evidence.
 - Installed-client MCP CLI probes prove client config/connection visibility only; they do not prove context tool-call behavior unless a client actually calls lerim_context_brief.
+- Public artifacts preserve aggregate installed-client counts and statuses but omit per-machine installed-client inventory from detail rows.
 - Live client tool-call probes may spend model/subscription credits and are skipped unless explicitly enabled.
 - Installed-agent context tool-call acceptance still needs an installed-client invocation of lerim_context_brief.
-- The opt-in stdio trace-submit extraction probe uses a synthetic submitted trace fixture; the MCP submission and BAML/LangGraph extraction path are real, but this is not organic client-session evidence.
-- Public artifacts preserve aggregate installed-client counts and statuses but omit per-machine installed-client inventory from detail rows.
 
 ## Target Config Probes
 
@@ -66,12 +66,12 @@
 
 ## MCP Stdio Context Tool Call
 
-- Status: `pass`
+- Status: `fail`
 - Command: `<python-executable> -m lerim.mcp_server`
 - Tool: `lerim_context_brief`
 - Project: `<configured benchmark project>`
-- Availability: `stale`
-- Content chars returned: `1013`
+- Availability: `None`
+- Content chars returned: `0`
 
 ## MCP Stdio Trace Submit
 
@@ -87,22 +87,22 @@
 - Extraction acceptance: `False`
 - Input trace: `not declared`
 
-- Status: `pass`
+- Status: `fail`
 - Probe: `stdio_mcp_trace_submit_extraction`
 - Command: `<python-executable> -m lerim.mcp_server`
 - Tool: `lerim_trace_submit`
 - Result status: `ingested`
-- Session id: `mcp-trace-submit-extraction-20260519t104028z`
-- Scope type: `domain`
-- Records created: `2`
-- Durable records: `1`
-- Extraction acceptance: `True`
+- Session id: `None`
+- Scope type: `None`
+- Records created: `0`
+- Durable records: `0`
+- Extraction acceptance: `False`
 - Input trace: `synthetic_protocol_acceptance_trace`
 
 ## Installed Config Doctor Probe Summary
 
 - Probe count: `15`
-- Status counts: `{'pass': 14, 'skip': 1}`
+- Status counts: `{'skip': 15}`
 - Per-client local inventory is omitted from the public Markdown report.
 
 ## Installed Client MCP CLI Probe Summary
@@ -111,3 +111,8 @@
 - Status counts: `{'pass': 4}`
 - Connection acceptances: `3`
 - Per-client local inventory is omitted from the public Markdown report.
+
+## Failures
+
+- `stdio_mcp_context_brief_call` / `lerim-mcp-stdio`:
+- `stdio_mcp_trace_submit_extraction` / `lerim-mcp-stdio`:
