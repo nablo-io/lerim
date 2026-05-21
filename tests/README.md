@@ -127,6 +127,7 @@ Rules:
 - curate unit tests cover semantic clustering, action validation, and direct `ContextStore` mutation application
 - session catalog tests cover queue claim availability, content-hash refresh/change detection, and stable pagination ordering
 - API/daemon tests cover degraded status reporting when the session catalog is unavailable
+- server Docker compose tests cover GHCR startup, local build source-root resolution, and generated compose hardening
 - daemon tests cover transient session-job heartbeat write failures
 - session catalog tests cover process-local active-job leases that avoid false stale queue health during transient heartbeat write failures
 - daemon ingest tests cover one-at-a-time job claiming to avoid false stale-running queue state

@@ -59,14 +59,30 @@ def docker_available() -> bool:
         return False
 
 
-def _find_package_root() -> Path | None:
-    """Locate the Lerim source tree root by walking up from this file."""
-    candidate = Path(__file__).resolve().parent
+def _is_source_tree_root(path: Path) -> bool:
+    """Return True when *path* looks like the Lerim source checkout root."""
+    return (
+        (path / "Dockerfile").is_file()
+        and (path / "pyproject.toml").is_file()
+        and (path / "src" / "lerim").is_dir()
+    )
+
+
+def _find_source_tree_root(start: Path) -> Path | None:
+    """Locate the Lerim source checkout root by walking up from *start*."""
+    candidate = start.resolve()
+    if candidate.is_file():
+        candidate = candidate.parent
     for _ in range(5):
-        if (candidate / "Dockerfile").is_file():
+        if _is_source_tree_root(candidate):
             return candidate
         candidate = candidate.parent
     return None
+
+
+def _find_package_root() -> Path | None:
+    """Locate the local Lerim source tree for Docker builds."""
+    return _find_source_tree_root(Path.cwd()) or _find_source_tree_root(Path(__file__))
 
 
 def _generate_compose_yml(build_local: bool = False) -> str:

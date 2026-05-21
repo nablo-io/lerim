@@ -18,6 +18,7 @@ from lerim.server.docker_runtime import (
     GHCR_IMAGE,
     LOCAL_IMAGE,
     RUNTIME_SOURCE_ENV,
+    _find_package_root,
     _generate_compose_yml,
     api_up,
 )
@@ -50,6 +51,21 @@ def test_build_local_uses_build_directive(monkeypatch: pytest.MonkeyPatch) -> No
     assert f"image: {LOCAL_IMAGE}" in content
     assert f"build: {fake_root}" in content
     assert f"{RUNTIME_SOURCE_ENV}=local-build" in content
+
+
+def test_find_package_root_prefers_current_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Local builds should work when an installed CLI is run from a checkout."""
+    checkout = tmp_path / "lerim-cli"
+    nested = checkout / "docs"
+    (checkout / "src" / "lerim").mkdir(parents=True)
+    nested.mkdir()
+    (checkout / "Dockerfile").write_text("FROM python:3.12-slim\n", encoding="utf-8")
+    (checkout / "pyproject.toml").write_text("[project]\nname='lerim'\n", encoding="utf-8")
+    monkeypatch.chdir(nested)
+
+    assert _find_package_root() == checkout
 
 
 def test_dockerignore_excludes_private_and_generated_paths() -> None:
