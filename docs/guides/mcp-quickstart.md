@@ -64,6 +64,33 @@ For OpenCode, Lerim writes the client-specific top-level `mcp` shape. For Codex,
 
 Lerim does not expose broad `memory_save` as the primary interface. Completed sessions should go through `lerim_trace_submit`, then Lerim decides which evidence-backed context records are worth keeping.
 
+MCP does not automatically import the client history. It gives the client tools:
+read tools retrieve already-extracted context, and `lerim_trace_submit` imports
+one completed session when the client or harness explicitly calls it.
+
+Pass an explicit scope when submitting traces. For repo work:
+
+```json
+{
+  "source_name": "openclaw",
+  "source_profile": "coding",
+  "scope_type": "project",
+  "scope": "/absolute/path/to/repo"
+}
+```
+
+For support, research, or operations workflows, prefer a domain or workspace
+scope:
+
+```json
+{
+  "source_name": "support-agent",
+  "source_profile": "support",
+  "scope_type": "domain",
+  "scope": "support-ops"
+}
+```
+
 If a submitted trace is saved but extraction fails, inspect and retry it from
 the CLI:
 

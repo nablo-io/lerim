@@ -67,3 +67,24 @@ def test_multi_platform_validation_matches_docker_push_platforms() -> None:
     assert validate_with["platforms"] == push_with["platforms"]
     assert "latest" in validate_with["tags"]
     assert "latest" in push_with["tags"]
+
+
+def test_docker_release_uses_renamed_ghcr_package() -> None:
+    """Release images should publish under the renamed repository package."""
+    jobs = _jobs()
+    validate_step = _job_step(
+        jobs["docker-multi-platform-build"],
+        "Build release Docker image without publishing",
+    )
+    push_step = _job_step(jobs["docker-push"], "Build and push Docker image")
+
+    tags = "\n".join(
+        [
+            str(validate_step["with"]["tags"]),
+            str(push_step["with"]["tags"]),
+        ]
+    )
+
+    old_package = "ghcr.io/lerim-dev/" + "lerim-cli:"
+    assert "ghcr.io/lerim-dev/lerim:" in tags
+    assert old_package not in tags

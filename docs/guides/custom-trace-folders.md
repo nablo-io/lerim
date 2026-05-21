@@ -10,6 +10,10 @@ The boundary is intentionally simple:
 - Lerim scans the folder as one project with type `custom`.
 - Lerim does not compact, rewrite, normalize, or clean custom traces.
 
+<p align="center">
+  <img src="../assets/lerim-custom-trace-folder.svg" alt="Clean custom traces flowing into Lerim context records" width="860">
+</p>
+
 ## User Journey
 
 1. Export raw traces from your agent, ticket workflow, research workflow, or

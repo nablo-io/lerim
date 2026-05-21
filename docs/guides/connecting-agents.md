@@ -63,6 +63,13 @@ lerim connect openhuman --mode mcp
 Every real write creates a timestamped backup when the target config already
 exists.
 
+MCP config is the retrieval and explicit-submit path. By itself, it does not
+make Lerim scan that agent's local history. A connected MCP client can read
+stored context with `lerim_context_brief`, `lerim_context_search`,
+`lerim_context_answer`, or `lerim_records_list`. It can add a completed run to
+Lerim only if it calls `lerim_trace_submit` with the completed transcript and
+scope metadata.
+
 ## Check Connections
 
 ```bash
@@ -87,3 +94,8 @@ lerim ingest --agent custom
 Add `--source-profile <id>` when that folder should extract through a bundled
 or custom profile. See [Custom Trace Folders](custom-trace-folders.md) and
 [Customize Lerim For Your Use Case](custom-source-profiles.md).
+
+Do not register raw vendor logs directly unless they already match Lerim's
+canonical JSONL schema. The cleaner/exporter is the adapter for unsupported
+agents, and it owns redaction, structure mapping, and retention before Lerim
+extracts durable context.

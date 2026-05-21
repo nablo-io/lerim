@@ -11,9 +11,9 @@
 <p align="center">
   <a href="https://pypi.org/project/lerim/"><img src="https://img.shields.io/pypi/v/lerim?style=flat-square&color=245f46" alt="PyPI version"></a>
   <a href="https://pypi.org/project/lerim/"><img src="https://img.shields.io/badge/python-3.11%2B-3776AB?style=flat-square" alt="Python 3.11+"></a>
-  <a href="https://github.com/lerim-dev/lerim-cli/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" alt="License"></a>
-  <a href="https://github.com/lerim-dev/lerim-cli/actions"><img src="https://img.shields.io/github/actions/workflow/status/lerim-dev/lerim-cli/ci.yml?style=flat-square&label=tests" alt="Tests"></a>
-  <a href="https://github.com/lerim-dev/lerim-cli"><img src="https://img.shields.io/github/stars/lerim-dev/lerim-cli?style=flat-square" alt="GitHub stars"></a>
+  <a href="https://github.com/lerim-dev/lerim/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" alt="License"></a>
+  <a href="https://github.com/lerim-dev/lerim/actions"><img src="https://img.shields.io/github/actions/workflow/status/lerim-dev/lerim/ci.yml?style=flat-square&label=tests" alt="Tests"></a>
+  <a href="https://github.com/lerim-dev/lerim"><img src="https://img.shields.io/github/stars/lerim-dev/lerim?style=flat-square" alt="GitHub stars"></a>
 </p>
 
 <p align="center">
@@ -27,7 +27,7 @@
   ·
   <a href="https://pypi.org/project/lerim/">PyPI</a>
   ·
-  <a href="https://github.com/lerim-dev/lerim-cli/blob/main/LICENSE">License</a>
+  <a href="https://github.com/lerim-dev/lerim/blob/main/LICENSE">License</a>
 </p>
 
 <p align="center">
@@ -170,7 +170,7 @@ flowchart LR
 Lerim has two integration layers:
 
 - **Native trace adapters** read completed local sessions and feed Lerim's compiler.
-- **MCP support** lets compatible agents query Lerim context and submit completed sessions through `lerim_trace_submit`.
+- **MCP support** lets compatible agents query Lerim context and explicitly submit completed sessions through `lerim_trace_submit`; it is not automatic local-history capture.
 
 | Support level | Agents and sources |
 | --- | --- |
@@ -409,5 +409,5 @@ Good starting points include:
 Helpful links:
 
 - [Contributing Guide](https://docs.lerim.dev/contributing/getting-started/)
-- [Open issues](https://github.com/lerim-dev/lerim-cli/issues)
+- [Open issues](https://github.com/lerim-dev/lerim/issues)
 - Trace-source adapter examples: `src/lerim/adapters/`

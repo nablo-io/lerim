@@ -37,6 +37,7 @@ def _isolate_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 def test_default_compose_uses_ghcr_image() -> None:
     """Default compose (build_local=False) emits an image directive with GHCR."""
     content = _generate_compose_yml(build_local=False)
+    assert GHCR_IMAGE == "ghcr.io/lerim-dev/lerim"
     assert f"image: {GHCR_IMAGE}:" in content
     assert "build:" not in content
 

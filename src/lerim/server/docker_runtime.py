@@ -20,7 +20,7 @@ from lerim.config.settings import (
 
 
 COMPOSE_PATH = get_global_data_dir_path() / "docker-compose.yml"
-GHCR_IMAGE = "ghcr.io/lerim-dev/lerim-cli"
+GHCR_IMAGE = "ghcr.io/lerim-dev/lerim"
 LOCAL_IMAGE = "lerim-lerim:local"
 RUNTIME_SOURCE_ENV = "LERIM_RUNTIME_SOURCE"
 RUNTIME_IMAGE_ENV = "LERIM_RUNTIME_IMAGE"

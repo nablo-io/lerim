@@ -53,3 +53,18 @@ with `lerim trace retry <submitted_trace_path>`.
 MCP is the access layer. Lerim's durable context still lives in the global
 SQLite context store, and extraction still runs through Lerim's normal
 BAML/LangGraph compiler.
+
+Think of MCP as two tool groups:
+
+- Read tools: `lerim_context_brief`, `lerim_context_answer`,
+  `lerim_context_search`, and `lerim_records_list` retrieve context that Lerim
+  has already extracted.
+- Submit tool: `lerim_trace_submit` is an explicit import path for one completed
+  session. It is not automatic background capture.
+
+When calling `lerim_trace_submit`, pass the scope explicitly. For repository
+work, use `scope_type="project"` and `scope="/absolute/path/to/repo"`. For
+business workflows, use a domain or workspace scope such as
+`scope_type="domain"` and `scope="support-ops"`. Relying on the MCP server's
+current working directory can put submitted context under the wrong scope in
+clients that launch MCP servers from a generic directory.

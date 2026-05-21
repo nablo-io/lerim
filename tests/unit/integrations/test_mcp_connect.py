@@ -431,3 +431,35 @@ def test_public_mcp_docs_do_not_recommend_bare_lerim_client_configs() -> None:
     )
     assert '["-m", "lerim.mcp_server"]' in quickstart
     assert "/absolute/path/to/python" in quickstart
+
+
+def test_public_docs_explain_mcp_retrieval_vs_capture_boundary() -> None:
+    """Docs must not blur MCP tool access with automatic trace capture."""
+    repo_root = Path(__file__).resolve().parents[3]
+    docs = {
+        relative_path: (repo_root / relative_path).read_text(encoding="utf-8").lower()
+        for relative_path in (
+            "docs/cli/mcp.md",
+            "docs/guides/mcp-quickstart.md",
+            "docs/guides/connecting-agents.md",
+            "docs/concepts/supported-agents.md",
+            "docs/integrations/openclaw.md",
+        )
+    }
+
+    assert "read tools" in docs["docs/cli/mcp.md"]
+    assert "submit tool" in docs["docs/cli/mcp.md"]
+    assert "not automatic" in docs["docs/cli/mcp.md"]
+    assert "does not automatically import" in docs["docs/guides/mcp-quickstart.md"]
+    assert "scope_type" in docs["docs/guides/mcp-quickstart.md"]
+    assert "retrieval and explicit-submit path" in docs[
+        "docs/guides/connecting-agents.md"
+    ]
+    assert "stable exporter" in docs["docs/concepts/supported-agents.md"]
+    assert "not implied by mcp config support" in docs[
+        "docs/concepts/supported-agents.md"
+    ]
+    assert "does not make lerim read openclaw" in docs[
+        "docs/integrations/openclaw.md"
+    ]
+    assert "canonical jsonl" in docs["docs/integrations/openclaw.md"]

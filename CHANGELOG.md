@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.12] - 2026-05-21
+
+### Added
+- Added a public custom trace folder flow asset to the custom trace guide.
+
+### Fixed
+- Updated the release workflow, Docker runtime pull target, OCI source label,
+  PyPI metadata, README links, and docs repo links after the GitHub repository
+  rename from `lerim-cli` to `lerim`.
+- Changed GHCR publishing and `lerim up` defaults to
+  `ghcr.io/lerim-dev/lerim` after the old CLI package name was retired.
+- Clarified that MCP config support provides context retrieval and explicit
+  `lerim_trace_submit`, not automatic completed-session capture, and documented
+  the OpenClaw/custom clean trace boundaries.
+
 ## [0.3.11] - 2026-05-21
 
 ### Fixed
@@ -343,4 +358,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Project-scoped context records in the global context DB.
 - Context record kinds: decisions, facts, procedures, preferences, and episodes.
 - Comprehensive test suite with 290 tests across unit, smoke, integration, and e2e layers.
-- Skills distribution via `npx skills add lerim-dev/lerim-cli`.
+- Skills distribution via `npx skills add lerim-dev/lerim`.

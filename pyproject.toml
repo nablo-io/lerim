@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lerim"
-version = "0.3.11"
+version = "0.3.12"
 description = "Source-session context compiler for AI agent workflows."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -34,9 +34,9 @@ dependencies = [
 [project.urls]
 Homepage = "https://lerim.dev"
 Documentation = "https://docs.lerim.dev"
-Repository = "https://github.com/lerim-dev/lerim-cli"
-Changelog = "https://github.com/lerim-dev/lerim-cli/blob/main/CHANGELOG.md"
-Issues = "https://github.com/lerim-dev/lerim-cli/issues"
+Repository = "https://github.com/lerim-dev/lerim"
+Changelog = "https://github.com/lerim-dev/lerim/blob/main/CHANGELOG.md"
+Issues = "https://github.com/lerim-dev/lerim/issues"
 
 [project.optional-dependencies]
 mlx = [

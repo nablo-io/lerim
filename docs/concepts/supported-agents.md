@@ -80,6 +80,18 @@ lerim trace import ./support-agent-run.jsonl \
 
 For MCP clients without a stable local trace store, use `lerim_trace_submit` with source metadata. Lerim will persist the submitted trace, normalize it, and run normal extraction.
 
+These are separate flows:
+
+- Ingestion flow: native adapter, custom clean folder, `lerim trace import`, or
+  MCP `lerim_trace_submit` feeds completed sessions into Lerim's compiler.
+- Retrieval flow: MCP read tools let the same or another agent retrieve the
+  context that is already in the global store.
+
+For OpenClaw and other MCP-first agents without native adapters, `lerim connect
+<agent> --mode mcp` only sets up retrieval and explicit submission. Automatic
+completed-session capture requires a shipped native plugin, lifecycle hook, or
+stable exporter; it is not implied by MCP config support.
+
 ## Scope Model
 
 Sessions are matched to registered projects by path. When a session belongs to a registered project, Lerim writes records for that `project_id` into the global context database.

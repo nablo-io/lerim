@@ -30,7 +30,7 @@ lerim up --build            # build and recreate from the local Dockerfile
 
 This reads `~/.lerim/config.toml`, generates a `docker-compose.yml` in `~/.lerim/`, and runs `docker compose up -d`.
 
-By default the compose file references the pre-built GHCR image (`ghcr.io/lerim-dev/lerim-cli`) tagged with the current package version. Use `--build` to build from the local Dockerfile, tag it as `lerim-lerim:local`, and force-recreate the container.
+By default the compose file references the pre-built GHCR image (`ghcr.io/lerim-dev/lerim`) tagged with the current package version. Use `--build` to build from the local Dockerfile, tag it as `lerim-lerim:local`, and force-recreate the container.
 
 After start, the CLI waits for `GET /api/health` to return `200 OK` before reporting success.
 

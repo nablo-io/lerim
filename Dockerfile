@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-LABEL org.opencontainers.image.source=https://github.com/lerim-dev/lerim-cli
+LABEL org.opencontainers.image.source=https://github.com/lerim-dev/lerim
 
 # Install curl (healthcheck) and ripgrep
 RUN apt-get update && apt-get install -y --no-install-recommends curl ripgrep && \
