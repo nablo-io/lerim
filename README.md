@@ -1,11 +1,12 @@
 <p align="center">
-  <img src="assets/lerim.png" alt="Lerim Logo" width="160">
+  <img src="docs/assets/lerim-context-compiler.svg" alt="Lerim compiles agent traces into a reusable context graph for future agents and humans" width="860">
 </p>
 
-<h3 align="center">Source-session context compiler for AI agent workflows.</h3>
+
+<h1 align="center">The context layer for AI agents.</h1>
 
 <p align="center">
-  Lerim turns completed agent runs into evidence-backed context records so the next agent starts with trusted operating context instead of another raw transcript.
+  Lerim sits above agent traces, compiles the useful signal into cited context, and gives the next agent the operating memory it needs before work begins.
 </p>
 
 <p align="center">
@@ -30,14 +31,6 @@
   <a href="https://github.com/lerim-dev/lerim/blob/main/LICENSE">License</a>
 </p>
 
-<p align="center">
-  <img src="docs/assets/lerim-context-compiler.svg" alt="Lerim compiles completed source sessions into a reusable context graph for future agents and humans" width="860">
-</p>
-
-<p align="center">
-  <em>Completed source sessions become a reusable context graph; future agents and humans retrieve compact cited memory.</em>
-</p>
-
 
 <p align="center">
   <img src="docs/assets/lerim-custom-trace-folder.svg" alt="Custom trace folders let any trace-producing agent connect to Lerim through clean JSONL" width="860">
@@ -57,13 +50,13 @@
 
 # Lerim
 
-Lerim is a source-session context compiler for AI agent workflows.
+Lerim is a context compiler for AI agent workflows.
 
-Observability shows what happened. Lerim decides what was worth learning from it.
+Agents leave traces everywhere: terminals, tools, tickets, code reviews, support cases, research runs. Most of that history is too noisy to reuse directly.
 
-Lerim reads completed agent traces, filters noisy execution history into durable signals, and writes compact context records for future runs.
+Lerim filters those traces into evidence-backed context records: the decisions, constraints, facts, preferences, and handoffs future agents should not have to rediscover.
 
-Instead of replaying raw traces or losing what happened after each run, Lerim keeps:
+Instead of replaying raw traces or losing useful context between workflows, Lerim keeps:
 
 - decisions
 - constraints
