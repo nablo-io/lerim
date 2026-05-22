@@ -136,7 +136,7 @@ Rules:
 - Context Brief tests cover cwd project resolution, freshness counts, markdown citations, CLI local reads, and artifact writes without live LLM calls
 - MCP integration tests cover client config writers, dry-run/backup behavior, exposed MCP tool registration, in-process context search/brief calls, and trace-submit importer routing
 - Context store search tests cover derived-index generation metadata, fast-path retrieval, and stale-index repair without live LLM calls
-- Benchmark doc tests cover README launch links, duplicate demo media, public benchmark table values, artifact-path wording, and positioning guardrails for non-coding workflows
+- Benchmark doc tests cover README launch links and visual references, duplicate demo media, public benchmark table values, artifact-path wording, and positioning guardrails for non-coding workflows
 
 ## Testing rules
 

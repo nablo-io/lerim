@@ -11,8 +11,6 @@ See the [integration matrix](matrix.md) for the public support boundary.
 Use [integration verification](verification.md) before turning config support
 into a public support claim.
 
-![Agent integration boundary](../assets/support-boundary.svg)
-
 Lerim is not limited to coding agents. Native adapters are strongest for local
 agent traces, while custom trace import and MCP trace submission are the paths
 for support, incident, research, operations, and other workflow agents.

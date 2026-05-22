@@ -399,39 +399,6 @@ def test_validate_public_artifacts_accepts_trace_ingestion_cost_report(
     assert result.ok, result.errors
 
 
-def test_validate_public_artifacts_rejects_stale_support_boundary_svg(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    """The support-boundary graphic must stay tied to MCP raw artifacts."""
-    _write_report_index(tmp_path)
-    _write_market_docs(tmp_path)
-    _write_mcp_report(
-        tmp_path,
-        "mcp-integration-full",
-        summary=_valid_mcp_summary(installed_client_tool_call_acceptance_count=0),
-    )
-    _write_mcp_report(
-        tmp_path,
-        "mcp-gemini-live-tool-call",
-        summary=_valid_mcp_summary(
-            installed_client_connection_acceptance_count=1,
-            trace_submit_extraction_acceptance_count=0,
-        ),
-    )
-    docs_assets = tmp_path / "docs" / "assets"
-    docs_assets.mkdir(parents=True, exist_ok=True)
-    (docs_assets / "support-boundary.svg").write_text(
-        "<svg>stale</svg>\n",
-        encoding="utf-8",
-    )
-
-    result = _validate(tmp_path, monkeypatch)
-
-    assert not result.ok
-    assert any("support boundary SVG must be regenerated" in error for error in result.errors)
-
-
 def test_validate_public_artifacts_rejects_inferred_trace_ingestion_cost(
     tmp_path: Path,
     monkeypatch,

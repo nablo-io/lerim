@@ -9,8 +9,9 @@ README and docs theme.
 
 Current public launch-safe visuals live under `docs/assets/`:
 
-- `docs/assets/lerim-architecture.svg`
-- `docs/assets/support-boundary.svg`
+- `docs/assets/lerim-context-compiler.svg`
+- `docs/assets/lerim-context-retrieval.svg`
+- `docs/assets/lerim-custom-trace-folder.svg`
 
 `docs/assets/benchmark-summary.svg` is a public benchmark-docs visual, not a
 launch-gallery asset yet. Keep it out of Product Hunt/GitHub launch galleries

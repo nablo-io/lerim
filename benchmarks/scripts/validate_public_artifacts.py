@@ -1342,26 +1342,6 @@ def _validate_benchmark_summary_svg(
         )
 
 
-def _validate_support_boundary_svg(
-    *,
-    docs_dir: Path,
-    raw_dir: Path,
-    errors: list[str],
-) -> None:
-    """Validate that public support-boundary art is generated from raw artifacts."""
-    svg_path = docs_dir / "assets" / "support-boundary.svg"
-    if not svg_path.exists():
-        return
-    from benchmarks.scripts.generate_support_boundary_svg import build_svg, load_snapshot
-
-    expected = build_svg(load_snapshot(raw_dir))
-    actual = svg_path.read_text(encoding="utf-8")
-    if actual != expected:
-        errors.append(
-            f"{svg_path}: support boundary SVG must be regenerated from raw artifacts"
-        )
-
-
 def _load_optional_report(raw_dir: Path, artifact_name: str) -> dict[str, Any] | None:
     """Load a raw report if that artifact exists."""
     path = raw_dir / artifact_name / "report.json"
@@ -2049,7 +2029,6 @@ def validate_public_artifacts(
         errors=errors,
     )
     _validate_benchmark_summary_svg(docs_dir=docs_dir, raw_dir=raw_dir, errors=errors)
-    _validate_support_boundary_svg(docs_dir=docs_dir, raw_dir=raw_dir, errors=errors)
     _validate_benchmark_doc_numbers(docs_dir=docs_dir, raw_dir=raw_dir, errors=errors)
     _validate_market_comparison(docs_dir, errors)
     _validate_market_source_manifest(repo_root=repo_root, docs_dir=docs_dir, errors=errors)

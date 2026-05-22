@@ -4,11 +4,11 @@ These files are public documentation assets. Keep this folder limited to assets
 that are safe to ship with the docs site.
 
 - `lerim.png` is the docs-site logo and favicon copy.
-- `lerim-architecture.svg` is the public source-session context compiler diagram.
-- `support-boundary.svg` is the public integration-boundary diagram.
 - `lerim-context-compiler.svg` is the public README hero showing completed
   runs flowing into Lerim, then into a context graph reused by agents and
   humans.
+- `lerim-context-retrieval.svg` is the public README visual showing CLI, skill,
+  and MCP retrieval from the context graph.
 - `lerim-custom-trace-folder.svg` is the public custom-trace flow showing
   clean JSONL registration and daemon polling ingest.
 - `integration-matrix-screenshot.png` is a non-authoritative public docs

@@ -7,13 +7,6 @@ from pathlib import Path
 from typing import Any
 
 from benchmarks.scripts.generate_benchmark_summary_svg import build_svg, load_snapshot
-from benchmarks.scripts.generate_support_boundary_svg import (
-    build_svg as build_support_boundary_svg,
-)
-from benchmarks.scripts.generate_support_boundary_svg import (
-    load_snapshot as load_support_boundary_snapshot,
-)
-from lerim.adapters.registry import KNOWN_PLATFORMS
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -62,36 +55,6 @@ def test_benchmark_summary_svg_is_generated_from_raw_artifacts() -> None:
     assert actual == expected
 
 
-def test_support_boundary_svg_is_generated_from_raw_artifacts() -> None:
-    """The support-boundary graphic must not drift from integration reports."""
-    actual = (ROOT / "docs" / "assets" / "support-boundary.svg").read_text(
-        encoding="utf-8"
-    )
-    expected = build_support_boundary_svg(load_support_boundary_snapshot(RAW))
-
-    assert actual == expected
-
-
-def test_support_boundary_snapshot_maps_integration_artifacts() -> None:
-    """The support-boundary generator should source counts from public artifacts."""
-    snapshot = load_support_boundary_snapshot(RAW)
-    integration = _load_report("mcp-integration-full")["summary"]
-    gemini = _load_report("mcp-gemini-live-tool-call")["summary"]
-
-    assert len(snapshot.native_adapter_names) == len(KNOWN_PLATFORMS)
-    assert snapshot.mcp_config_passed == integration["config_passed_count"]
-    assert snapshot.mcp_config_total == integration["known_target_count"]
-    assert snapshot.installed_client_connections == (
-        integration["installed_client_connection_acceptance_count"]
-    )
-    assert snapshot.gemini_live_tool_calls == (
-        gemini["installed_client_tool_call_acceptance_count"]
-    )
-    assert snapshot.trace_submit_extraction_acceptances == (
-        integration["trace_submit_extraction_acceptance_count"]
-    )
-
-
 def test_market_comparison_lists_each_mempalace_tracked_boundary() -> None:
     """Source-reported MemPalace rows should keep full and held-out sets separate."""
     text = _doc("market-comparison.md")
@@ -106,7 +69,11 @@ def test_readme_launch_links_are_github_ready_without_duplicate_demo_asset() -> 
 
     assert 'href="docs/benchmarks/index.md"' in text
     assert 'href="docs/examples/index.md"' in text
+    assert "docs/assets/lerim-context-compiler.svg" in text
+    assert "docs/assets/lerim-context-retrieval.svg" in text
     assert "docs/assets/lerim-custom-trace-folder.svg" in text
+    assert "docs/assets/lerim-architecture.svg" not in text
+    assert "docs/assets/support-boundary.svg" not in text
     assert "docs/assets/lerim-trace-to-answer.gif" not in text
     assert "Install In 60 Seconds" not in text
     assert "real run" not in text.lower()

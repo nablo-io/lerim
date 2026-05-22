@@ -1,54 +1,54 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
   <title id="title">Lerim benchmark snapshot from raw artifacts</title>
   <desc id="desc">LongMemEval-S retrieval, context budget, latency, and MCP integration evidence.</desc>
-  <rect width="1200" height="760" fill="#f5f8f5"/>
-  <rect x="40" y="36" width="1120" height="688" rx="18" fill="#ffffff" stroke="#d9e5dd" stroke-width="2"/>
-  <text x="78" y="94" font-family="Arial, Helvetica, sans-serif" font-size="36" font-weight="700" fill="#17382a">Lerim benchmark snapshot</text>
-  <text x="78" y="132" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#53645b">Raw artifacts from a clean release candidate.</text>
+  <rect width="1200" height="760" fill="#070a0f"/>
+  <rect x="40" y="36" width="1120" height="688" rx="18" fill="#101720" stroke="#223044" stroke-width="2"/>
+  <text x="78" y="94" font-family="Arial, Helvetica, sans-serif" font-size="36" font-weight="700" fill="#f4f8fb">Lerim benchmark snapshot</text>
+  <text x="78" y="132" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#9ba8b8">Raw artifacts from a clean release candidate.</text>
 
   <g transform="translate(78 176)">
-    <rect width="500" height="236" rx="12" fill="#f8fbf8" stroke="#d9e5dd" stroke-width="2"/>
-    <text x="26" y="42" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" fill="#17382a">LongMemEval-S retrieval-only</text>
-    <text x="26" y="74" font-family="Arial, Helvetica, sans-serif" font-size="17" fill="#53645b">Hybrid search over 500 questions.</text>
-    <rect x="26" y="104" width="308" height="26" rx="7" fill="#245f46"/>
-    <text x="366" y="124" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#17382a">R@5 96.2%</text>
-    <rect x="26" y="148" width="316" height="26" rx="7" fill="#245f46"/>
-    <text x="366" y="168" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#17382a">R@10 98.6%</text>
-    <rect x="26" y="192" width="319" height="26" rx="7" fill="#245f46"/>
-    <text x="366" y="212" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#17382a">R@20 99.6%</text>
-    <text x="26" y="232" font-family="Arial, Helvetica, sans-serif" font-size="11" fill="#6a7b72">Source: longmemeval-hybrid-full/report.json</text>
+    <rect width="500" height="236" rx="12" fill="#0c1119" stroke="#223044" stroke-width="2"/>
+    <text x="26" y="42" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" fill="#f4f8fb">LongMemEval-S retrieval-only</text>
+    <text x="26" y="74" font-family="Arial, Helvetica, sans-serif" font-size="17" fill="#9ba8b8">Hybrid search over 500 questions.</text>
+    <rect x="26" y="104" width="308" height="26" rx="7" fill="#28d4c3"/>
+    <text x="366" y="124" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#f4f8fb">R@5 96.2%</text>
+    <rect x="26" y="148" width="316" height="26" rx="7" fill="#28d4c3"/>
+    <text x="366" y="168" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#f4f8fb">R@10 98.6%</text>
+    <rect x="26" y="192" width="319" height="26" rx="7" fill="#28d4c3"/>
+    <text x="366" y="212" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700" fill="#f4f8fb">R@20 99.6%</text>
+    <text x="26" y="232" font-family="Arial, Helvetica, sans-serif" font-size="11" fill="#768396">Source: longmemeval-hybrid-full/report.json</text>
   </g>
 
   <g transform="translate(606 176)">
-    <rect width="516" height="236" rx="12" fill="#f8fbf8" stroke="#d9e5dd" stroke-width="2"/>
-    <text x="26" y="42" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" fill="#17382a">Context budget</text>
-    <text x="26" y="74" font-family="Arial, Helvetica, sans-serif" font-size="17" fill="#53645b">Top-10 sessions, not full haystack replay.</text>
-    <rect x="26" y="112" width="248" height="26" rx="7" fill="#245f46"/>
-    <text x="378" y="135" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700" fill="#17382a">75.3%</text>
-    <text x="26" y="184" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#53645b">Token reduction with 98.6% recall.</text>
-    <text x="26" y="212" font-family="Arial, Helvetica, sans-serif" font-size="15" fill="#6a7b72">Source: context-budget-hybrid-full/report.json</text>
+    <rect width="516" height="236" rx="12" fill="#0c1119" stroke="#223044" stroke-width="2"/>
+    <text x="26" y="42" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" fill="#f4f8fb">Context budget</text>
+    <text x="26" y="74" font-family="Arial, Helvetica, sans-serif" font-size="17" fill="#9ba8b8">Top-10 sessions, not full haystack replay.</text>
+    <rect x="26" y="112" width="248" height="26" rx="7" fill="#4f8cff"/>
+    <text x="378" y="135" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700" fill="#f4f8fb">75.3%</text>
+    <text x="26" y="184" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#9ba8b8">Token reduction with 98.6% recall.</text>
+    <text x="26" y="212" font-family="Arial, Helvetica, sans-serif" font-size="15" fill="#768396">Source: context-budget-hybrid-full/report.json</text>
   </g>
 
   <g transform="translate(78 440)">
-    <rect width="322" height="156" rx="12" fill="#f8fbf8" stroke="#d9e5dd" stroke-width="2"/>
-    <text x="24" y="40" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" fill="#17382a">Retrieval latency</text>
-    <text x="24" y="82" font-family="Arial, Helvetica, sans-serif" font-size="20" fill="#53645b">1,000 records, local search path</text>
-    <text x="24" y="124" font-family="Arial, Helvetica, sans-serif" font-size="27" font-weight="700" fill="#17382a">p50 35.4 ms</text>
-    <text x="216" y="124" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#53645b">p99 55.0 ms</text>
-    <text x="24" y="146" font-family="Arial, Helvetica, sans-serif" font-size="13" fill="#6a7b72">Source: retrieval-latency-longmemeval/report.json</text>
+    <rect width="322" height="156" rx="12" fill="#0c1119" stroke="#223044" stroke-width="2"/>
+    <text x="24" y="40" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" fill="#f4f8fb">Retrieval latency</text>
+    <text x="24" y="82" font-family="Arial, Helvetica, sans-serif" font-size="20" fill="#9ba8b8">1,000 records, local search path</text>
+    <text x="24" y="124" font-family="Arial, Helvetica, sans-serif" font-size="27" font-weight="700" fill="#f4f8fb">p50 35.4 ms</text>
+    <text x="216" y="124" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#9ba8b8">p99 55.0 ms</text>
+    <text x="24" y="146" font-family="Arial, Helvetica, sans-serif" font-size="13" fill="#768396">Source: retrieval-latency-longmemeval/report.json</text>
   </g>
 
   <g transform="translate(426 440)">
-    <rect width="696" height="156" rx="12" fill="#f8fbf8" stroke="#d9e5dd" stroke-width="2"/>
-    <text x="24" y="40" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" fill="#17382a">MCP integration</text>
-    <text x="24" y="88" font-family="Arial, Helvetica, sans-serif" font-size="31" font-weight="700" fill="#17382a">15/15</text>
-    <text x="128" y="88" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#53645b">config probes passed.</text>
-    <text x="344" y="88" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#53645b">Gemini live tool-call: 1</text>
-    <text x="24" y="124" font-family="Arial, Helvetica, sans-serif" font-size="17" fill="#53645b">Synthetic trace-submit extraction: 0</text>
-    <text x="24" y="146" font-family="Arial, Helvetica, sans-serif" font-size="13" fill="#6a7b72">Sources: mcp-integration-full + mcp-gemini-live-tool-call</text>
+    <rect width="696" height="156" rx="12" fill="#0c1119" stroke="#223044" stroke-width="2"/>
+    <text x="24" y="40" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="700" fill="#f4f8fb">MCP integration</text>
+    <text x="24" y="88" font-family="Arial, Helvetica, sans-serif" font-size="31" font-weight="700" fill="#f4f8fb">15/15</text>
+    <text x="128" y="88" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#9ba8b8">config probes passed.</text>
+    <text x="344" y="88" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#9ba8b8">Gemini live tool-call: 1</text>
+    <text x="24" y="124" font-family="Arial, Helvetica, sans-serif" font-size="17" fill="#9ba8b8">Synthetic trace-submit extraction: 0</text>
+    <text x="24" y="146" font-family="Arial, Helvetica, sans-serif" font-size="13" fill="#768396">Sources: mcp-integration-full + mcp-gemini-live-tool-call</text>
   </g>
 
-  <line x1="78" y1="642" x2="1122" y2="642" stroke="#d9e5dd" stroke-width="2"/>
-  <text x="78" y="674" font-family="Arial, Helvetica, sans-serif" font-size="15" fill="#6a7b72">Artifacts: retrieval, context budget, latency, MCP config/protocol checks, and Gemini live tool-call.</text>
-  <text x="78" y="700" font-family="Arial, Helvetica, sans-serif" font-size="15" fill="#6a7b72">Use as engineering evidence until clean-release benchmark validation passes.</text>
+  <line x1="78" y1="642" x2="1122" y2="642" stroke="#223044" stroke-width="2"/>
+  <text x="78" y="674" font-family="Arial, Helvetica, sans-serif" font-size="15" fill="#768396">Artifacts: retrieval, context budget, latency, MCP config/protocol checks, and Gemini live tool-call.</text>
+  <text x="78" y="700" font-family="Arial, Helvetica, sans-serif" font-size="15" fill="#768396">Use as engineering evidence until clean-release benchmark validation passes.</text>
 </svg>
