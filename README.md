@@ -38,13 +38,6 @@
   <em>Completed source sessions become a reusable context graph; future agents and humans retrieve compact cited memory.</em>
 </p>
 
-<p align="center">
-  <img src="docs/assets/lerim-context-retrieval.svg" alt="Agents retrieve source-backed context from Lerim through CLI, skill, or MCP" width="860">
-</p>
-
-<p align="center">
-  <em>Agents and humans ask through CLI, skill, or MCP; Lerim retrieves scoped, cited context.</em>
-</p>
 
 <p align="center">
   <img src="docs/assets/lerim-custom-trace-folder.svg" alt="Custom trace folders let any trace-producing agent connect to Lerim through clean JSONL" width="860">
@@ -52,6 +45,14 @@
 
 <p align="center">
   <em>Any trace-producing workflow can register clean JSONL and enter the same compiler path.</em>
+</p>
+
+<p align="center">
+  <img src="docs/assets/lerim-context-retrieval.svg" alt="Agents retrieve source-backed context from Lerim through CLI, skill, or MCP" width="860">
+</p>
+
+<p align="center">
+  <em>Agents and humans ask through CLI, skill, or MCP; Lerim retrieves scoped, cited context.</em>
 </p>
 
 # Lerim
