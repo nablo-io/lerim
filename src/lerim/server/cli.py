@@ -1418,8 +1418,10 @@ def _dead_letter_action(
     project_fn_name: str,
     all_fn_name: str,
     done_suffix: str = "",
+    noun: str = "dead_letter",
+    action: str | None = None,
 ) -> int:
-    """Shared handler for retry/skip dead_letter operations."""
+    """Shared handler for retry/skip blocked queue operations."""
     from lerim.sessions.catalog import (
         resolve_run_id_prefix,
         count_session_jobs_by_status,
@@ -1433,13 +1435,14 @@ def _dead_letter_action(
     run_id = getattr(args, "run_id", None)
     project = getattr(args, "project", None)
     do_all = getattr(args, "all", False)
+    action_label = action or verb.lower()
 
     if do_all:
         count = int(all_fn())
         if count == 0:
-            _emit(f"No dead_letter jobs to {verb.lower()}.")
+            _emit(f"No {noun} jobs to {action_label}.")
             return 0
-        _emit(f"{verb} {count} dead_letter job(s).")
+        _emit(f"{verb} {count} {noun} job(s).")
         _emit(_format_queue_counts(count_session_jobs_by_status()))
         return 0
 
@@ -1449,7 +1452,7 @@ def _dead_letter_action(
             _emit(f"Project not found: {project}", file=sys.stderr)
             return 1
         count = project_fn(repo_path)
-        _emit(f"{verb} {count} dead_letter job(s) for project {project}.")
+        _emit(f"{verb} {count} {noun} job(s) for project {project}.")
         _emit(_format_queue_counts(count_session_jobs_by_status()))
         return 0
 
@@ -1469,19 +1472,21 @@ def _dead_letter_action(
         _emit(f"{verb}: {run_id}{done_suffix}")
         _emit(_format_queue_counts(count_session_jobs_by_status()))
     else:
-        _emit(f"Job {run_id} is not in dead_letter status.", file=sys.stderr)
+        _emit(f"Job {run_id} is not in {noun} status.", file=sys.stderr)
         return 1
     return 0
 
 
 def _cmd_retry(args: argparse.Namespace) -> int:
-    """Retry dead_letter jobs."""
+    """Retry failed and dead-letter jobs."""
     return _dead_letter_action(
         args,
         verb="Retried",
         single_fn_name="retry_session_job",
         project_fn_name="retry_project_jobs",
         all_fn_name="retry_all_dead_letter_jobs",
+        noun="failed/dead_letter",
+        action="retry",
     )
 
 
@@ -2153,7 +2158,10 @@ def _cmd_up(args: argparse.Namespace) -> int:
     build_local = (
         bool(getattr(args, "build", False)) or current_compose_uses_local_build()
     )
-    result = api_up(build_local=build_local)
+    result = api_up(
+        build_local=build_local,
+        no_build=bool(getattr(args, "no_build", False)),
+    )
     if result.get("error"):
         _emit(result["error"], file=sys.stderr)
         return 1
@@ -2664,8 +2672,10 @@ def _add_context_brief_subcommands(parser: argparse.ArgumentParser) -> None:
     _add_force_flag(refresh)
 
 
-def _add_dead_letter_args(parser: argparse.ArgumentParser, *, verb: str) -> None:
-    """Add run_id, --project, and --all arguments for dead-letter commands."""
+def _add_dead_letter_args(
+    parser: argparse.ArgumentParser, *, verb: str, noun: str = "dead_letter"
+) -> None:
+    """Add run_id, --project, and --all arguments for blocked queue commands."""
     parser.add_argument(
         "run_id",
         nargs="?",
@@ -2673,12 +2683,12 @@ def _add_dead_letter_args(parser: argparse.ArgumentParser, *, verb: str) -> None
     )
     parser.add_argument(
         "--project",
-        help=f"{verb.capitalize()} all dead_letter jobs for a project (by name).",
+        help=f"{verb.capitalize()} all {noun} jobs for a project (by name).",
     )
     parser.add_argument(
         "--all",
         action="store_true",
-        help=f"{verb.capitalize()} all dead_letter jobs across all projects.",
+        help=f"{verb.capitalize()} all {noun} jobs across all projects.",
     )
 
 
@@ -3242,13 +3252,13 @@ def build_parser() -> argparse.ArgumentParser:
     retry = sub.add_parser(
         "retry",
         formatter_class=_F,
-        help="Retry dead_letter session jobs",
+        help="Retry failed and dead_letter session jobs",
         description=(
-            "Reset dead_letter jobs to pending for re-processing.\n\n"
+            "Reset failed and dead_letter jobs to pending for re-processing.\n\n"
             "Example: lerim retry a1b2c3d4"
         ),
     )
-    _add_dead_letter_args(retry, verb="retry")
+    _add_dead_letter_args(retry, verb="retry", noun="failed/dead_letter")
     retry.set_defaults(func=_cmd_retry)
 
     # ── skip ──────────────────────────────────────────────────────────
@@ -3371,6 +3381,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--build",
         action="store_true",
         help="Build the Docker image from local Dockerfile instead of pulling from GHCR.",
+    )
+    up.add_argument(
+        "--no-build",
+        action="store_true",
+        help="Reuse the existing image without rebuilding when the compose file is in local-build mode.",
     )
     up.set_defaults(func=_cmd_up)
 

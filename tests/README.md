@@ -126,12 +126,14 @@ Rules:
 - ingest persistence tests cover idempotent replay when a session episode already exists
 - curate unit tests cover semantic clustering, action validation, and direct `ContextStore` mutation application
 - session catalog tests cover queue claim availability, content-hash refresh/change detection, and stable pagination ordering
+- session catalog tests cover retrying both failed and dead-letter queue jobs without display pagination limits
 - API/daemon tests cover degraded status reporting when the session catalog is unavailable
-- server Docker compose tests cover GHCR startup, local build source-root resolution, and generated compose hardening
+- server Docker compose tests cover GHCR startup, local build source-root resolution, no-build local image reuse, and generated compose hardening
 - daemon tests cover transient session-job heartbeat write failures
 - session catalog tests cover process-local active-job leases that avoid false stale queue health during transient heartbeat write failures
 - daemon ingest tests cover one-at-a-time job claiming to avoid false stale-running queue state
 - config tests cover provider capability validation, provider-specific model normalization, strict config parsing, MLflow env/tracing configuration, and SDK log-noise filters
+- cloud tests cover local dashboard auth verification through host-to-local endpoint fallbacks
 - profile tests cover bundled signal packs, registered custom YAML profiles, and project-level default source profiles
 - Context Brief tests cover cwd project resolution, freshness counts, markdown citations, CLI local reads, and artifact writes without live LLM calls
 - MCP integration tests cover client config writers, dry-run/backup behavior, exposed MCP tool registration, in-process context search/brief calls, and trace-submit importer routing

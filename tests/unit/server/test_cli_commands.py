@@ -1234,7 +1234,7 @@ class TestDeadLetterAction:
         with redirect_stdout(buf):
             code = cli._cmd_retry(args)
         assert code == 0
-        assert "no dead_letter" in buf.getvalue().lower()
+        assert "no failed/dead_letter" in buf.getvalue().lower()
 
     def test_retry_all_with_jobs(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Retry --all uses the uncapped bulk helper."""
@@ -1837,7 +1837,7 @@ class TestCmdUp:
         cfg = make_config(Path("/tmp/fake"))
         cfg = replace(cfg, projects={"p": "/p"}, agents={"claude": {}})
         monkeypatch.setattr(cli, "get_config", lambda: cfg)
-        monkeypatch.setattr(cli, "api_up", lambda build_local=False: {})
+        monkeypatch.setattr(cli, "api_up", lambda build_local=False, **_kw: {})
         monkeypatch.setattr(cli, "current_compose_uses_local_build", lambda: False)
         monkeypatch.setattr(cli, "_wait_for_ready", lambda port: True)
 
@@ -1854,7 +1854,9 @@ class TestCmdUp:
         monkeypatch.setattr(cli, "get_config", lambda: cfg)
         monkeypatch.setattr(cli, "current_compose_uses_local_build", lambda: False)
         monkeypatch.setattr(
-            cli, "api_up", lambda build_local=False: {"error": "docker not found"}
+            cli,
+            "api_up",
+            lambda build_local=False, **_kw: {"error": "docker not found"},
         )
 
         args = _ns(command="up", build=False)
@@ -1867,7 +1869,7 @@ class TestCmdUp:
         """Up returns 1 when the server does not become ready."""
         cfg = make_config(Path("/tmp/fake"))
         monkeypatch.setattr(cli, "get_config", lambda: cfg)
-        monkeypatch.setattr(cli, "api_up", lambda build_local=False: {})
+        monkeypatch.setattr(cli, "api_up", lambda build_local=False, **_kw: {})
         monkeypatch.setattr(cli, "current_compose_uses_local_build", lambda: False)
         monkeypatch.setattr(cli, "_wait_for_ready", lambda port: False)
 
@@ -1885,16 +1887,41 @@ class TestCmdUp:
         monkeypatch.setattr(cli, "get_config", lambda: cfg)
         monkeypatch.setattr(cli, "current_compose_uses_local_build", lambda: True)
         monkeypatch.setattr(cli, "_wait_for_ready", lambda port: True)
-        calls: list[bool] = []
+        calls: list[tuple[bool, bool]] = []
         monkeypatch.setattr(
             cli,
             "api_up",
-            lambda build_local=False: calls.append(build_local) or {},
+            lambda build_local=False, no_build=False: calls.append(
+                (build_local, no_build)
+            )
+            or {},
         )
 
         args = _ns(command="up", build=False)
         assert cli._cmd_up(args) == 0
-        assert calls == [True]
+        assert calls == [(True, False)]
+
+    def test_up_no_build_reuses_existing_image(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """--no-build forwards the image-reuse flag to the runtime."""
+        cfg = make_config(Path("/tmp/fake"))
+        monkeypatch.setattr(cli, "get_config", lambda: cfg)
+        monkeypatch.setattr(cli, "current_compose_uses_local_build", lambda: True)
+        monkeypatch.setattr(cli, "_wait_for_ready", lambda port: True)
+        calls: list[tuple[bool, bool]] = []
+        monkeypatch.setattr(
+            cli,
+            "api_up",
+            lambda build_local=False, no_build=False: calls.append(
+                (build_local, no_build)
+            )
+            or {},
+        )
+
+        args = _ns(command="up", build=False, no_build=True)
+        assert cli._cmd_up(args) == 0
+        assert calls == [(True, True)]
 
 
 class TestCmdDown:
@@ -2298,6 +2325,7 @@ class TestBuildParser:
             ["project", "remove", "name"],
             ["up"],
             ["up", "--build"],
+            ["up", "--no-build"],
             ["down"],
             ["logs"],
             ["logs", "-f"],

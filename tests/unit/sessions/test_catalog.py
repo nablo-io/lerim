@@ -997,10 +997,23 @@ class TestJobQueueDeadLetter:
         assert row["attempts"] == 0
         conn.close()
 
+    def test_retry_failed(self, sessions_db):
+        _seed_and_enqueue("dl-failed")
+        _set_job_status("dl-failed", "failed")
+        assert retry_session_job("dl-failed") is True
+        conn = _db(sessions_db)
+        row = conn.execute(
+            "SELECT status, attempts, error FROM session_jobs WHERE run_id = 'dl-failed'"
+        ).fetchone()
+        assert row["status"] == "pending"
+        assert row["attempts"] == 0
+        assert row["error"] is None
+        conn.close()
+
     def test_retry_empty_run_id(self, sessions_db):
         assert retry_session_job("") is False
 
-    def test_retry_non_dead_letter(self, sessions_db):
+    def test_retry_non_blocked_job(self, sessions_db):
         _seed_and_enqueue("dl-nope")
         assert retry_session_job("dl-nope") is False
 
@@ -1025,14 +1038,19 @@ class TestJobQueueDeadLetter:
     def test_retry_project_jobs(self, sessions_db):
         _seed_and_enqueue("dl-rp1", repo_path="/tmp/rp-proj")
         _seed_and_enqueue("dl-rp2", repo_path="/tmp/rp-proj")
+        _seed_and_enqueue("dl-rp3", repo_path="/tmp/rp-proj")
         _set_job_status("dl-rp1", "dead_letter")
-        _set_job_status("dl-rp2", "dead_letter")
+        _set_job_status("dl-rp2", "failed")
         assert retry_project_jobs("/tmp/rp-proj") == 2
         conn = _db(sessions_db)
         rows = conn.execute(
-            "SELECT status FROM session_jobs WHERE repo_path = '/tmp/rp-proj'"
+            "SELECT run_id, status FROM session_jobs WHERE repo_path = '/tmp/rp-proj'"
         ).fetchall()
-        assert all(r["status"] == "pending" for r in rows)
+        assert {r["run_id"]: r["status"] for r in rows} == {
+            "dl-rp1": "pending",
+            "dl-rp2": "pending",
+            "dl-rp3": "pending",
+        }
         conn.close()
 
     def test_retry_project_jobs_empty_path(self, sessions_db):
@@ -1055,11 +1073,11 @@ class TestJobQueueDeadLetter:
         assert skip_project_jobs("") == 0
 
     def test_retry_all_dead_letter_jobs_not_limited_to_default_page(self, sessions_db):
-        """Retry-all transitions every dead-letter row, including rows past 50."""
+        """Retry-all transitions every failed/dead-letter row, including rows past 50."""
         for idx in range(55):
             run_id = f"dl-retry-all-{idx:02d}"
             _seed_and_enqueue(run_id, repo_path=f"/tmp/retry-all-{idx}")
-            _set_job_status(run_id, "dead_letter")
+            _set_job_status(run_id, "failed" if idx % 2 else "dead_letter")
 
         assert retry_all_dead_letter_jobs() == 55
         with _connect() as conn:

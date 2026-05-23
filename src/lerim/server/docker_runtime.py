@@ -234,12 +234,13 @@ services:
 """
 
 
-def api_up(build_local: bool = False) -> dict[str, Any]:
+def api_up(build_local: bool = False, *, no_build: bool = False) -> dict[str, Any]:
     """Generate compose file and start Docker container.
 
     When *build_local* is True the image is built from the local Dockerfile
-    instead of pulling the pre-built GHCR image.  Docker output is streamed
-    to stderr in real-time so the user sees pull/build progress.
+    instead of pulling the pre-built GHCR image. When *no_build* is True,
+    Compose reuses an existing image instead of rebuilding it. Docker output
+    is streamed to stderr in real-time so the user sees pull/build progress.
     """
     if not docker_available():
         return {"error": "Docker is not installed or not running."}
@@ -255,7 +256,9 @@ def api_up(build_local: bool = False) -> dict[str, Any]:
     COMPOSE_PATH.chmod(0o600)
 
     cmd = ["docker", "compose", "-f", str(COMPOSE_PATH), "up", "-d"]
-    if build_local:
+    if build_local and no_build:
+        cmd.extend(["--no-build", "--force-recreate"])
+    elif build_local:
         cmd.extend(["--build", "--force-recreate"])
 
     try:

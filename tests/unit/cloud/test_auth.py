@@ -343,6 +343,44 @@ def test_cmd_auth_status_verified(monkeypatch, capsys) -> None:
 	assert "user@example.com" in out
 
 
+def test_cmd_auth_status_falls_back_to_localhost(monkeypatch, capsys) -> None:
+	"""cmd_auth_status tries localhost when host.docker.internal fails."""
+	monkeypatch.setattr(
+		auth_mod, "get_config",
+		lambda: MagicMock(
+			cloud_token="valid-tok",
+			cloud_endpoint="http://host.docker.internal:8000",
+		),
+	)
+
+	response_data = json.dumps({"name": "local-team"}).encode()
+	mock_resp = MagicMock()
+	mock_resp.read.return_value = response_data
+	mock_resp.__enter__ = lambda s: s
+	mock_resp.__exit__ = MagicMock(return_value=False)
+	requested_urls: list[str] = []
+
+	def fake_urlopen(req, **_kw):
+		"""Fail Docker-host endpoint and accept local host fallback."""
+		requested_urls.append(req.full_url)
+		if "host.docker.internal" in req.full_url:
+			raise urllib.error.URLError("host unavailable")
+		return mock_resp
+
+	monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+	args = argparse.Namespace()
+	result = cmd_auth_status(args)
+
+	assert result == 0
+	assert requested_urls == [
+		"http://host.docker.internal:8000/api/v1/auth/me",
+		"http://localhost:8000/api/v1/auth/me",
+	]
+	out = capsys.readouterr().out
+	assert "local-team" in out
+
+
 def test_cmd_auth_status_401_error(monkeypatch, capsys) -> None:
 	"""cmd_auth_status with 401 reports token found but unverified."""
 	monkeypatch.setattr(

@@ -489,6 +489,14 @@ def test_up_build_flag_accepted() -> None:
     assert args.build is True
 
 
+def test_up_no_build_flag_accepted() -> None:
+    """The --no-build flag is accepted by the up subparser."""
+    parser = cli.build_parser()
+    args = parser.parse_args(["up", "--no-build"])
+    assert args.command == "up"
+    assert args.no_build is True
+
+
 def test_up_default_has_build_false() -> None:
     """Default 'up' command has build=False."""
     parser = cli.build_parser()

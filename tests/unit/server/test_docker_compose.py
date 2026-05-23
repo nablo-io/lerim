@@ -179,6 +179,46 @@ def test_api_up_build_local_forces_fresh_recreate(
     ]
 
 
+def test_api_up_local_no_build_reuses_existing_image(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Local no-build startup should reuse the existing image."""
+    fake_root = tmp_path / "source"
+    fake_root.mkdir()
+    compose_path = tmp_path / "docker-compose.yml"
+    calls: list[list[str]] = []
+
+    class Result:
+        returncode = 0
+
+    monkeypatch.setattr("lerim.server.docker_runtime.docker_available", lambda: True)
+    monkeypatch.setattr(
+        "lerim.server.docker_runtime._find_package_root", lambda: fake_root
+    )
+    monkeypatch.setattr("lerim.server.docker_runtime.COMPOSE_PATH", compose_path)
+    monkeypatch.setattr(
+        "lerim.server.docker_runtime.subprocess.run",
+        lambda cmd, **kwargs: calls.append(list(cmd)) or Result(),
+    )
+
+    result = api_up(build_local=True, no_build=True)
+
+    assert result["runtime_source"] == "local-build"
+    assert result["runtime_image"] == LOCAL_IMAGE
+    assert calls == [
+        [
+            "docker",
+            "compose",
+            "-f",
+            str(compose_path),
+            "up",
+            "-d",
+            "--no-build",
+            "--force-recreate",
+        ]
+    ]
+
+
 # -- Container hardening tests --
 
 

@@ -128,6 +128,24 @@ def _run_browser_flow(endpoint: str, timeout_seconds: int = 120) -> str | None:
     return server.token_result
 
 
+def _endpoint_candidates(endpoint: str) -> list[str]:
+    """Return endpoint URLs to try from the current process."""
+    clean_endpoint = endpoint.rstrip("/")
+    parsed = urllib.parse.urlsplit(clean_endpoint)
+    if parsed.hostname != "host.docker.internal":
+        return [clean_endpoint]
+    host_endpoint = urllib.parse.urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc.replace("host.docker.internal", "localhost", 1),
+            parsed.path,
+            parsed.query,
+            parsed.fragment,
+        )
+    ).rstrip("/")
+    return [clean_endpoint, host_endpoint]
+
+
 # ---------------------------------------------------------------------------
 # CLI command handlers
 # ---------------------------------------------------------------------------
@@ -177,28 +195,30 @@ def cmd_auth_status(args: argparse.Namespace) -> int:
         return 0
 
     endpoint = config.cloud_endpoint.rstrip("/")
-    verify_url = f"{endpoint}/api/v1/auth/me"
-
-    try:
-        req = urllib.request.Request(
-            verify_url,
-            method="GET",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode())
-            display = data.get("email") or data.get("name") or "unknown"
-            _emit(f"Authenticated as {display}")
-            return 0
-    except urllib.error.HTTPError as exc:
-        if exc.code == 401:
+    for candidate in _endpoint_candidates(endpoint):
+        verify_url = f"{candidate}/api/v1/auth/me"
+        try:
+            req = urllib.request.Request(
+                verify_url,
+                method="GET",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode())
+                display = data.get("email") or data.get("name") or "unknown"
+                _emit(f"Authenticated as {display}")
+                return 0
+        except urllib.error.HTTPError as exc:
+            if exc.code == 401:
+                _emit("Token found but could not verify (cloud may be unreachable)")
+                return 0
             _emit("Token found but could not verify (cloud may be unreachable)")
             return 0
-        _emit("Token found but could not verify (cloud may be unreachable)")
-        return 0
-    except (urllib.error.URLError, OSError, json.JSONDecodeError):
-        _emit("Token found but could not verify (cloud may be unreachable)")
-        return 0
+        except (urllib.error.URLError, OSError, json.JSONDecodeError):
+            continue
+
+    _emit("Token found but could not verify (cloud may be unreachable)")
+    return 0
 
 
 def cmd_auth_logout(args: argparse.Namespace) -> int:

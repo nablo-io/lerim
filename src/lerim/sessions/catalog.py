@@ -1405,14 +1405,14 @@ def count_session_jobs_by_status() -> dict[str, int]:
 # ── Queue management: retry / skip / inspect ─────────────────────────
 
 
-def _transition_dead_letter(
+def _transition_queue_jobs(
     *,
     new_status: str,
     reset_attempts: bool,
     where_clause: str,
     params: list[Any],
 ) -> int:
-    """Transition dead_letter jobs to *new_status*. Returns rows affected.
+    """Transition matching queue jobs to *new_status*. Returns rows affected.
 
     When *reset_attempts* is True the job is fully reset (attempts, error,
     claimed_at, completed_at, heartbeat_at cleared) for a fresh retry.
@@ -1447,19 +1447,22 @@ def retry_session_job(
     *,
     job_type: str = JOB_TYPE_EXTRACT,
 ) -> bool:
-    """Reset a dead_letter job to pending for retry.
+    """Reset a failed or dead-letter job to pending for retry.
 
-    The ``AND status = 'dead_letter'`` guard is atomic -- safe against
+    The status guard is atomic -- safe against
     concurrent daemon claiming.
     """
     if not run_id:
         return False
     return (
-        _transition_dead_letter(
+        _transition_queue_jobs(
             new_status=JOB_STATUS_PENDING,
             reset_attempts=True,
-            where_clause="WHERE run_id = ? AND job_type = ? AND status = ?",
-            params=[run_id, job_type, JOB_STATUS_DEAD_LETTER],
+            where_clause=(
+                "WHERE run_id = ? AND job_type = ? "
+                "AND status IN (?, ?)"
+            ),
+            params=[run_id, job_type, JOB_STATUS_FAILED, JOB_STATUS_DEAD_LETTER],
         )
         > 0
     )
@@ -1474,7 +1477,7 @@ def skip_session_job(
     if not run_id:
         return False
     return (
-        _transition_dead_letter(
+        _transition_queue_jobs(
             new_status=JOB_STATUS_DONE,
             reset_attempts=False,
             where_clause="WHERE run_id = ? AND job_type = ? AND status = ?",
@@ -1489,14 +1492,17 @@ def retry_project_jobs(
     *,
     job_type: str = JOB_TYPE_EXTRACT,
 ) -> int:
-    """Retry all dead_letter jobs for a project. Returns count affected."""
+    """Retry all failed or dead-letter jobs for a project. Returns count affected."""
     if not repo_path:
         return 0
-    return _transition_dead_letter(
+    return _transition_queue_jobs(
         new_status=JOB_STATUS_PENDING,
         reset_attempts=True,
-        where_clause="WHERE repo_path = ? AND job_type = ? AND status = ?",
-        params=[repo_path, job_type, JOB_STATUS_DEAD_LETTER],
+        where_clause=(
+            "WHERE repo_path = ? AND job_type = ? "
+            "AND status IN (?, ?)"
+        ),
+        params=[repo_path, job_type, JOB_STATUS_FAILED, JOB_STATUS_DEAD_LETTER],
     )
 
 
@@ -1508,7 +1514,7 @@ def skip_project_jobs(
     """Skip all dead_letter jobs for a project. Returns count affected."""
     if not repo_path:
         return 0
-    return _transition_dead_letter(
+    return _transition_queue_jobs(
         new_status=JOB_STATUS_DONE,
         reset_attempts=False,
         where_clause="WHERE repo_path = ? AND job_type = ? AND status = ?",
@@ -1517,18 +1523,18 @@ def skip_project_jobs(
 
 
 def retry_all_dead_letter_jobs(*, job_type: str = JOB_TYPE_EXTRACT) -> int:
-    """Retry all dead_letter jobs without applying display-list pagination."""
-    return _transition_dead_letter(
+    """Retry all failed or dead-letter jobs without display-list pagination."""
+    return _transition_queue_jobs(
         new_status=JOB_STATUS_PENDING,
         reset_attempts=True,
-        where_clause="WHERE job_type = ? AND status = ?",
-        params=[job_type, JOB_STATUS_DEAD_LETTER],
+        where_clause="WHERE job_type = ? AND status IN (?, ?)",
+        params=[job_type, JOB_STATUS_FAILED, JOB_STATUS_DEAD_LETTER],
     )
 
 
 def skip_all_dead_letter_jobs(*, job_type: str = JOB_TYPE_EXTRACT) -> int:
     """Skip all dead_letter jobs without applying display-list pagination."""
-    return _transition_dead_letter(
+    return _transition_queue_jobs(
         new_status=JOB_STATUS_DONE,
         reset_attempts=False,
         where_clause="WHERE job_type = ? AND status = ?",
