@@ -1,47 +1,39 @@
 # Dashboard
 
-Lerim's hosted dashboard is planned for Lerim Cloud.
+Lerim ships an open-source local dashboard in `dashboard/`.
 
-This repo does not ship a full local web UI. The local runtime exposes:
+The dashboard talks directly to the local JSON API exposed by `lerim serve`.
+It is a read-only product surface for source sessions, runtime activity,
+records, and graph exploration.
 
-- the CLI
-- the local JSON API from `lerim serve`
-- a small transition page at `/` when no bundled static assets are present
-
-For local work, use the CLI and local API directly:
+## Run Locally
 
 ```bash
-lerim status
-lerim answer "What changed?"
+# Terminal 1: backend API + daemon
+lerim serve
+
+# Terminal 2: dashboard UI
+cd dashboard
+npm install
+npm run dev
+```
+
+Open `http://localhost:3000`.
+
+The UI proxies `/api` to `http://localhost:8765` in development. If the backend
+uses a different URL, start the UI with `LERIM_API_URL=<backend-url> npm run dev`.
+
+Use the CLI for write actions:
+
+```bash
 lerim ingest
 lerim curate
+lerim answer "What changed?"
+lerim queue
 ```
-
-The local API is available on port `8765` (default) when you run `lerim up` or `lerim serve`.
-
-```bash
-curl http://localhost:8765/api/health
-```
-
-## Planned Hosted Context Graph
-
-The planned hosted Lerim Cloud dashboard record view includes a Context Graph.
-It uses the learned graph projection produced after curation, not raw trace
-metadata. Nodes are curated records. Edges are reviewed relationships such as
-support, evidence, dependency, contradiction, supersession, and same-topic links.
-
-The planned graph view supports three cluster lenses:
-
-- semantic clusters persisted by the context graph phase
-- Louvain communities derived in the dashboard from accepted graph links
-- combined clusters derived from semantic and community groupings
-
-In the local open-source runtime, the graph projection is written for curation
-and future hosted visualization. The full interactive graph view is reserved for
-the hosted/cloud product.
 
 ## Related
 
 - [CLI: lerim serve](../cli/serve.md) — local API + daemon loop
-- [CLI: lerim dashboard](../cli/dashboard.md) — prints the current transition message
+- [CLI: lerim dashboard](../cli/dashboard.md) — local dashboard instructions
 - [CLI: lerim status](../cli/status.md) — runtime overview

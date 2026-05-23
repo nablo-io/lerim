@@ -1,6 +1,6 @@
 # lerim serve
 
-Start the HTTP API server and daemon loop in a single process. This repo does not bundle the full dashboard UI; the hosted product surface lives on Lerim Cloud.
+Start the HTTP API server and daemon loop in a single process. The open-source dashboard in `dashboard/` talks directly to this local API.
 
 ## Overview
 
@@ -9,7 +9,7 @@ Start the HTTP API server and daemon loop in a single process. This repo does no
 1. **HTTP API** — JSON endpoints used by CLI commands (`answer`, `ingest`, `curate`, `status`)
 2. **Daemon loop** — Background ingest and curate cycles on configured intervals
 
-GET `/` may return a minimal HTML stub when no bundled static assets are present.
+GET `/` may return bundled dashboard assets or a minimal HTML stub with local dashboard development instructions.
 
 This is the Docker container entrypoint (`lerim up` runs `lerim serve` inside the container), but it can also be run directly for development without Docker.
 
@@ -39,7 +39,7 @@ lerim serve [--host HOST] [--port PORT]
     <span class="param-type">integer</span>
     <span class="param-badge default">default: 8765</span>
   </div>
-  <p class="param-desc">TCP port for the JSON API (and stub HTML at <code>/</code> when no bundled UI).</p>
+  <p class="param-desc">TCP port for the JSON API and dashboard/static root.</p>
 </div>
 
 ## Examples
@@ -75,7 +75,7 @@ lerim serve
 | Component | Description | Endpoint |
 |-----------|-------------|----------|
 | HTTP API | JSON API for CLI commands | `http://<host>:<port>/api/` |
-| Root | Stub HTML or optional assets | `http://<host>:<port>/` |
+| Root | Dashboard assets or development stub | `http://<host>:<port>/` |
 | Daemon loop | Background ingest/curate on intervals | — (internal) |
 
 The daemon loop uses `ingest_interval_minutes` and `curate_interval_minutes` from your active Lerim config (defaults are in the shipped `default.toml`).
@@ -111,7 +111,7 @@ The daemon loop uses `ingest_interval_minutes` and `curate_interval_minutes` fro
 
     ---
 
-    Print the dashboard transition message + CLI alternatives
+    Print local dashboard instructions + CLI alternatives
 
     [:octicons-arrow-right-24: lerim dashboard](dashboard.md)
 

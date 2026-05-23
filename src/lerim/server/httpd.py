@@ -2,7 +2,7 @@
 
 Optional bundled static files under ``dashboard/`` (repo or ``/opt/lerim/dashboard``)
 may serve a local UI. If no ``index.html`` is present, GET ``/`` returns a
-minimal page pointing to Lerim Cloud; the web app itself lives in ``lerim-cloud``.
+minimal page pointing to local dashboard development instructions.
 """
 
 from __future__ import annotations
@@ -61,8 +61,6 @@ from lerim.sessions.catalog import (
 
 _REPO_DASHBOARD = Path(__file__).resolve().parents[3] / "dashboard"
 DASHBOARD_DIR = _REPO_DASHBOARD if _REPO_DASHBOARD.is_dir() else Path("/opt/lerim/dashboard")
-# Public web UI is hosted separately (lerim-cloud); this is the marketing/docs entry.
-_LERIM_CLOUD_UI_URL = "https://lerim.dev"
 MAX_BODY_BYTES = 1_000_000
 READ_ONLY_MESSAGE = "Dashboard is read-only. Use CLI commands for write actions."
 _REPORT_CACHE: dict[str, Any] = {"at": None, "value": None}
@@ -419,12 +417,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
             raise ValueError("JSON body must be an object")
         return parsed
 
-    def _serve_cloud_stub_html(self) -> None:
+    def _serve_dashboard_stub_html(self) -> None:
         """Serve minimal HTML when no bundled dashboard assets exist."""
         body = (
             "<!DOCTYPE html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"/>"
-            f"<title>Lerim</title></head><body><p>Lerim API is running on this host.</p>"
-            f"<p>The web UI is on <a href=\"{_LERIM_CLOUD_UI_URL}\">Lerim Cloud</a>.</p>"
+            "<title>Lerim</title></head><body><p>Lerim API is running on this host.</p>"
+            "<p>Run <code>lerim serve</code> for the backend and "
+            "<code>cd dashboard &amp;&amp; npm run dev</code> for the UI.</p>"
             "<p><a href=\"/api/health\">GET /api/health</a></p></body></html>\n"
         ).encode("utf-8")
         self.send_response(HTTPStatus.OK)
@@ -1052,7 +1051,7 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
             ):
                 self._serve_file("index.html")
             else:
-                self._serve_cloud_stub_html()
+                self._serve_dashboard_stub_html()
             return
         if path.startswith("/session/"):
             self.send_response(HTTPStatus.FOUND)

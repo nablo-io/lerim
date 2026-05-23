@@ -1,14 +1,13 @@
 # lerim dashboard
 
-Shows the current dashboard transition message and lists CLI alternatives.
+Prints the local dashboard startup commands.
 
 ## Overview
 
-This command prints the current transition message:
+The dashboard needs two running processes:
 
-- the local dashboard is not bundled in this repo
-- the hosted product surface lives on Lerim Cloud
-- the CLI remains the local control surface for ingest, curate, answer, and queue work
+- backend: `lerim serve`
+- UI: `cd dashboard && npm run dev`
 
 ## Syntax
 
@@ -25,15 +24,13 @@ lerim dashboard
 Sample output:
 
 ```
-  Lerim Dashboard is moving to the cloud.
-  The new dashboard will be available at https://lerim.dev
+  Lerim Dashboard runs locally with two processes:
+    backend: lerim serve
+    UI:      cd dashboard && npm run dev
 
-  In the meantime, use these CLI commands:
-    lerim status     - system overview
-    lerim answer        - query your stored context
-    lerim queue      - view session processing queue
-    lerim ingest       - process new sessions
-    lerim curate   - refine stored records
+  Open: http://localhost:3000
+  API:  http://localhost:8765
+  Writes stay in the CLI: ingest, curate, answer, queue.
 ```
 
 ## See also

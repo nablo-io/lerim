@@ -859,18 +859,15 @@ def context_brief_show_action(status: dict[str, Any]) -> str:
 
 
 def _cmd_dashboard(args: argparse.Namespace) -> int:
-    """Show dashboard transition message."""
+    """Show local dashboard instructions."""
     print()
-    print("  Lerim Dashboard is moving to the cloud.")
-    print("  The new dashboard will be available at https://lerim.dev")
+    print("  Lerim Dashboard runs locally with two processes:")
+    print("    backend: lerim serve")
+    print("    UI:      cd dashboard && npm run dev")
     print()
-    print("  In the meantime, use these CLI commands:")
-    print("    lerim status        - system overview")
-    print("    lerim answer        - query your stored context")
-    print("    lerim queue         - view session processing queue")
-    print("    lerim ingest        - process new sessions")
-    print("    lerim curate        - refine stored records")
-    print("    lerim context-brief - read generated startup context")
+    print("  Open: http://localhost:3000")
+    print("  API:  http://localhost:8765")
+    print("  Writes stay in the CLI: ingest, curate, answer, queue.")
     print()
     return 0
 
@@ -2365,7 +2362,7 @@ def _ship_to_cloud_once(config: Any, logger: Any) -> None:
 
 
 def _cmd_serve(args: argparse.Namespace) -> int:
-    """Start HTTP API + daemon loop in one process (web UI is Lerim Cloud)."""
+    """Start HTTP API + daemon loop in one process."""
     import signal
     import threading
     from http.server import ThreadingHTTPServer
@@ -2970,8 +2967,8 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard = sub.add_parser(
         "dashboard",
         formatter_class=_F,
-        help="Show Lerim Cloud web UI link",
-        description="Print Lerim Cloud web UI link and CLI alternatives.",
+        help="Show local dashboard instructions",
+        description="Print local dashboard instructions and CLI alternatives.",
     )
     dashboard.set_defaults(func=_cmd_dashboard)
 
