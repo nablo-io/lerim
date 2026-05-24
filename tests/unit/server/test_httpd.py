@@ -18,6 +18,7 @@ from threading import Thread
 
 import pytest
 
+from lerim.context.store import ContextStore
 from tests.helpers import make_config
 
 
@@ -221,6 +222,94 @@ def _seed_jobs(db_path: Path) -> None:
 		)
 
 
+def _seed_context_graph(db_path: Path) -> None:
+	"""Insert sample context graph rows into the test context DB."""
+	ContextStore(db_path).initialize()
+	now = "2026-03-20T10:00:00Z"
+	with sqlite3.connect(db_path) as conn:
+		conn.execute(
+			"""INSERT INTO projects (project_id, project_slug, repo_path, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?)""",
+			("proj_test", "myproject", "/tmp/myproject", now, now),
+		)
+		conn.execute(
+			"""INSERT INTO scopes (
+				scope_type, scope_id, scope_label, scope_slug, repo_path, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+			("project", "proj_test", "myproject", "myproject", "/tmp/myproject", now, now),
+		)
+		for record_id, kind, title in [
+			("rec_a", "decision", "Use explicit graph endpoints"),
+			("rec_b", "constraint", "Dashboard must show learned edges"),
+		]:
+			conn.execute(
+				"""INSERT INTO records (
+					record_id, project_id, scope_type, scope_id, scope_label, source_name,
+					source_profile, kind, title, body, status, created_at, updated_at, valid_from
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+				(
+					record_id,
+					"proj_test",
+					"project",
+					"proj_test",
+					"myproject",
+					"codex",
+					"coding",
+					kind,
+					title,
+					f"{title} body",
+					"active",
+					now,
+					now,
+					now,
+				),
+			)
+			conn.execute(
+				"""INSERT INTO context_nodes (
+					node_id, project_id, scope_type, scope_id, scope_label, node_type,
+					label, summary, status, semantic_cluster, created_at, updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+				(
+					record_id,
+					"proj_test",
+					"project",
+					"proj_test",
+					"myproject",
+					kind,
+					title,
+					f"{title} summary",
+					"active",
+					"semantic_dashboard",
+					now,
+					now,
+				),
+			)
+		conn.execute(
+			"""INSERT INTO context_edges (
+				edge_id, project_id, scope_type, scope_id, scope_label, source_node_id,
+				target_node_id, relation_kind, label, rationale, evidence_record_ids,
+				confidence, status, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+			(
+				"edge_ab",
+				"proj_test",
+				"project",
+				"proj_test",
+				"myproject",
+				"rec_a",
+				"rec_b",
+				"supports",
+				"Endpoint supports graph UI",
+				"Without the endpoint, the dashboard cannot render learned edges.",
+				json.dumps(["rec_a", "rec_b"]),
+				0.9,
+				"active",
+				now,
+				now,
+			),
+		)
+
+
 def _write_dashboard_trace(path: Path) -> None:
 	"""Write a tiny trace with message, model, and tool metadata."""
 	path.write_text(
@@ -259,6 +348,7 @@ def test_server(tmp_path, monkeypatch):
 	_seed_sessions(db_path)
 	_seed_service_runs(db_path)
 	_seed_jobs(db_path)
+	_seed_context_graph(config.context_db_path)
 
 	# Platforms file
 	platforms_data = {
@@ -769,6 +859,26 @@ def test_post_jobs_skip_all(test_server):
 	status, body = _api_post(port, "/api/jobs/skip-all", {})
 	assert status == 200
 	assert "skipped" in body
+
+
+def test_post_graph_query_returns_learned_edges(test_server):
+	"""POST /api/graph/query returns persisted context graph edges."""
+	port, _, _ = test_server
+	status, body = _api_post(port, "/api/graph/query", {
+		"max_nodes": 20,
+		"max_edges": 20,
+		"connected_only": True,
+	})
+	assert status == 200
+	assert body["graph_mode"] == "learned_graph"
+	assert body["used_record_fallback"] is False
+	assert body["returned_nodes"] == 2
+	assert body["returned_edges"] == 1
+	assert body["active_edge_count"] == 1
+	assert body["edges"][0]["source"] == "rec_a"
+	assert body["edges"][0]["target"] == "rec_b"
+	assert body["edges"][0]["kind"] == "supports"
+	assert body["edges"][0]["evidence_record_ids"] == ["rec_a", "rec_b"]
 
 
 def test_post_job_retry(test_server):

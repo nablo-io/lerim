@@ -517,28 +517,10 @@ export const api = {
   },
 
   queryGraph: async (body: { max_nodes?: number; max_edges?: number; connected_only?: boolean }): Promise<GraphQueryResponse> => {
-    const data = await queryRecords({ limit: String(body.max_nodes || 100), status: "active" });
-    return {
-      nodes: data.records.map((record) => ({
-        id: record.record_id,
-        label: record.title || record.record_id,
-        kind: "record",
-        record_kind: record.record_kind || "record",
-        summary: record.body || "",
-        project: record.project ?? undefined,
-        status: record.status,
-        semantic_cluster: record.record_kind || "records",
-        created_at: record.created_at,
-        updated_at: record.updated_at,
-      })),
-      edges: [],
-      total_records: data.total,
-      matching_records: data.total,
-      returned_nodes: data.records.length,
-      returned_edges: 0,
-      used_record_fallback: true,
-      graph_mode: "record_fallback",
-    } satisfies GraphQueryResponse;
+    return apiFetch<GraphQueryResponse>("/api/graph/query", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
   },
 
   expandGraph: async (body: { node_id: string }) => {

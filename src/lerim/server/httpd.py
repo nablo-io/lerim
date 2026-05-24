@@ -20,6 +20,7 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from lerim.config.logging import logger
+from lerim.context.store import ContextStore
 from lerim.server.api import (
     api_answer,
     api_connect,
@@ -378,6 +379,55 @@ def _save_config_patch(patch: dict[str, Any]) -> dict[str, Any]:
     return _serialize_full_config(config)
 
 
+def _decode_json_list(raw: Any) -> list[Any]:
+    """Decode a JSON list stored in SQLite text."""
+    if isinstance(raw, list):
+        return raw
+    if raw is None:
+        return []
+    try:
+        value = json.loads(str(raw))
+    except json.JSONDecodeError:
+        return []
+    return value if isinstance(value, list) else []
+
+
+def _graph_node_payload(row: sqlite3.Row) -> dict[str, Any]:
+    """Serialize a context graph node row for the dashboard graph UI."""
+    return {
+        "id": row["node_id"],
+        "label": row["label"],
+        "kind": "record",
+        "record_kind": row["node_type"],
+        "summary": row["summary"],
+        "project": row["scope_label"],
+        "status": row["status"],
+        "semantic_cluster": row["semantic_cluster"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def _graph_edge_payload(row: sqlite3.Row) -> dict[str, Any]:
+    """Serialize a context graph edge row for the dashboard graph UI."""
+    return {
+        "id": row["edge_id"],
+        "source": row["source_node_id"],
+        "target": row["target_node_id"],
+        "kind": row["relation_kind"],
+        "label": row["label"],
+        "rationale": row["rationale"],
+        "weight": row["confidence"],
+        "evidence_record_ids": _decode_json_list(row["evidence_record_ids"]),
+        "status": row["status"],
+    }
+
+
+def _placeholders(values: list[Any]) -> str:
+    """Return SQLite placeholders for a non-empty list."""
+    return ", ".join("?" for _ in values)
+
+
 class DashboardHandler(BaseHTTPRequestHandler):
     """HTTP handler: JSON API routes and optional static files; stub root if no UI."""
 
@@ -689,6 +739,143 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
         models = sorted(set(list_provider_models(provider)))
         self._json({"models": models})
 
+    def _api_graph_query(self) -> None:
+        """Return learned context graph nodes and edges for the dashboard."""
+        body = self._read_json_body()
+        max_nodes = _parse_int(str(body.get("max_nodes") or ""), 140, minimum=1, maximum=400)
+        max_edges = _parse_int(str(body.get("max_edges") or ""), 300, minimum=0, maximum=1000)
+        connected_only = bool(body.get("connected_only"))
+        config = get_config()
+        if not config.context_db_path.exists():
+            self._json({
+                "nodes": [],
+                "edges": [],
+                "total_records": 0,
+                "returned_nodes": 0,
+                "returned_edges": 0,
+                "graph_node_count": 0,
+                "active_edge_count": 0,
+                "connected_node_count": 0,
+                "projection_ready": False,
+                "graph_mode": "empty",
+            })
+            return
+        ContextStore(config.context_db_path).initialize()
+        with sqlite3.connect(config.context_db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            total_records = int(
+                conn.execute("SELECT COUNT(1) FROM records WHERE status = 'active'").fetchone()[0] or 0
+            )
+            graph_node_count = int(
+                conn.execute("SELECT COUNT(1) FROM context_nodes WHERE status = 'active'").fetchone()[0] or 0
+            )
+            active_edge_count = int(
+                conn.execute("SELECT COUNT(1) FROM context_edges WHERE status = 'active'").fetchone()[0] or 0
+            )
+            connected_node_count = int(
+                conn.execute(
+                    """SELECT COUNT(DISTINCT node_id) FROM (
+                        SELECT source_node_id AS node_id FROM context_edges WHERE status = 'active'
+                        UNION
+                        SELECT target_node_id AS node_id FROM context_edges WHERE status = 'active'
+                    )"""
+                ).fetchone()[0]
+                or 0
+            )
+            if graph_node_count == 0:
+                self._json({
+                    "nodes": [],
+                    "edges": [],
+                    "total_records": total_records,
+                    "returned_nodes": 0,
+                    "returned_edges": 0,
+                    "graph_node_count": graph_node_count,
+                    "active_edge_count": active_edge_count,
+                    "connected_node_count": connected_node_count,
+                    "projection_ready": False,
+                    "graph_mode": "empty",
+                })
+                return
+            edge_rows = conn.execute(
+                """SELECT edge_id, source_node_id, target_node_id, relation_kind, label,
+                          rationale, evidence_record_ids, confidence, status
+                   FROM context_edges
+                   WHERE status = 'active'
+                   ORDER BY confidence DESC, updated_at DESC
+                   LIMIT ?""",
+                (max_edges,),
+            ).fetchall()
+            selected_ids: list[str] = []
+            seen_ids: set[str] = set()
+            for row in edge_rows:
+                for node_id in (row["source_node_id"], row["target_node_id"]):
+                    if node_id not in seen_ids:
+                        seen_ids.add(node_id)
+                        selected_ids.append(node_id)
+            remaining = max_nodes - len(selected_ids)
+            if remaining > 0 and not connected_only:
+                excluded_sql = ""
+                params: list[Any] = []
+                if selected_ids:
+                    excluded_sql = f"AND node_id NOT IN ({_placeholders(selected_ids)})"
+                    params.extend(selected_ids)
+                node_rows = conn.execute(
+                    f"""SELECT node_id FROM context_nodes
+                        WHERE status = 'active' {excluded_sql}
+                        ORDER BY updated_at DESC
+                        LIMIT ?""",
+                    (*params, remaining),
+                ).fetchall()
+                for row in node_rows:
+                    node_id = row["node_id"]
+                    if node_id not in seen_ids:
+                        seen_ids.add(node_id)
+                        selected_ids.append(node_id)
+            selected_ids = selected_ids[:max_nodes]
+            if not selected_ids:
+                self._json({
+                    "nodes": [],
+                    "edges": [],
+                    "total_records": total_records,
+                    "returned_nodes": 0,
+                    "returned_edges": 0,
+                    "graph_node_count": graph_node_count,
+                    "active_edge_count": active_edge_count,
+                    "connected_node_count": connected_node_count,
+                    "projection_ready": active_edge_count > 0,
+                    "graph_mode": "empty",
+                })
+                return
+            node_rows = conn.execute(
+                f"""SELECT node_id, node_type, label, summary, status, semantic_cluster,
+                          scope_label, created_at, updated_at
+                   FROM context_nodes
+                   WHERE status = 'active' AND node_id IN ({_placeholders(selected_ids)})""",
+                selected_ids,
+            ).fetchall()
+            selected_set = {row["node_id"] for row in node_rows}
+            returned_edges = [
+                row
+                for row in edge_rows
+                if row["source_node_id"] in selected_set and row["target_node_id"] in selected_set
+            ]
+        self._json({
+            "nodes": [_graph_node_payload(row) for row in node_rows],
+            "edges": [_graph_edge_payload(row) for row in returned_edges],
+            "total_records": total_records,
+            "matching_records": total_records,
+            "returned_nodes": len(node_rows),
+            "returned_edges": len(returned_edges),
+            "truncated": graph_node_count > len(node_rows),
+            "dropped_edge_count": max(0, active_edge_count - len(returned_edges)),
+            "graph_node_count": graph_node_count,
+            "active_edge_count": active_edge_count,
+            "connected_node_count": connected_node_count,
+            "projection_ready": active_edge_count > 0,
+            "used_record_fallback": False,
+            "graph_mode": "learned_graph" if returned_edges else "empty",
+        })
+
     def _handle_api_get(self, path: str, query: dict[str, list[str]]) -> None:
         """Dispatch GET API routes to the matching handler."""
         query_handlers = {
@@ -831,6 +1018,17 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
                 self._error(
                     HTTPStatus.GATEWAY_TIMEOUT,
                     f"Answer timed out after {ANSWER_REQUEST_TIMEOUT_SECONDS} seconds",
+                )
+            return
+        if path == "/api/graph/query":
+            try:
+                self._api_graph_query()
+            except ValueError as exc:
+                self._error(HTTPStatus.BAD_REQUEST, str(exc))
+            except sqlite3.Error as exc:
+                self._error(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    f"Graph query failed: {exc}",
                 )
             return
         if path == "/api/query":
