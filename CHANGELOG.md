@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.14] - 2026-05-27
+
+### Added
+- Made `lerim dashboard` a local dashboard launcher that ensures the backend is
+  reachable, installs dashboard npm dependencies when needed, starts the Next.js
+  UI, and prints the dashboard URL.
+- Added `lerim dashboard --port` for choosing the local dashboard UI port.
+
 ## [0.3.13] - 2026-05-27
 
 ### Added
