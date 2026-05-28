@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.15] - 2026-05-28
+
+### Added
+- Added an Insights memory timeline with created, revised, archived, and active
+  context signals over the selected time window.
+- Added clickable changed-memory drilldown rows with a detail modal for memory
+  body, typed fields, provenance, and version metadata.
+
+### Changed
+- Grouped Insights charts into separate Memory Timeline and Source Activity
+  sections while keeping one shared page-level time window selector.
+- Hid empty model and tool diagnostic charts until indexed trace metadata exists,
+  while keeping the readiness note visible.
+
 ## [0.3.14] - 2026-05-27
 
 ### Added
