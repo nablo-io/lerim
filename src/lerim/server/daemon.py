@@ -729,6 +729,50 @@ def run_context_brief_for_project(
         return {"status": "failed", **details}
 
 
+def run_working_memory_for_project(
+    *,
+    project_name: str,
+    project_path: Path,
+    trigger: str,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Run one Working Memory refresh and record a service-run row."""
+    started = _now_iso()
+    try:
+        agent = LerimRuntime(default_cwd=str(project_path))
+        result = agent.working_memory(
+            repo_root=project_path,
+            project_name=project_name,
+            force=force,
+            trigger=trigger,
+        )
+        status = "skipped" if result.get("status") == "skipped" else "completed"
+        _record_service_event(
+            record_service_run,
+            job_type="working-memory",
+            status=status,
+            started_at=started,
+            trigger=trigger,
+            details=result,
+        )
+        return result
+    except Exception as exc:
+        details = {
+            "project": project_name,
+            "repo_path": str(project_path),
+            "error": str(exc),
+        }
+        _record_service_event(
+            record_service_run,
+            job_type="working-memory",
+            status="failed",
+            started_at=started,
+            trigger=trigger,
+            details=details,
+        )
+        return {"status": "failed", **details}
+
+
 def run_context_brief_daily(*, trigger: str = "daemon") -> dict[str, Any]:
     """Refresh Context Brief for all registered projects, skipping unchanged ones."""
     reload_config()
@@ -738,6 +782,31 @@ def run_context_brief_daily(*, trigger: str = "daemon") -> dict[str, Any]:
     for project_name, project_path_str in projects.items():
         project_path = Path(project_path_str).expanduser().resolve()
         results[project_name] = run_context_brief_for_project(
+            project_name=project_name,
+            project_path=project_path,
+            trigger=trigger,
+            force=False,
+        )
+    generated = sum(1 for item in results.values() if item.get("status") == "generated")
+    skipped = sum(1 for item in results.values() if item.get("status") == "skipped")
+    failed = sum(1 for item in results.values() if item.get("status") == "failed")
+    return {
+        "projects": results,
+        "generated": generated,
+        "skipped": skipped,
+        "failed": failed,
+    }
+
+
+def run_working_memory_daily(*, trigger: str = "daemon") -> dict[str, Any]:
+    """Refresh Working Memory for all registered projects, skipping fresh ones."""
+    reload_config()
+    config = get_config()
+    projects = config.projects or {}
+    results: dict[str, dict[str, Any]] = {}
+    for project_name, project_path_str in projects.items():
+        project_path = Path(project_path_str).expanduser().resolve()
+        results[project_name] = run_working_memory_for_project(
             project_name=project_name,
             project_path=project_path,
             trigger=trigger,
@@ -1403,13 +1472,20 @@ def run_curate_once(
                     ),
                 }
                 if _record_count_delta(metric_row) > 0:
-                    wm_result = run_context_brief_for_project(
+                    brief_result = run_context_brief_for_project(
                         project_name=project_name,
                         project_path=project_path,
                         trigger="curate",
                         force=False,
                     )
-                    results[project_name]["context_brief"] = wm_result
+                    memory_result = run_working_memory_for_project(
+                        project_name=project_name,
+                        project_path=project_path,
+                        trigger="curate",
+                        force=False,
+                    )
+                    results[project_name]["context_brief"] = brief_result
+                    results[project_name]["working_memory"] = memory_result
             except Exception as exc:
                 failed_projects.append(project_name)
                 results[project_name] = {"error": str(exc)}

@@ -76,20 +76,23 @@ Context curation uses its config budget as a model-call cap. Context answering u
 
 ## Automatic scheduling
 
-The daemon runs ingest, curate, and Context Brief on independent schedules:
+The daemon runs ingest, curate, Context Brief, and Working Memory on independent
+schedules:
 
 | Path | Config key | Default (see `default.toml`) |
 |------|------------|---------|
 | Ingest | `ingest_interval_minutes` | `30` |
 | Curate | `curate_interval_minutes` | `60` |
 | Context Brief | built-in daily pass | `24h` |
+| Working Memory | built-in daily pass | `24h` |
 
 Ingest and curate trigger immediately on daemon startup, then repeat at their
-configured intervals. Context Brief also runs from the daemon loop, but it
-skips projects with no records changed since the current artifact was generated.
+configured intervals. Context Brief and Working Memory also run from the daemon
+loop, but they skip projects whose current artifacts are fresh.
 
-Curate also triggers Context Brief for a project when it changed records for
-that project. Ingest does not directly trigger Context Brief.
+Curate also triggers Context Brief and Working Memory for a project when it
+changed records for that project. Ingest does not directly trigger either
+derived artifact.
 
 ### Local model memory management
 
@@ -105,6 +108,8 @@ lerim curate                       # run curate cycle
 lerim curate --dry-run             # preview without writing
 lerim context-brief status         # check generated startup context
 lerim context-brief refresh        # refresh only if records changed
+lerim working-memory status        # check recent short-term context
+lerim working-memory refresh       # refresh if records changed or window moved
 ```
 
 ---

@@ -28,6 +28,10 @@ These work on local files, Docker, or config:
 - `lerim context-brief status`
 - `lerim context-brief path`
 - `lerim context-brief refresh`
+- `lerim working-memory show`
+- `lerim working-memory status`
+- `lerim working-memory path`
+- `lerim working-memory refresh`
 - `lerim context records`
 
 ## Server-backed commands
@@ -45,6 +49,7 @@ These talk to the running Lerim service:
 The CLI works with the global context database.
 Project commands register scope only.
 
-Context Brief is a generated Markdown view of the global context database. It
-is useful at agent startup, but `~/.lerim/context.sqlite3` remains the source of
-truth.
+Context Brief is a generated long-term Markdown view of the global context
+database. Working Memory is a separate short-term generated view of recent
+record-version movement. Both are useful at agent startup, but
+`~/.lerim/context.sqlite3` remains the source of truth.

@@ -1,4 +1,4 @@
-"""Generated Context Brief use case for fast agent startup context."""
+"""Generated Context Brief use case for durable startup context."""
 
 from __future__ import annotations
 
@@ -16,9 +16,19 @@ from lerim.context import ContextStore, ProjectIdentity, resolve_project_identit
 CONTEXT_BRIEF_FILENAME = "CONTEXT_BRIEF.md"
 CONTEXT_BRIEF_MANIFEST_FILENAME = "manifest.json"
 CONTEXT_BRIEF_OPERATION = "context-brief"
-MAX_CANDIDATE_RECORDS = 80
-MAX_LINE_COUNT = 80
-REFERENCE_LINE_LIMIT = 12
+MAX_CANDIDATE_RECORDS = 60
+MAX_LINE_COUNT = 120
+REFERENCE_LINE_LIMIT = 20
+SECTION_LINE_LIMITS = {
+    "summary": 2,
+    "start_here": 4,
+    "current_handoff": 4,
+    "decisions": 8,
+    "constraints_preferences": 8,
+    "project_facts": 6,
+    "open_risks": 4,
+    "follow_up_queries": 3,
+}
 KIND_PRIORITY = {
     "decision": 0,
     "preference": 1,
@@ -27,11 +37,11 @@ KIND_PRIORITY = {
     "episode": 4,
 }
 KIND_BUDGETS = {
-    "decision": 20,
-    "preference": 10,
-    "constraint": 14,
-    "fact": 14,
-    "episode": 8,
+    "decision": 16,
+    "preference": 8,
+    "constraint": 12,
+    "fact": 12,
+    "episode": 2,
 }
 SECTION_KIND_RULES = {
     "decisions": {"decision"},
@@ -368,6 +378,71 @@ def validate_draft(
                     )
 
 
+def sanitize_draft_section_kinds(
+    draft: ContextBriefDraft,
+    *,
+    record_kinds: dict[str, str],
+) -> ContextBriefDraft:
+    """Drop fixed-section lines that cite records outside that section's kind rule."""
+    normalized_kinds = {
+        str(record_id): str(kind).strip().lower()
+        for record_id, kind in record_kinds.items()
+    }
+
+    def keep_matching(section_name: str, lines: tuple[MemoryLine, ...]) -> tuple[MemoryLine, ...]:
+        allowed_kinds = SECTION_KIND_RULES.get(section_name)
+        if not allowed_kinds:
+            return lines
+        kept: list[MemoryLine] = []
+        for line in lines:
+            kinds = [normalized_kinds.get(record_id) for record_id in line.record_ids]
+            if kinds and all(kind in allowed_kinds for kind in kinds):
+                kept.append(line)
+        return tuple(kept)
+
+    return ContextBriefDraft(
+        summary=draft.summary,
+        start_here=draft.start_here,
+        current_handoff=draft.current_handoff,
+        decisions=keep_matching("decisions", draft.decisions),
+        constraints_preferences=keep_matching(
+            "constraints_preferences",
+            draft.constraints_preferences,
+        ),
+        project_facts=keep_matching("project_facts", draft.project_facts),
+        open_risks=draft.open_risks,
+        follow_up_queries=draft.follow_up_queries,
+        sections=draft.sections,
+    )
+
+
+def trim_context_brief_draft(draft: ContextBriefDraft) -> ContextBriefDraft:
+    """Limit synthesized sections to a startup-sized brief instead of a record dump."""
+    trimmed_sections: list[MemorySection] = []
+    for section in draft.sections[:2]:
+        trimmed_sections.append(
+            MemorySection(
+                title=section.title,
+                lines=section.lines[:6],
+            )
+        )
+    return ContextBriefDraft(
+        summary=draft.summary[: SECTION_LINE_LIMITS["summary"]],
+        start_here=draft.start_here[: SECTION_LINE_LIMITS["start_here"]],
+        current_handoff=draft.current_handoff[: SECTION_LINE_LIMITS["current_handoff"]],
+        decisions=draft.decisions[: SECTION_LINE_LIMITS["decisions"]],
+        constraints_preferences=draft.constraints_preferences[
+            : SECTION_LINE_LIMITS["constraints_preferences"]
+        ],
+        project_facts=draft.project_facts[: SECTION_LINE_LIMITS["project_facts"]],
+        open_risks=draft.open_risks[: SECTION_LINE_LIMITS["open_risks"]],
+        follow_up_queries=draft.follow_up_queries[
+            : SECTION_LINE_LIMITS["follow_up_queries"]
+        ],
+        sections=tuple(trimmed_sections),
+    )
+
+
 def iter_draft_lines(draft: ContextBriefDraft) -> tuple[MemoryLine, ...]:
     """Return all synthesized memory lines in rendered section order."""
     return tuple(line for _section_name, line in iter_named_draft_lines(draft))
@@ -422,28 +497,13 @@ def render_context_brief_markdown(
     lines = [
         "# Context Brief",
         "",
-        "> Generated from Lerim SQLite context. This markdown is a derived view, not the source of truth.",
-        "> It reflects persisted Lerim records only. Check git status, tests, and the current chat for live workspace state.",
+        "> Long-term Lerim project memory generated from SQLite context. This markdown is a derived view, not the source of truth.",
+        "> It reflects persisted durable records only. Use Working Memory for short-term continuation context, plus git status, tests, and the current chat for live workspace state.",
         "",
-        f"- Project: `{project.name}` (`{project.identity.project_id}`)",
+        f"- Project: `{project.name}`",
         f"- Generated: `{generated_at}`",
-        f"- Previous generation: `{previous_generated_at or 'none'}`",
-        f"- Generation trigger: `{generation_trigger}`",
-        f"- Records considered: {records_considered}",
-        f"- Records cited: {records_included}",
-        f"- DB records changed before this generation: {db_records_changed_since_previous}",
-        "- Live DB freshness: `lerim context-brief status`",
-        "- Refresh: `lerim context-brief refresh`",
-        "- Inspect sources: use the Sources section below, or run "
-        f"`lerim query records list --scope project --project {project.identity.repo_path} --json`.",
         "",
     ]
-    if current_file is not None:
-        lines.append(f"- Current file: `{current_file}`")
-    if run_folder is not None:
-        lines.append(f"- Run folder: `{run_folder}`")
-    if current_file is not None or run_folder is not None:
-        lines.append("")
     has_episode_evidence = any(
         str(record.get("kind") or "") == "episode"
         for record in candidate_records or []
@@ -457,6 +517,7 @@ def render_context_brief_markdown(
             f"- To read this exact memory from another cwd, pass `--project {project.identity.repo_path}`.",
             "- Code/package work may live in a child directory; use more specific Project Facts paths for code and tests.",
             "- Run `git status` before editing; Context Brief is DB context, not workspace state.",
+            "- Run `lerim working-memory show` for short-term continuation context.",
             "- Treat any test/build results below as historical persisted evidence; rerun relevant checks after edits.",
         ]
     )
@@ -466,7 +527,7 @@ def render_context_brief_markdown(
             lines.append(rendered)
     if not has_episode_evidence:
         lines.append(
-            "- No implementation handoff is available from persisted episode records; use the current chat, tests, and git state for live work."
+            "- No implementation handoff is available from persisted episode records here; use Working Memory, the current chat, tests, and git state for live work."
         )
     lines.append("")
     if not iter_draft_lines(draft):
@@ -494,12 +555,12 @@ def render_context_brief_markdown(
         lines.extend(
             [
                 "",
-                "> No recent episode records were cited. Treat this as durable context, not a complete handoff of current work.",
+                "> No recent episode records were cited. Treat this as durable long-term context, not a continuation handoff.",
             ]
         )
     append_memory_section(
         lines,
-        title="Current Handoff",
+        title="Continuation Handoff",
         items=draft.current_handoff[:10],
         seen_lines=seen_lines,
     )
@@ -550,6 +611,18 @@ def render_context_brief_markdown(
         lines = append_sources_with_budget(lines, source_lines)
     else:
         lines = truncate_markdown_lines(lines)
+    append_context_brief_technical_details(
+        lines,
+        project=project,
+        generated_at=generated_at,
+        previous_generated_at=previous_generated_at,
+        generation_trigger=generation_trigger,
+        records_considered=records_considered,
+        records_included=records_included,
+        db_records_changed_since_previous=db_records_changed_since_previous,
+        current_file=current_file,
+        run_folder=run_folder,
+    )
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -640,21 +713,71 @@ def truncate_markdown_lines(lines: list[str]) -> list[str]:
 
 
 def append_sources_with_budget(lines: list[str], source_lines: list[str]) -> list[str]:
-    """Append sources while preserving them under the max line budget."""
+    """Append as many sources as fit without hiding the startup brief body."""
     sources_block = ["", "## Sources", "", *source_lines]
     if len(lines) + len(sources_block) <= MAX_LINE_COUNT:
         return [*lines, *sources_block]
-    reserved = len(sources_block) + 3
-    body_budget = max(0, MAX_LINE_COUNT - reserved)
-    body = lines[:body_budget]
-    strip_dangling_section_header(body)
-    body.extend(
+    body = list(lines)
+    minimum_source_budget = 6
+    if len(body) > MAX_LINE_COUNT - minimum_source_budget:
+        body = body[: max(0, MAX_LINE_COUNT - minimum_source_budget - 2)]
+        strip_dangling_section_header(body)
+        body.extend(
+            [
+                "",
+                "> Body truncated for startup size. Use `lerim query` for deeper context.",
+            ]
+        )
+    remaining = MAX_LINE_COUNT - len(body) - 3
+    if remaining <= 0:
+        return truncate_markdown_lines(body)
+    visible_sources = source_lines[:remaining]
+    hidden = len(source_lines) - len(visible_sources)
+    if hidden > 0 and visible_sources:
+        visible_sources = visible_sources[:-1]
+        hidden = len(source_lines) - len(visible_sources)
+        visible_sources.append(
+            f"- {hidden} more cited source(s); run `lerim query records list --json` for full DB details."
+        )
+    return [*body, "", "## Sources", "", *visible_sources]
+
+
+def append_context_brief_technical_details(
+    lines: list[str],
+    *,
+    project: ContextBriefProject,
+    generated_at: str,
+    previous_generated_at: str | None,
+    generation_trigger: str,
+    records_considered: int,
+    records_included: int,
+    db_records_changed_since_previous: int,
+    current_file: Path | None,
+    run_folder: Path | None,
+) -> None:
+    """Append machine-oriented Context Brief metadata after useful memory content."""
+    lines.extend(["", "## Technical Details", ""])
+    lines.extend(
         [
-            "",
-            "> Body truncated for startup size. Sources are preserved below.",
+            f"- Project ID: `{project.identity.project_id}`",
+            f"- Repo path: `{project.identity.repo_path}`",
+            f"- Generated: `{generated_at}`",
+            f"- Previous generation: `{previous_generated_at or 'none'}`",
+            f"- Generation trigger: `{generation_trigger}`",
+            f"- Records considered: {records_considered}",
+            f"- Records cited: {records_included}",
+            f"- DB records changed before this generation: {db_records_changed_since_previous}",
+            "- Live DB freshness: `lerim context-brief status`",
+            "- Refresh: `lerim context-brief refresh`",
+            "- Continuation handoff: `lerim working-memory show`",
+            "- Inspect full sources: "
+            f"`lerim query records list --scope project --project {project.identity.repo_path} --json`.",
         ]
     )
-    return [*body, *sources_block]
+    if current_file is not None:
+        lines.append(f"- Current file: `{current_file}`")
+    if run_folder is not None:
+        lines.append(f"- Run folder: `{run_folder}`")
 
 
 def strip_dangling_section_header(lines: list[str]) -> None:

@@ -30,17 +30,21 @@ function CompileContextBrief(
     - Every field must be a list of objects with text and record_ids.
     - Every non-empty line must include at least one exact record_id copied from the candidate records.
     - Put record IDs only in record_ids, never in text.
-    - Keep current_handoff empty unless candidate records explicitly describe recent flow, current work, open loops, or next actions.
+    - Treat current_handoff as "Continuation Handoff": populate it only when candidate episode records explicitly describe recent flow, current work, open loops, or a direct continuation state.
+    - Do not invent next actions. The next user prompt decides what should be done next; current_handoff should only say where a continuation would resume from.
     - Keep open_risks empty unless candidate records explicitly describe an unresolved risk, blocker, requested follow-up, or review queue item.
     - Treat validation/build/check results as historical persisted evidence; line text must say "Persisted record says ..." and "rerun relevant checks after edits."
-    - Prefer decisions, preferences, constraints, and stable facts over episode detail.
+    - Prefer final decisions, preferences, constraints, and stable facts over episode detail.
+    - When a decision record has decision/why fields, write the current final decision plus why/how it should shape future work.
     - Respect source kinds exactly: decisions may cite only decision records; constraints_preferences may cite only preference or constraint records; project_facts may cite only fact records.
     - Leave a section empty when there are no candidate records for that section's allowed kinds.
     - Do not place a fact, constraint, or preference in decisions just because it sounds important or rule-like.
     - Do not duplicate the same point in multiple detail sections. Choose the one section that matches the cited record kind.
     - Do not invent current workspace state beyond stored records.
     - Do not repeat the same memory across fields.
-    - Keep the whole output compact enough for a roughly 50-line markdown file.
+    - Select, do not enumerate. Leave out true-but-low-leverage records.
+    - Maximum lines: summary 2, start_here 4, current_handoff 4, decisions 8, constraints_preferences 8, project_facts 6, open_risks 4, follow_up_queries 3.
+    - The ideal output is useful in under 60 seconds at agent startup.
 
     {{ _.role("user") }}
     CANDIDATE PROFILE JSON:

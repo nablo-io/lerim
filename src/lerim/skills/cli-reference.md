@@ -15,9 +15,10 @@ running server (`lerim up` or `lerim serve`). `unscoped` also requires the runni
 API. Most other commands are **host-only**
 (local files, Docker CLI, local SQLite state). `mcp` is also host-only; MCP
 clients launch it over stdio.
-`context-brief show`, `context-brief status`, and `context-brief path` are
-fast local reads. `context-brief refresh` runs local generation for the resolved
-project and records a service run.
+`context-brief show`, `context-brief status`, `context-brief path`,
+`working-memory show`, `working-memory status`, and `working-memory path` are
+fast local reads. `context-brief refresh` and `working-memory refresh` run local
+generation for the resolved project and record service runs.
 
 ## Global flags
 
@@ -47,6 +48,7 @@ project and records a service run.
 - context graph linking runs as part of `curate`
 - `trace` (`import`) (host-only)
 - `context-brief` (`show`, `status`, `path`, `refresh`) (host-only)
+- `working-memory` (`show`, `status`, `path`, `refresh`) (host-only)
 - `dashboard`
 - `answer`
 - `query`
@@ -66,7 +68,6 @@ Compatibility aliases:
 - `sync` -> `ingest` (deprecated; may be removed in a future release)
 - `maintain` -> `curate` (deprecated; may be removed in a future release)
 - `ask` -> `answer` (deprecated; may be removed in a future release)
-- `working-memory` -> `context-brief` (deprecated; may be removed in a future release)
 
 ## Commands
 
@@ -357,7 +358,7 @@ lerim curate --dry-run      # preview only, no writes
 
 ### `lerim context-brief` (host-only)
 
-Generated markdown startup context for project-scoped agent work. The markdown lives under
+Generated long-term markdown startup context for project-scoped agent work. The markdown lives under
 `~/.lerim/workspace/current/<project_id>/CONTEXT_BRIEF.md` and is a derived
 view of `~/.lerim/context.sqlite3`, not a second memory store.
 
@@ -388,7 +389,7 @@ Rendered artifact shape:
 |---------|--------|
 | `Summary` | Compact cited startup cache |
 | `Start Here` | Deterministic Lerim guidance for project scope, freshness, workspace state, and verification |
-| `Current Handoff` | Recent episode evidence only; otherwise an explicit no-handoff note |
+| `Continuation Handoff` | Recent episode evidence only; otherwise an explicit no-handoff note |
 | `Decisions` | Durable decision records |
 | `Constraints & Preferences` | Durable constraint and preference records |
 | `Project Facts` | Durable facts that prevent mistakes |
@@ -402,7 +403,8 @@ Notes:
 - Treat validation/build/check results inside Context Brief as historical persisted evidence; rerun relevant checks after edits.
 - `show` prepends live DB freshness; the markdown that follows is still the last generated snapshot.
 - `Start Here` is deterministic. Do not read it as model-written evidence.
-- `Current Handoff` is valid only when backed by recent episode records.
+- `Continuation Handoff` is valid only when backed by recent episode records.
+- Use `lerim working-memory show` for short-term continuation context.
 - Daily daemon refresh and curate-triggered refresh skip unchanged projects.
 - Ingest does not directly trigger Context Brief in v1.
 
@@ -424,10 +426,39 @@ flowchart TD
     K --> L["copy latest files to workspace/current/<project_id>"]
 ```
 
+### `lerim working-memory` (host-only)
+
+Generated short-term markdown handoff for recent continuation context. The markdown
+lives under `~/.lerim/workspace/current/<project_id>/WORKING_MEMORY.md` and is a
+derived view of recent `record_versions`, not a second memory store.
+
+```bash
+lerim working-memory show              # print live freshness + markdown
+lerim working-memory status            # show short-window freshness metadata
+lerim working-memory path              # print stable current file path
+lerim working-memory refresh           # regenerate if records changed or window moved
+lerim working-memory refresh --force   # regenerate even if fresh
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `show` | Print live freshness plus the current `WORKING_MEMORY.md` |
+| `status` | Print availability, generated time, age, window, changed-record count, current path, latest run, and suggested action |
+| `path` | Print the stable expected current artifact path |
+| `refresh` | Generate dated artifacts and update the stable current copy |
+
+Notes:
+- Working Memory uses a six-hour recency window.
+- It follows `superseded_by_record_id` to show current replacements for recently superseded records.
+- Superseded and archived records are history; actionable sections use current active records.
+- `If Continuing This Work` is not a task list; the next user prompt decides the next task.
+- Daily daemon refresh and curate-triggered refresh skip fresh projects.
+
 ### Background ingest and curate
 
 There is **no** separate `lerim daemon` command. The daemon loop (ingest + curate
-on `ingest_interval_minutes` / `curate_interval_minutes`, plus daily Context Brief)
+on `ingest_interval_minutes` / `curate_interval_minutes`, plus daily Context Brief
+and Working Memory)
 runs **inside**
 `lerim serve` and therefore inside `lerim up` (Docker).
 

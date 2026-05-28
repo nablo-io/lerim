@@ -46,6 +46,6 @@ flowchart TD
     M --> N
 
     N --> O{"Any records changed?"}
-    O -- "yes" --> P["Refresh Context Brief for project"]
+    O -- "yes" --> P["Refresh Context Brief and Working Memory for project"]
     O -- "no" --> Q["Finish"]
 ```

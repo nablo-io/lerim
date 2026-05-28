@@ -119,7 +119,7 @@ export default function ContextPage() {
 			<div className="flex flex-wrap items-center justify-between gap-3 mt-4">
 					<div>
 						<h1 className="text-lg font-semibold text-[var(--text)]">
-							Context
+							Records
 						</h1>
 					{!loading && (
 						<p className="mt-0.5 text-xs text-[var(--text-muted)]">
@@ -418,7 +418,7 @@ function IntelligenceSection({
 	if (loading) {
 		return (
 			<div className="flex h-20 items-center justify-center text-sm text-[var(--text-muted)]">
-				Loading context health…
+				Loading record health…
 			</div>
 		);
 	}
@@ -435,7 +435,7 @@ function IntelligenceSection({
 				<div className="flex items-center gap-3">
 					<div className="h-px w-6 bg-[var(--border)]" />
 					<h2 className="text-sm font-semibold text-[var(--text)]">
-						Context Health
+						Record Health
 					</h2>
 					<div className="h-px flex-1 bg-[var(--border)]" />
 				</div>

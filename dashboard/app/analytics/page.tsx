@@ -70,7 +70,7 @@ export default function AnalyticsPage() {
 				<div>
 					<h1 className="text-lg font-semibold text-[var(--text)]">Insights</h1>
 					<p className="mt-0.5 text-xs text-[var(--text-muted)]">
-						Memory growth, transcript activity, and runtime quality signals
+						Record growth, transcript activity, and runtime quality signals
 					</p>
 				</div>
 				<div className="flex flex-wrap items-center gap-2">
@@ -128,7 +128,7 @@ export default function AnalyticsPage() {
 							}
 						/>
 						<StatsCard
-							label="Context Records"
+							label="Records"
 							value={totalRecords}
 						/>
 						<StatsCard
@@ -137,7 +137,7 @@ export default function AnalyticsPage() {
 							secondary={`${errorRate}% error rate`}
 						/>
 						<StatsCard
-							label="Active Context"
+							label="Active Records"
 							value={formatCompact(activeRecords)}
 							secondary={`${formatCompact(stats.totals.tokens)} tokens`}
 						/>

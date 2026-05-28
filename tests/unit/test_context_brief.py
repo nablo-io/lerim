@@ -22,6 +22,8 @@ from lerim.context_brief import (
     validate_draft,
     context_brief_status,
     context_brief_paths,
+    sanitize_draft_section_kinds,
+    trim_context_brief_draft,
 )
 from tests.helpers import make_config, run_cli, run_cli_json, write_test_config
 
@@ -240,6 +242,59 @@ def test_validate_draft_accepts_matching_fixed_section_kinds():
     )
 
 
+def test_sanitize_draft_section_kinds_drops_mixed_kind_fixed_lines():
+    """Compiler cleanup removes section lines that mix incompatible record kinds."""
+    draft = ContextBriefDraft(
+        summary=(),
+        constraints_preferences=(
+            MemoryLine("Constraint mixed with fact", ("rec_constraint", "rec_fact")),
+            MemoryLine("Constraint only", ("rec_constraint",)),
+        ),
+        project_facts=(MemoryLine("Fact only", ("rec_fact",)),),
+    )
+
+    sanitized = sanitize_draft_section_kinds(
+        draft,
+        record_kinds={
+            "rec_constraint": "constraint",
+            "rec_fact": "fact",
+        },
+    )
+
+    assert sanitized.constraints_preferences == (
+        MemoryLine("Constraint only", ("rec_constraint",)),
+    )
+    assert sanitized.project_facts == (MemoryLine("Fact only", ("rec_fact",)),)
+
+
+def test_trim_context_brief_draft_keeps_startup_brief_compact():
+    """Compiler cleanup caps section size before manifest and markdown rendering."""
+    draft = ContextBriefDraft(
+        summary=tuple(MemoryLine(f"Summary {idx}", (f"rec_s{idx}",)) for idx in range(4)),
+        start_here=tuple(MemoryLine(f"Start {idx}", (f"rec_st{idx}",)) for idx in range(7)),
+        decisions=tuple(MemoryLine(f"Decision {idx}", (f"rec_d{idx}",)) for idx in range(20)),
+        constraints_preferences=tuple(
+            MemoryLine(f"Constraint {idx}", (f"rec_c{idx}",)) for idx in range(20)
+        ),
+        project_facts=tuple(MemoryLine(f"Fact {idx}", (f"rec_f{idx}",)) for idx in range(20)),
+        sections=(
+            MemorySection(
+                "Legacy",
+                tuple(MemoryLine(f"Legacy {idx}", (f"rec_l{idx}",)) for idx in range(10)),
+            ),
+        ),
+    )
+
+    trimmed = trim_context_brief_draft(draft)
+
+    assert len(trimmed.summary) == 2
+    assert len(trimmed.start_here) == 4
+    assert len(trimmed.decisions) == 8
+    assert len(trimmed.constraints_preferences) == 8
+    assert len(trimmed.project_facts) == 6
+    assert len(trimmed.sections[0].lines) == 6
+
+
 def test_rendered_markdown_uses_fixed_section_order_and_sections_fallback(tmp_path):
     """Renderer emits fixed sections in order before legacy fallback sections."""
     repo = tmp_path / "repo"
@@ -301,7 +356,7 @@ def test_rendered_markdown_uses_fixed_section_order_and_sections_fallback(tmp_pa
     headings = [
         "## Start Here",
         "## Summary",
-        "## Current Handoff",
+        "## Continuation Handoff",
         "## Decisions",
         "## Constraints & Preferences",
         "## Project Facts",

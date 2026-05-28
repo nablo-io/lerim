@@ -1,11 +1,11 @@
 # lerim context-brief
 
-`lerim context-brief` reads or refreshes generated startup context for the
-resolved project.
+`lerim context-brief` reads or refreshes generated long-term startup context for
+the resolved project.
 
 It is host-only for `show`, `status`, and `path`. `refresh` runs local
 generation and records a service run. The generated Markdown is a derived view
-of `~/.lerim/context.sqlite3`.
+of active durable records in `~/.lerim/context.sqlite3`.
 
 ## Commands
 
@@ -51,7 +51,7 @@ The markdown artifact itself uses a fixed section order:
 
 1. `Summary`
 2. `Start Here`
-3. `Current Handoff`
+3. `Continuation Handoff`
 4. `Decisions`
 5. `Constraints & Preferences`
 6. `Project Facts`
@@ -60,10 +60,11 @@ The markdown artifact itself uses a fixed section order:
 9. `Sources`
 
 `Start Here` is deterministic repo/startup guidance rendered by Lerim, not
-model-written prose. `Current Handoff` is populated only from recent episode
-evidence; when recent episode evidence is absent, it says no implementation
-handoff is available from persisted records. Test/build claims inside the
-markdown are historical persisted evidence, not current verification.
+model-written prose. `Continuation Handoff` is populated only from recent
+episode evidence; when recent episode evidence is absent, it says no
+implementation handoff is available from persisted records and points agents to
+`lerim working-memory show`. Test/build claims inside the markdown are
+historical persisted evidence, not current verification.
 
 ## Output Location
 
@@ -110,7 +111,7 @@ flowchart TD
 Context Brief is refreshed outside the ingest hot path:
 
 - the daemon runs a daily pass for all registered projects
-- `curate` runs it only for projects whose records changed
+- `curate` runs it, along with Working Memory, only for projects whose records changed
 - unchanged projects are skipped
 - manual `refresh --force` bypasses the unchanged check
 

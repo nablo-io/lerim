@@ -21,6 +21,7 @@ from lerim.mcp_server import (
     run_mcp_server,
 )
 from lerim.traces.submissions import load_submission_manifest
+from lerim.working_memory import working_memory_paths
 from tests.helpers import make_config
 
 
@@ -50,6 +51,7 @@ def test_create_mcp_server_lists_expected_tools() -> None:
     names = {tool.name for tool in server._tool_manager.list_tools()}
     assert {
         "lerim_context_brief",
+        "lerim_working_memory",
         "lerim_context_answer",
         "lerim_context_search",
         "lerim_records_list",
@@ -182,6 +184,32 @@ def test_context_brief_tool_truncates_with_floor(
     assert payload["error"] is False
     assert payload["truncated"] is True
     assert payload["content"].endswith("[truncated]")
+
+
+def test_working_memory_tool_reads_current_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The MCP Working Memory tool reads the generated current artifact."""
+    project_dir = tmp_path / "repo"
+    project_dir.mkdir()
+    cfg = replace(
+        make_config(tmp_path / ".lerim"),
+        projects={"repo": str(project_dir)},
+    )
+    monkeypatch.setattr("lerim.mcp_server.get_config", lambda: cfg)
+    identity = resolve_project_identity(project_dir)
+    ContextStore(cfg.context_db_path).register_project(identity)
+    paths = working_memory_paths(cfg, identity.project_id)
+    paths.current_file.parent.mkdir(parents=True, exist_ok=True)
+    paths.current_file.write_text("Use the MCP working memory.", encoding="utf-8")
+    tool = _tool_fn("lerim_working_memory")
+
+    payload = tool(project="repo", refresh=False, max_chars=200)
+
+    assert payload["error"] is False
+    assert payload["project"] == "repo"
+    assert payload["content"] == "Use the MCP working memory."
 
 
 def test_trace_submit_tool_uses_importer_and_force_flag(

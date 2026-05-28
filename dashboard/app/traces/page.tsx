@@ -327,7 +327,7 @@ export default function SourcesPage() {
           <div className="rounded-lg border border-[var(--border)] p-12 text-center">
             <p className="text-sm text-[var(--text-muted)]">No source sessions imported yet.</p>
             <p className="mt-1 text-xs text-[var(--text-muted)]">
-              This page lists imported session transcripts and messages. Learned context appears in Context and Context Graph after ingestion and curation.
+              This page lists imported session transcripts and messages. Learned records appear in Records and Graph after ingestion and curation.
             </p>
           </div>
         ) : hasActiveFilters && sessions.length === 0 ? (

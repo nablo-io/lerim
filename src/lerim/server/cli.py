@@ -63,6 +63,8 @@ from lerim.server.daemon import (
     run_ingest_once,
     run_context_brief_daily,
     run_context_brief_for_project,
+    run_working_memory_daily,
+    run_working_memory_for_project,
     resolve_window_bounds,
 )
 from lerim.server.cli_api_client import (
@@ -96,12 +98,16 @@ from lerim.context_brief import (
     context_brief_paths,
     context_brief_status,
 )
+from lerim.working_memory import (
+    working_memory_paths,
+    working_memory_status,
+    working_memory_status_to_dict,
+)
 
 _LEGACY_COMMAND_ALIASES = {
     "sync": "ingest",
     "maintain": "curate",
     "ask": "answer",
-    "working-memory": "context-brief",
 }
 _LEGACY_COMMAND_REMOVAL_VERSION = "v0.3.0"
 _PLANNED_PLUGIN_TARGETS = {
@@ -902,6 +908,149 @@ def context_brief_show_action(status: dict[str, Any]) -> str:
     if status.get("availability") == "available":
         return "Continue with this startup context; inspect sources or query deeper if needed."
     return str(status.get("suggested_action") or "Run `lerim context-brief status`.")
+
+
+def _cmd_working_memory(args: argparse.Namespace) -> int:
+    """Handle local Working Memory commands."""
+    action = getattr(args, "working_memory_action", None)
+    if not action:
+        _emit("Usage: lerim working-memory {show,status,path,refresh}", file=sys.stderr)
+        return 2
+    try:
+        project = resolve_context_brief_project(
+            config=get_config(),
+            project=getattr(args, "project", None),
+            cwd=Path.cwd(),
+        )
+    except ValueError as exc:
+        if args.json:
+            _emit(json.dumps({"error": True, "message": str(exc)}, indent=2))
+        else:
+            _emit(str(exc), file=sys.stderr)
+        return 1
+
+    config = get_config()
+    paths = working_memory_paths(config, project.identity.project_id)
+
+    if action == "path":
+        payload = {
+            "project": project.name,
+            "project_id": project.identity.project_id,
+            "current_file": str(paths.current_file),
+            "exists": paths.current_file.is_file(),
+        }
+        if args.json:
+            _emit(json.dumps(payload, indent=2, ensure_ascii=True))
+        else:
+            _emit(paths.current_file)
+        return 0
+
+    if action == "show":
+        if paths.current_file.is_file():
+            store = ContextStore(config.context_db_path)
+            status = working_memory_status_to_dict(
+                working_memory_status(config=config, store=store, project=project)
+            )
+            preface = [
+                "Working Memory Live Status:",
+                f"- availability: {status['availability']}",
+                f"- generated_at: {status['generated_at']}",
+                f"- age: {status['age']}",
+                f"- window_hours: {status['window_hours']}",
+                f"- window_started_at: {status['window_started_at']}",
+                (
+                    "- db_records_changed_since_generation: "
+                    f"{status['records_changed_since_generation']}"
+                ),
+                (
+                    "- db_records_missing_since_generation: "
+                    f"{status['records_missing_since_generation']}"
+                ),
+                f"- suggested_action: {working_memory_show_action(status)}",
+                "",
+                "---",
+                "",
+            ]
+            _emit(
+                "\n".join(preface)
+                + paths.current_file.read_text(encoding="utf-8").rstrip("\n")
+            )
+            return 0
+        message = (
+            f"No Working Memory generated yet for project `{project.name}`.\n"
+            "Run: lerim working-memory refresh"
+        )
+        if args.json:
+            _emit(
+                json.dumps(
+                    {
+                        "error": True,
+                        "project": project.name,
+                        "project_id": project.identity.project_id,
+                        "current_file": str(paths.current_file),
+                        "message": message,
+                    },
+                    indent=2,
+                    ensure_ascii=True,
+                )
+            )
+        else:
+            _emit(message)
+        return 1
+
+    if action == "status":
+        store = ContextStore(config.context_db_path)
+        status = working_memory_status(config=config, store=store, project=project)
+        payload = working_memory_status_to_dict(status)
+        if args.json:
+            _emit(json.dumps(payload, indent=2, ensure_ascii=True))
+        else:
+            _emit("Working Memory:")
+            for key, value in payload.items():
+                _emit(f"- {key}: {value}")
+        return 0
+
+    if action == "refresh":
+        result = run_working_memory_for_project(
+            project_name=project.name,
+            project_path=project.identity.repo_path,
+            trigger="manual",
+            force=bool(getattr(args, "force", False)),
+        )
+        if args.json:
+            _emit(json.dumps(result, indent=2, ensure_ascii=True))
+        else:
+            if result.get("status") == "skipped":
+                _emit(
+                    f"Working Memory skipped for {project.name}: {result.get('skip_reason')}"
+                )
+            elif result.get("status") == "failed":
+                _emit(
+                    f"Working Memory failed for {project.name}: {result.get('error')}",
+                    file=sys.stderr,
+                )
+                return 1
+            else:
+                _emit(f"Working Memory generated for {project.name}.")
+            if result.get("current_file"):
+                _emit(f"- current_file: {result.get('current_file')}")
+            if result.get("run_folder"):
+                _emit(f"- run_folder: {result.get('run_folder')}")
+        return 0
+
+    _emit(f"Unknown working-memory action: {action}", file=sys.stderr)
+    return 2
+
+
+def working_memory_show_action(status: dict[str, Any]) -> str:
+    """Return a contextual action for the already-running show command."""
+    if status.get("availability") == "stale":
+        if int(status.get("records_missing_since_generation") or 0) > 0:
+            return "Refresh because this Working Memory cites records no longer present in the live DB."
+        return str(status.get("suggested_action") or "Refresh short-term memory.")
+    if status.get("availability") == "available":
+        return "Continue with this recent memory; use Context Brief for long-term context."
+    return str(status.get("suggested_action") or "Run `lerim working-memory status`.")
 
 
 def _cmd_dashboard(args: argparse.Namespace) -> int:
@@ -2553,7 +2702,9 @@ def _cmd_serve(args: argparse.Namespace) -> int:
                 try:
                     with ollama_lifecycle(config):
                         details = run_context_brief_daily(trigger="daily")
+                        memory_details = run_working_memory_daily(trigger="daily")
                     logger.info("daemon context-brief done — {}", details)
+                    logger.info("daemon working-memory done — {}", memory_details)
                 except Exception as exc:
                     logger.warning("daemon context-brief error: {}", exc)
                 last_context_brief = time.monotonic()
@@ -2734,6 +2885,31 @@ def _add_context_brief_subcommands(parser: argparse.ArgumentParser) -> None:
         "refresh",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         help="Generate Context Brief for the resolved project",
+    )
+    refresh.add_argument(
+        "--project",
+        help="Registered project name or path. Defaults to cwd project.",
+    )
+    _add_force_flag(refresh)
+
+
+def _add_working_memory_subcommands(parser: argparse.ArgumentParser) -> None:
+    """Add Working Memory subcommands to its parser."""
+    memory_sub = parser.add_subparsers(dest="working_memory_action")
+    for action_name in ("show", "status", "path"):
+        action = memory_sub.add_parser(
+            action_name,
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            help=f"{action_name} Working Memory",
+        )
+        action.add_argument(
+            "--project",
+            help="Registered project name or path. Defaults to cwd project.",
+        )
+    refresh = memory_sub.add_parser(
+        "refresh",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        help="Generate Working Memory for the resolved project",
     )
     refresh.add_argument(
         "--project",
@@ -3008,9 +3184,9 @@ def build_parser() -> argparse.ArgumentParser:
     context_brief = sub.add_parser(
         "context-brief",
         formatter_class=_F,
-        help="Read or refresh generated startup context",
+        help="Read or refresh generated long-term startup context",
         description=(
-            "Generated markdown startup context for agents.\n\n"
+            "Generated long-term markdown startup context for agents.\n\n"
             "Examples:\n"
             "  lerim context-brief show\n"
             "  lerim context-brief status\n"
@@ -3020,21 +3196,21 @@ def build_parser() -> argparse.ArgumentParser:
     _add_context_brief_subcommands(context_brief)
     context_brief.set_defaults(func=_cmd_context_brief)
 
-    context_brief_alias = sub.add_parser(
+    working_memory = sub.add_parser(
         "working-memory",
         formatter_class=_F,
-        help="Deprecated alias for `lerim context-brief`",
+        help="Read or refresh short-term recent project memory",
         description=(
-            "`lerim working-memory` is a deprecated compatibility alias for "
-            "`lerim context-brief`.\n\n"
+            "Short-term generated memory from recent persisted context changes.\n"
+            "Use Context Brief for long-term durable project context.\n\n"
             "Examples:\n"
-            "  lerim context-brief show\n"
-            "  lerim context-brief status\n"
-            "  lerim context-brief refresh --force"
+            "  lerim working-memory show\n"
+            "  lerim working-memory status\n"
+            "  lerim working-memory refresh --force"
         ),
     )
-    _add_context_brief_subcommands(context_brief_alias)
-    context_brief_alias.set_defaults(func=_cmd_context_brief)
+    _add_working_memory_subcommands(working_memory)
+    working_memory.set_defaults(func=_cmd_working_memory)
 
     # ── dashboard ────────────────────────────────────────────────────
     dashboard = sub.add_parser(
@@ -3611,9 +3787,17 @@ def main(argv: list[str] | None = None) -> int:
         parser.parse_args([args.command, "--help"])
         return 0
 
-    if args.command in {"context-brief", "working-memory"} and not getattr(
+    if args.command == "context-brief" and not getattr(
         args,
         "context_brief_action",
+        None,
+    ):
+        parser.parse_args([args.command, "--help"])
+        return 0
+
+    if args.command == "working-memory" and not getattr(
+        args,
+        "working_memory_action",
         None,
     ):
         parser.parse_args([args.command, "--help"])

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import cytoscape, {
   type Core,
   type ElementDefinition,
@@ -43,6 +43,7 @@ type ClusterSummary = {
   id: string;
   key: string;
   label: string;
+  lensLabel: string;
   description: string;
   representativeTitles: string[];
   topKinds: string[];
@@ -52,8 +53,24 @@ type ClusterSummary = {
   edges: GraphEdge[];
 };
 
-const DEFAULT_MAX_NODES = 140;
-const DEFAULT_EDGE_LENGTH = 180;
+type ClusterOverlay = {
+  id: string;
+  label: string;
+  color: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  count: number;
+};
+
+type ClusterDragSnapshot = {
+  clusterId: string;
+  positions: Array<{ id: string; x: number; y: number }>;
+};
+
+const DEFAULT_MAX_NODES = 100;
+const DEFAULT_EDGE_LENGTH = 230;
 
 const KIND_COLORS: Record<string, string> = {
   decision: "#60a5fa",
@@ -86,6 +103,13 @@ const CLUSTER_COLORS = [
   "#f472b6",
   "#4ade80",
   "#c084fc",
+];
+
+const CLUSTER_OPTIONS: Array<{ value: ClusterBy; label: string; hint: string }> = [
+  { value: "semantic", label: "Topic", hint: "Semantic topics" },
+  { value: "community", label: "Community", hint: "Linked groups" },
+  { value: "project", label: "Project", hint: "Project scopes" },
+  { value: "type", label: "Type", hint: "Record kinds" },
 ];
 
 function edgeKey(edge: GraphEdge, index: number) {
@@ -130,6 +154,19 @@ function clusterLabel(value: string, clusterBy: ClusterBy) {
 
 function clusterId(value: string) {
   return `cluster:${encodeURIComponent(value)}`;
+}
+
+function alphaColor(hex: string, alpha: number) {
+  const normalized = hex.replace("#", "");
+  const padded = normalized.length === 3
+    ? normalized.split("").map((value) => `${value}${value}`).join("")
+    : normalized;
+  const value = Number.parseInt(padded, 16);
+  if (Number.isNaN(value)) return `rgba(96, 165, 250, ${alpha})`;
+  const red = (value >> 16) & 255;
+  const green = (value >> 8) & 255;
+  const blue = value & 255;
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
 }
 
 function compactDate(value?: string | null) {
@@ -183,6 +220,39 @@ function clusterDescription(nodes: GraphNode[]) {
   return parts.join(" · ") || "No summary available";
 }
 
+function clusterTitle(cluster: ClusterSummary, clusterBy: ClusterBy) {
+  if (clusterBy === "project" || clusterBy === "type") return cluster.label;
+  const scores = new Map(cluster.nodes.map((node, index) => [
+    node.id,
+    {
+      index,
+      score: Math.max(0, node.confidence || 0),
+      updatedAt: node.updated_at || "",
+    },
+  ]));
+  cluster.edges.forEach((edge) => {
+    const source = scores.get(edge.source);
+    const target = scores.get(edge.target);
+    if (!source || !target) return;
+    const weight = Math.max(0.2, edge.weight || 0.45);
+    source.score += weight;
+    target.score += weight;
+  });
+  const representative = [...cluster.nodes].sort((a, b) => {
+    const aScore = scores.get(a.id);
+    const bScore = scores.get(b.id);
+    const scoreDelta = (bScore?.score || 0) - (aScore?.score || 0);
+    if (scoreDelta !== 0) return scoreDelta;
+    const dateDelta = (bScore?.updatedAt || "").localeCompare(aScore?.updatedAt || "");
+    if (dateDelta !== 0) return dateDelta;
+    return (aScore?.index || 0) - (bScore?.index || 0);
+  })[0];
+  return shortLabel(
+    representative?.label || representative?.summary || representative?.body || cluster.label,
+    54,
+  );
+}
+
 function buildClusters(nodes: GraphNode[], edges: GraphEdge[], clusterBy: ClusterBy) {
   const clusters = new Map<string, ClusterSummary>();
   const nodeCluster = new Map<string, string>();
@@ -198,6 +268,7 @@ function buildClusters(nodes: GraphNode[], edges: GraphEdge[], clusterBy: Cluste
         id,
         key,
         label: clusterLabel(key, clusterBy),
+        lensLabel: clusterLabel(key, clusterBy),
         description: "",
         representativeTitles: [],
         topKinds: [],
@@ -222,13 +293,21 @@ function buildClusters(nodes: GraphNode[], edges: GraphEdge[], clusterBy: Cluste
     }
   });
 
-  const summarizedClusters = Array.from(clusters.values()).map((cluster) => ({
-    ...cluster,
-    description: clusterDescription(cluster.nodes),
-    representativeTitles: representativeTitles(cluster.nodes),
-    topKinds: rankedValues(cluster.nodes.map((node) => node.record_kind), 3).map(formatRecordKind),
-    topProjects: rankedValues(cluster.nodes.map((node) => node.project), 3).map(formatScopeLabel),
-  }));
+  const summarizedClusters = Array.from(clusters.values()).map((cluster) => {
+    const lensLabel = cluster.label;
+    const summarized = {
+      ...cluster,
+      lensLabel,
+      description: clusterDescription(cluster.nodes),
+      representativeTitles: representativeTitles(cluster.nodes),
+      topKinds: rankedValues(cluster.nodes.map((node) => node.record_kind), 3).map(formatRecordKind),
+      topProjects: rankedValues(cluster.nodes.map((node) => node.project), 3).map(formatScopeLabel),
+    };
+    return {
+      ...summarized,
+      label: clusterTitle(summarized, clusterBy),
+    };
+  });
 
   return { clusters: summarizedClusters, nodeCluster };
 }
@@ -239,35 +318,54 @@ function graphStyles(): StylesheetJson {
       selector: "node[cluster]",
       style: {
         "background-color": "data(color)",
-        "background-opacity": 0.08,
+        "background-opacity": 0.01,
         "border-color": "data(color)",
-        "border-opacity": 0.42,
-        "border-style": "dashed",
-        "border-width": 2,
+        "border-opacity": 0,
+        "border-style": "solid",
+        "border-width": 0,
         color: "#dbeafe",
         "compound-sizing-wrt-labels": "include",
-        "font-size": 12,
+        "font-size": 11,
         "font-weight": 800,
-        label: "data(label)",
-        padding: 28,
-        shape: "round-rectangle",
+        label: "",
+        padding: 54,
+        shape: "ellipse",
         "text-background-color": "#020617",
-        "text-background-opacity": 0.72,
+        "text-background-opacity": 0.78,
         "text-background-padding": 4,
+        "text-border-color": "data(color)",
+        "text-border-opacity": 0.35,
+        "text-border-width": 1,
         "text-halign": "center",
-        "text-margin-y": -8,
-        "text-max-width": 210,
+        "text-margin-y": -14,
+        "text-max-width": 170,
         "text-valign": "top",
         "text-wrap": "wrap",
+        "underlay-color": "data(color)",
+        "underlay-opacity": 0,
+        "underlay-padding": 0,
+      },
+    },
+    {
+      selector: "node[cluster]:selected",
+      style: {
+        "background-opacity": 0.02,
+        "border-opacity": 0,
+        "border-width": 0,
+        "font-size": 12,
+        "text-background-opacity": 0.82,
+        "underlay-opacity": 0,
+        "underlay-padding": 0,
       },
     },
     {
       selector: "node[record]",
       style: {
         "background-color": "data(color)",
+        "background-opacity": 0.96,
         "border-color": "#0f172a",
-        "border-opacity": 0.95,
-        "border-width": 2.5,
+        "border-opacity": 0.88,
+        "border-width": 1.75,
         color: "#f8fafc",
         "font-size": 9.5,
         "font-weight": 700,
@@ -290,10 +388,17 @@ function graphStyles(): StylesheetJson {
       selector: "node[record]:selected",
       style: {
         "border-color": "#f8fafc",
-        "border-width": 4,
+        "border-width": 3.5,
         "font-size": 11,
         "text-background-opacity": 0.92,
         "text-max-width": 160,
+      },
+    },
+    {
+      selector: "node[record].focused",
+      style: {
+        "border-color": "#f8fafc",
+        "border-opacity": 0.9,
       },
     },
     {
@@ -302,9 +407,9 @@ function graphStyles(): StylesheetJson {
         "curve-style": "bezier",
         "font-size": 9.5,
         "font-weight": 700,
-        label: "data(label)",
+        label: "",
         "line-color": "data(color)",
-        opacity: 0.86,
+        opacity: 0.32,
         "target-arrow-color": "data(color)",
         "target-arrow-shape": "triangle",
         color: "#e2e8f0",
@@ -319,6 +424,15 @@ function graphStyles(): StylesheetJson {
         "text-rotation": "autorotate",
         "text-wrap": "ellipsis",
         width: "data(width)",
+      },
+    },
+    {
+      selector: "edge.focused",
+      style: {
+        label: "",
+        opacity: 0.92,
+        "text-background-opacity": 0.9,
+        width: "mapData(width, 1.2, 3.4, 2, 4.2)",
       },
     },
     {
@@ -364,7 +478,7 @@ function graphElements(
   const elements: ElementDefinition[] = clusters.map((cluster) => ({
     data: {
       id: cluster.id,
-      label: `${cluster.label} (${cluster.nodes.length})\n${shortLabel(cluster.description, 86)}`,
+      label: `${cluster.label}\n${cluster.nodes.length} records`,
       color: cluster.color,
       cluster: true,
     },
@@ -403,26 +517,216 @@ function graphElements(
   return elements;
 }
 
+function bubbleRadius(cluster: ClusterSummary) {
+  return Math.max(104, Math.min(168, 84 + Math.sqrt(cluster.nodes.length) * 21));
+}
+
+function keepRecordInsideCluster(
+  cy: Core | null,
+  nodeId: string,
+  clustersById: Map<string, ClusterSummary>,
+) {
+  if (!cy || cy.destroyed()) return;
+  const node = cy.getElementById(nodeId);
+  if (!node.length) return;
+  const cluster = Array.from(clustersById.values()).find((candidate) =>
+    candidate.nodes.some((record) => record.id === nodeId),
+  );
+  if (!cluster || cluster.nodes.length < 2) return;
+  const siblings = cluster.nodes
+    .map((record) => cy.getElementById(record.id))
+    .filter((candidate) => candidate.length && candidate.id() !== nodeId);
+  if (!siblings.length) return;
+  const center = siblings.reduce(
+    (acc, sibling) => {
+      const position = sibling.position();
+      acc.x += position.x;
+      acc.y += position.y;
+      return acc;
+    },
+    { x: 0, y: 0 },
+  );
+  center.x /= siblings.length;
+  center.y /= siblings.length;
+  const position = node.position();
+  const deltaX = position.x - center.x;
+  const deltaY = position.y - center.y;
+  const distance = Math.hypot(deltaX, deltaY);
+  const maxDistance = Math.max(38, bubbleRadius(cluster) * 0.48);
+  if (distance <= maxDistance || distance < 1) return;
+  node.position({
+    x: center.x + (deltaX / distance) * maxDistance,
+    y: center.y + (deltaY / distance) * maxDistance,
+  });
+}
+
+function measureClusterOverlays(
+  cy: Core | null,
+  clustersById: Map<string, ClusterSummary>,
+) {
+  if (!cy || cy.destroyed()) return [];
+  return Array.from(clustersById.values()).flatMap((cluster) => {
+    const element = cy.getElementById(cluster.id);
+    if (!element.length) return [];
+    const children = element.children("[record]");
+    if (!children.length) return [];
+    const box = children.renderedBoundingBox({ includeLabels: false, includeOverlays: false });
+    if (!Number.isFinite(box.w) || !Number.isFinite(box.h)) return [];
+    const width = Math.max(112, box.w + 34);
+    const height = Math.max(96, box.h + 34);
+    return [{
+      id: cluster.id,
+      label: shortLabel(cluster.label, 42),
+      color: cluster.color,
+      x: box.x1 + box.w / 2 - width / 2,
+      y: box.y1 + box.h / 2 - height / 2,
+      width,
+      height,
+      count: cluster.nodes.length,
+    }];
+  });
+}
+
+function clusterBoxesOverlap(
+  cy: Core | null,
+  clusterId: string,
+  clustersById: Map<string, ClusterSummary>,
+) {
+  if (!cy || cy.destroyed()) return false;
+  const source = cy.getElementById(clusterId);
+  if (!source.length) return false;
+  const sourceChildren = source.children("[record]");
+  if (!sourceChildren.length) return false;
+  const sourceBox = sourceChildren.renderedBoundingBox({ includeLabels: false, includeOverlays: false });
+  const margin = 28;
+  return Array.from(clustersById.keys()).some((otherId) => {
+    if (otherId === clusterId) return false;
+    const target = cy.getElementById(otherId);
+    if (!target.length) return false;
+    const targetChildren = target.children("[record]");
+    if (!targetChildren.length) return false;
+    const targetBox = targetChildren.renderedBoundingBox({ includeLabels: false, includeOverlays: false });
+    return !(
+      sourceBox.x2 + margin < targetBox.x1 ||
+      sourceBox.x1 - margin > targetBox.x2 ||
+      sourceBox.y2 + margin < targetBox.y1 ||
+      sourceBox.y1 - margin > targetBox.y2
+    );
+  });
+}
+
+function clusterDragSnapshot(cy: Core | null, clusterId: string): ClusterDragSnapshot | null {
+  if (!cy || cy.destroyed()) return null;
+  const cluster = cy.getElementById(clusterId);
+  if (!cluster.length) return null;
+  return {
+    clusterId,
+    positions: cluster.children("[record]").map((node) => {
+      const position = node.position();
+      return {
+        id: node.id(),
+        x: position.x,
+        y: position.y,
+      };
+    }),
+  };
+}
+
+function restoreClusterSnapshot(cy: Core | null, snapshot: ClusterDragSnapshot | null) {
+  if (!cy || cy.destroyed() || !snapshot) return;
+  cy.startBatch();
+  snapshot.positions.forEach((position) => {
+    const node = cy.getElementById(position.id);
+    if (node.length) node.position({ x: position.x, y: position.y });
+  });
+  cy.endBatch();
+}
+
+function moveClusterChildren(cy: Core | null, clusterId: string, deltaX: number, deltaY: number) {
+  if (!cy || cy.destroyed()) return;
+  const cluster = cy.getElementById(clusterId);
+  if (!cluster.length) return;
+  const children = cluster.children("[record]");
+  if (!children.length) return;
+  cy.startBatch();
+  children.forEach((node) => {
+    const position = node.position();
+    node.position({ x: position.x + deltaX, y: position.y + deltaY });
+  });
+  cy.endBatch();
+}
+
+function runClusterBubbleLayout(
+  cy: Core | null,
+  clusters: ClusterSummary[],
+) {
+  if (!cy || cy.destroyed()) return;
+  const sortedClusters = [...clusters].sort((a, b) => {
+    const sizeDelta = b.nodes.length - a.nodes.length;
+    return sizeDelta || a.label.localeCompare(b.label);
+  });
+  const columnCount = Math.min(5, Math.max(2, Math.ceil(Math.sqrt(sortedClusters.length * 1.65))));
+  const cellWidth = 640;
+  const cellHeight = 500;
+  const centers = new Map<string, { x: number; y: number; radius: number }>();
+
+  sortedClusters.forEach((cluster, index) => {
+    const radius = bubbleRadius(cluster);
+    const column = index % columnCount;
+    const row = Math.floor(index / columnCount);
+    centers.set(cluster.id, {
+      x: column * cellWidth + cellWidth / 2,
+      y: row * cellHeight + cellHeight / 2,
+      radius,
+    });
+  });
+
+  cy.startBatch();
+  sortedClusters.forEach((cluster) => {
+    const center = centers.get(cluster.id);
+    if (!center) return;
+    const records = cluster.nodes
+      .map((node) => cy.getElementById(node.id))
+      .filter((node) => Boolean(node.length));
+    const innerRadius = Math.max(32, center.radius - 58);
+    records.forEach((node, index) => {
+      if (records.length === 1) {
+        node.position({ x: center.x, y: center.y + 16 });
+        return;
+      }
+      const angle = index * 2.399963229728653;
+      const distance = innerRadius * Math.sqrt((index + 0.35) / records.length);
+      node.position({
+        x: center.x + Math.cos(angle) * distance,
+        y: center.y + 18 + Math.sin(angle) * distance,
+      });
+    });
+  });
+  cy.endBatch();
+  cy.fit(undefined, 112);
+  cy.center();
+}
+
 function runLayout(cy: Core | null, edgeLength: number) {
   if (!cy || cy.destroyed()) return;
   cy.layout({
     name: "fcose",
     animate: true,
     animationDuration: 420,
-    edgeElasticity: 0.35,
+    edgeElasticity: 0.22,
     fit: true,
-    gravity: 0.55,
+    gravity: 0.24,
     idealEdgeLength: edgeLength,
-    nestingFactor: 0.55,
-    nodeRepulsion: 7000,
-    nodeSeparation: 88,
-    numIter: 2500,
+    nestingFactor: 0.36,
+    nodeRepulsion: 18000,
+    nodeSeparation: 156,
+    numIter: 3200,
     packComponents: true,
-    padding: 58,
+    padding: 104,
     quality: "default",
     randomize: true,
-    tilingPaddingHorizontal: 34,
-    tilingPaddingVertical: 34,
+    tilingPaddingHorizontal: 82,
+    tilingPaddingVertical: 82,
   } as cytoscape.LayoutOptions).run();
 }
 
@@ -432,6 +736,14 @@ export default function GraphExplorer({ onRecordClick }: GraphExplorerProps) {
   const nodeByIdRef = useRef(new Map<string, GraphNode>());
   const edgeByKeyRef = useRef(new Map<string, GraphEdge>());
   const clusterByIdRef = useRef(new Map<string, ClusterSummary>());
+  const clusterDragSnapshotRef = useRef<ClusterDragSnapshot | null>(null);
+  const overlayDragRef = useRef<{
+    clusterId: string;
+    pointerId: number;
+    lastX: number;
+    lastY: number;
+    snapshot: ClusterDragSnapshot | null;
+  } | null>(null);
   const [graph, setGraph] = useState<GraphState>({
     nodes: [],
     edges: [],
@@ -442,6 +754,7 @@ export default function GraphExplorer({ onRecordClick }: GraphExplorerProps) {
   const [maxNodes, setMaxNodes] = useState(DEFAULT_MAX_NODES);
   const [edgeLength, setEdgeLength] = useState(DEFAULT_EDGE_LENGTH);
   const [selected, setSelected] = useState<Selection>(null);
+  const [clusterOverlays, setClusterOverlays] = useState<ClusterOverlay[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -548,14 +861,46 @@ export default function GraphExplorer({ onRecordClick }: GraphExplorerProps) {
       if (event.target === cy) setSelected(null);
     });
 
+    const constrainDraggedRecord = (event: EventObject) => {
+      if (!event.target?.id) return;
+      keepRecordInsideCluster(cy, event.target.id(), clusterByIdRef.current);
+      setClusterOverlays(measureClusterOverlays(cy, clusterByIdRef.current));
+    };
+    cy.on("drag dragfree", "node[record]", constrainDraggedRecord);
+    const syncClusterOverlays = () => {
+      setClusterOverlays(measureClusterOverlays(cy, clusterByIdRef.current));
+    };
+    const rememberClusterDragStart = (event: EventObject) => {
+      if (!event.target?.id) return;
+      clusterDragSnapshotRef.current = clusterDragSnapshot(cy, event.target.id());
+    };
+    const settleClusterDrag = (event: EventObject) => {
+      if (!event.target?.id) return;
+      if (clusterBoxesOverlap(cy, event.target.id(), clusterByIdRef.current)) {
+        restoreClusterSnapshot(cy, clusterDragSnapshotRef.current);
+      }
+      clusterDragSnapshotRef.current = null;
+      syncClusterOverlays();
+    };
+    cy.on("pan zoom layoutstop drag dragfree", "node[cluster]", syncClusterOverlays);
+    cy.on("grab", "node[cluster]", rememberClusterDragStart);
+    cy.on("dragfree", "node[cluster]", settleClusterDrag);
+    cy.on("pan zoom", syncClusterOverlays);
+
     const observer = new ResizeObserver(() => {
       cy.resize();
       cy.fit(undefined, 58);
+      syncClusterOverlays();
     });
     observer.observe(containerRef.current);
     cyRef.current = cy;
 
     return () => {
+      cy.off("drag dragfree", "node[record]", constrainDraggedRecord);
+      cy.off("pan zoom layoutstop drag dragfree", "node[cluster]", syncClusterOverlays);
+      cy.off("grab", "node[cluster]", rememberClusterDragStart);
+      cy.off("dragfree", "node[cluster]", settleClusterDrag);
+      cy.off("pan zoom", syncClusterOverlays);
       observer.disconnect();
       cy.destroy();
       cyRef.current = null;
@@ -568,8 +913,16 @@ export default function GraphExplorer({ onRecordClick }: GraphExplorerProps) {
 
     cy.elements().remove();
     cy.add(graphElements(graph.nodes, graph.edges, clusters, nodeCluster));
-    runLayout(cy, edgeLength);
-  }, [clusters, edgeLength, graph.edges, graph.nodes, nodeCluster]);
+    setClusterOverlays([]);
+    if (clusterBy === "semantic" || clusterBy === "community") {
+      runClusterBubbleLayout(cy, clusters);
+    } else {
+      runLayout(cy, edgeLength);
+    }
+    requestAnimationFrame(() => {
+      setClusterOverlays(measureClusterOverlays(cy, clusterByIdRef.current));
+    });
+  }, [clusterBy, clusters, edgeLength, graph.edges, graph.nodes, nodeCluster]);
 
   useEffect(() => {
     const cy = cyRef.current;
@@ -600,17 +953,80 @@ export default function GraphExplorer({ onRecordClick }: GraphExplorerProps) {
     const cy = cyRef.current;
     if (!cy || cy.destroyed()) return;
     cy.fit(undefined, 58);
+    setClusterOverlays(measureClusterOverlays(cy, clusterByIdRef.current));
   }
 
   function relayoutGraph() {
-    runLayout(cyRef.current, edgeLength);
+    const cy = cyRef.current;
+    if (!cy || cy.destroyed()) return;
+    if (clusterBy === "semantic" || clusterBy === "community") {
+      runClusterBubbleLayout(cy, clusters);
+    } else {
+      runLayout(cy, edgeLength);
+    }
+    requestAnimationFrame(() => {
+      setClusterOverlays(measureClusterOverlays(cy, clusterByIdRef.current));
+    });
+  }
+
+  function beginOverlayClusterDrag(event: ReactPointerEvent<HTMLDivElement>, overlay: ClusterOverlay) {
+    const cy = cyRef.current;
+    if (!cy || cy.destroyed() || event.button !== 0) return;
+    const cluster = clusterByIdRef.current.get(overlay.id);
+    if (cluster) setSelected({ kind: "cluster", cluster });
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    overlayDragRef.current = {
+      clusterId: overlay.id,
+      pointerId: event.pointerId,
+      lastX: event.clientX,
+      lastY: event.clientY,
+      snapshot: clusterDragSnapshot(cy, overlay.id),
+    };
+  }
+
+  function moveOverlayClusterDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = overlayDragRef.current;
+    const cy = cyRef.current;
+    if (!drag || drag.pointerId !== event.pointerId || !cy || cy.destroyed()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const deltaX = event.clientX - drag.lastX;
+    const deltaY = event.clientY - drag.lastY;
+    if (Math.abs(deltaX) < 0.5 && Math.abs(deltaY) < 0.5) return;
+    moveClusterChildren(cy, drag.clusterId, deltaX / cy.zoom(), deltaY / cy.zoom());
+    drag.lastX = event.clientX;
+    drag.lastY = event.clientY;
+    setClusterOverlays(measureClusterOverlays(cy, clusterByIdRef.current));
+  }
+
+  function endOverlayClusterDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = overlayDragRef.current;
+    const cy = cyRef.current;
+    if (!drag || drag.pointerId !== event.pointerId || !cy || cy.destroyed()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (clusterBoxesOverlap(cy, drag.clusterId, clusterByIdRef.current)) {
+      restoreClusterSnapshot(cy, drag.snapshot);
+    }
+    overlayDragRef.current = null;
+    setClusterOverlays(measureClusterOverlays(cy, clusterByIdRef.current));
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-slate-950 text-slate-100">
-      <div className="flex flex-col gap-3 border-b border-white/10 bg-slate-950/95 px-4 py-3 shadow-[0_1px_0_rgba(255,255,255,0.04)] lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <h1 className="text-sm font-semibold text-white">Context Graph</h1>
+    <div className="flex h-full min-h-0 flex-col bg-[#050b16] text-slate-100">
+      <div className="flex flex-col gap-3 border-b border-white/10 bg-[#07101f]/95 px-4 py-3 shadow-[0_1px_0_rgba(255,255,255,0.04)] backdrop-blur lg:flex-row lg:items-center lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-sm font-semibold text-white">Graph</h1>
+            <span className="rounded-full border border-sky-400/20 bg-sky-400/10 px-2 py-0.5 text-[11px] font-medium text-sky-200">
+              {clusterBy === "semantic" ? "Topic view" : `${CLUSTER_OPTIONS.find((option) => option.value === clusterBy)?.label} view`}
+            </span>
+          </div>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-400">
             <Metric label="nodes" value={graph.nodes.length} />
             <Metric label="edges" value={graph.edges.length} />
@@ -620,21 +1036,25 @@ export default function GraphExplorer({ onRecordClick }: GraphExplorerProps) {
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <label className="flex h-9 items-center gap-2 rounded-md border border-white/10 bg-white/5 px-2 text-xs text-slate-300 shadow-sm">
-            Cluster
-            <select
-              value={clusterBy}
-              onChange={(event) => setClusterBy(event.target.value as ClusterBy)}
-              className="bg-slate-950 text-sm text-white outline-none"
-            >
-              <option value="semantic">Topic</option>
-              <option value="community">Community</option>
-              <option value="project">Project</option>
-              <option value="type">Type</option>
-            </select>
-          </label>
-          <label className="flex h-9 items-center gap-2 rounded-md border border-white/10 bg-white/5 px-2 text-xs text-slate-300 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+          <div className="flex h-9 items-center gap-1 rounded-full border border-white/10 bg-white/[0.045] p-1 shadow-sm">
+            {CLUSTER_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                title={option.hint}
+                onClick={() => setClusterBy(option.value)}
+                className={`h-7 rounded-full px-3 text-xs font-medium transition ${
+                  clusterBy === option.value
+                    ? "bg-sky-400 text-slate-950 shadow-[0_0_18px_rgba(56,189,248,0.28)]"
+                    : "text-slate-300 hover:bg-white/8 hover:text-white"
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <label className="flex h-9 items-center gap-2 rounded-full border border-white/10 bg-white/[0.045] px-3 text-xs text-slate-300 shadow-sm">
             Nodes
             <input
               type="number"
@@ -645,8 +1065,8 @@ export default function GraphExplorer({ onRecordClick }: GraphExplorerProps) {
               className="w-16 bg-transparent text-sm text-white outline-none"
             />
           </label>
-          <label className="flex h-9 items-center gap-2 rounded-md border border-white/10 bg-white/5 px-2 text-xs text-slate-300 shadow-sm">
-            Edge length
+          <label className="flex h-9 items-center gap-2 rounded-full border border-white/10 bg-white/[0.045] px-3 text-xs text-slate-300 shadow-sm">
+            Spacing
             <input
               type="range"
               min={110}
@@ -656,22 +1076,63 @@ export default function GraphExplorer({ onRecordClick }: GraphExplorerProps) {
               className="w-24"
             />
           </label>
-          <button type="button" onClick={loadGraph} className="rounded-md border border-white/10 bg-white/8 px-3 py-2 text-sm font-medium text-slate-100 shadow-sm transition hover:bg-white/12 disabled:opacity-60" disabled={loading}>
+          <button type="button" onClick={loadGraph} className="rounded-full border border-white/10 bg-white/[0.07] px-3 py-2 text-sm font-medium text-slate-100 shadow-sm transition hover:bg-white/12 disabled:opacity-60" disabled={loading}>
             {loading ? "Loading" : "Refresh"}
           </button>
-          <button type="button" onClick={fitGraph} className="rounded-md border border-white/10 bg-white/8 px-3 py-2 text-sm font-medium text-slate-100 shadow-sm transition hover:bg-white/12">
+          <button type="button" onClick={fitGraph} className="rounded-full border border-white/10 bg-white/[0.07] px-3 py-2 text-sm font-medium text-slate-100 shadow-sm transition hover:bg-white/12">
             Fit
           </button>
-          <button type="button" onClick={relayoutGraph} className="rounded-md border border-white/10 bg-white/8 px-3 py-2 text-sm font-medium text-slate-100 shadow-sm transition hover:bg-white/12">
+          <button type="button" onClick={relayoutGraph} className="rounded-full border border-white/10 bg-white/[0.07] px-3 py-2 text-sm font-medium text-slate-100 shadow-sm transition hover:bg-white/12">
             Layout
           </button>
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="relative min-h-[520px] min-w-0 overflow-hidden bg-[radial-gradient(circle_at_20%_15%,rgba(59,130,246,0.16),transparent_28%),radial-gradient(circle_at_78%_28%,rgba(45,212,191,0.12),transparent_26%),#020617]">
-          <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(rgba(148,163,184,0.055)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.055)_1px,transparent_1px)] bg-[size:32px_32px]" />
-          <div className="absolute inset-0">
+      <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px]">
+        <div className="relative min-h-[520px] min-w-0 overflow-hidden bg-[radial-gradient(circle_at_18%_12%,rgba(59,130,246,0.2),transparent_30%),radial-gradient(circle_at_78%_24%,rgba(45,212,191,0.14),transparent_28%),radial-gradient(circle_at_46%_82%,rgba(168,85,247,0.1),transparent_34%),#020617]">
+          <div className="pointer-events-none absolute inset-0 z-0 bg-[linear-gradient(rgba(148,163,184,0.05)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.05)_1px,transparent_1px)] bg-[size:34px_34px]" />
+          <div className="pointer-events-none absolute inset-0 z-[1] bg-[radial-gradient(circle_at_center,transparent,rgba(2,6,23,0.68))]" />
+          <div className="pointer-events-none absolute inset-0 z-[4] overflow-hidden">
+            {clusterOverlays.map((overlay) => {
+              const selectedCluster = selected?.kind === "cluster" && selected.cluster.id === overlay.id;
+              return (
+                <div
+                  key={overlay.id}
+                  className={`absolute border transition-opacity duration-150 ${
+                    selectedCluster ? "opacity-100" : selected ? "opacity-35" : "opacity-78"
+                  }`}
+                  style={{
+                    background: `radial-gradient(circle at 50% 44%, ${alphaColor(overlay.color, selectedCluster ? 0.2 : 0.13)} 0%, ${alphaColor(overlay.color, selectedCluster ? 0.1 : 0.06)} 58%, transparent 100%)`,
+                    borderColor: alphaColor(overlay.color, selectedCluster ? 0.72 : 0.34),
+                    borderRadius: "44% 56% 51% 49% / 55% 43% 57% 45%",
+                    boxShadow: `0 0 ${selectedCluster ? 46 : 28}px ${alphaColor(overlay.color, selectedCluster ? 0.18 : 0.08)}`,
+                    height: overlay.height,
+                    left: overlay.x,
+                    top: overlay.y,
+                    width: overlay.width,
+                  }}
+                >
+                  <div
+                    className="pointer-events-auto absolute left-1/2 top-2 max-w-[78%] -translate-x-1/2 cursor-grab select-none rounded-full border px-2.5 py-1 text-center text-[10px] font-semibold leading-3 text-white shadow-[0_8px_24px_rgba(2,6,23,0.28)] backdrop-blur active:cursor-grabbing"
+                    onPointerDown={(event) => beginOverlayClusterDrag(event, overlay)}
+                    onPointerMove={moveOverlayClusterDrag}
+                    onPointerUp={endOverlayClusterDrag}
+                    onPointerCancel={endOverlayClusterDrag}
+                    style={{
+                      backgroundColor: alphaColor("#020617", 0.74),
+                      borderColor: alphaColor(overlay.color, 0.42),
+                    }}
+                  >
+                    <span className="line-clamp-2">{overlay.label}</span>
+                    <span className="mt-0.5 block text-[9px] font-medium text-slate-400">
+                      {overlay.count} records
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="absolute inset-0 z-[3]">
             <div ref={containerRef} className="h-full w-full" />
           </div>
 
@@ -697,7 +1158,7 @@ export default function GraphExplorer({ onRecordClick }: GraphExplorerProps) {
           )}
         </div>
 
-        <aside className="min-h-0 overflow-y-auto border-t border-white/10 bg-slate-950 p-4 lg:border-l lg:border-t-0">
+        <aside className="min-h-0 overflow-y-auto border-t border-white/10 bg-[#07101f] p-4 shadow-[inset_1px_0_0_rgba(255,255,255,0.03)] lg:border-l lg:border-t-0">
           <DetailsPanel
             selection={selected}
             nodeById={nodeById}
@@ -711,7 +1172,7 @@ export default function GraphExplorer({ onRecordClick }: GraphExplorerProps) {
 
 function Metric({ label, value }: { label: string; value: number }) {
   return (
-    <span>
+    <span className="rounded-full border border-white/8 bg-white/[0.035] px-2 py-0.5">
       <span className="font-semibold text-white">{value.toLocaleString()}</span> {label}
     </span>
   );
@@ -728,12 +1189,18 @@ function DetailsPanel({
 }) {
   if (!selection) {
     return (
-      <div>
-        <h2 className="text-sm font-semibold text-white">Click something</h2>
+      <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
+        <div className="mb-3 h-2 w-16 rounded-full bg-gradient-to-r from-sky-400 to-teal-300 shadow-[0_0_22px_rgba(56,189,248,0.35)]" />
+        <h2 className="text-sm font-semibold text-white">Inspect the graph</h2>
         <p className="mt-2 text-sm leading-6 text-slate-400">
-          Click a node to read its content. Click an edge to inspect the relationship.
-          Click a cluster cloud to see what it contains.
+          Click a cluster cloud to understand a topic. Click a record node to read
+          the memory. Click a relationship to inspect why two records are linked.
         </p>
+        <div className="mt-4 grid grid-cols-3 gap-2 text-center text-[11px] text-slate-400">
+          <span className="rounded-lg border border-white/10 bg-white/[0.035] px-2 py-2">clusters</span>
+          <span className="rounded-lg border border-white/10 bg-white/[0.035] px-2 py-2">records</span>
+          <span className="rounded-lg border border-white/10 bg-white/[0.035] px-2 py-2">links</span>
+        </div>
       </div>
     );
   }
@@ -741,20 +1208,20 @@ function DetailsPanel({
   if (selection.kind === "cluster") {
     return (
       <div className="space-y-4">
-        <div>
+        <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
           <div
-            className="mb-2 h-2 w-16 rounded-full shadow-[0_0_18px_currentColor]"
+            className="mb-3 h-2 w-20 rounded-full shadow-[0_0_22px_currentColor]"
             style={{ backgroundColor: selection.cluster.color }}
           />
           <h2 className="text-base font-semibold leading-6 text-white">
             {selection.cluster.label}
           </h2>
           <p className="mt-1 text-xs text-slate-400">
-            {selection.cluster.nodes.length} nodes · {selection.cluster.edges.length} connected edges
+            {selection.cluster.lensLabel} · {selection.cluster.nodes.length} nodes · {selection.cluster.edges.length} connected edges
           </p>
         </div>
 
-        <div className="rounded-md border border-white/10 bg-white/5 p-3">
+        <div className="rounded-2xl border border-white/10 bg-white/[0.045] p-4">
           <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
             Cluster summary
           </div>
@@ -775,13 +1242,13 @@ function DetailsPanel({
         </div>
 
         {selection.cluster.representativeTitles.length > 0 && (
-          <div>
+          <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
             <div className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
               Representative records
             </div>
             <ul className="space-y-1.5 text-sm leading-5 text-slate-300">
               {selection.cluster.representativeTitles.map((title) => (
-                <li key={title} className="rounded-md bg-white/5 px-2 py-1">
+                <li key={title} className="rounded-lg bg-white/[0.045] px-3 py-2">
                   {title}
                 </li>
               ))}
@@ -795,7 +1262,7 @@ function DetailsPanel({
               key={node.id}
               type="button"
               onClick={() => onOpenRecord?.(node.id)}
-              className="block w-full rounded-md border border-white/10 bg-white/5 p-3 text-left transition hover:border-sky-400/70 hover:bg-white/8"
+              className="block w-full rounded-xl border border-white/10 bg-white/[0.035] p-3 text-left transition hover:border-sky-400/70 hover:bg-white/[0.07]"
             >
               <div className="text-sm font-medium text-white">{node.label || "Untitled"}</div>
               <div className="mt-1 text-xs text-slate-400">
@@ -812,7 +1279,7 @@ function DetailsPanel({
     const node = selection.node;
     return (
       <div className="space-y-4">
-        <div>
+        <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
           <div className="mb-2 flex flex-wrap gap-2">
             <Badge>{formatRecordKind(node.record_kind)}</Badge>
             <Badge>{node.status || "unknown"}</Badge>
@@ -826,7 +1293,7 @@ function DetailsPanel({
         </div>
 
         {(node.summary || node.body) && (
-          <p className="whitespace-pre-wrap text-sm leading-6 text-slate-300">
+          <p className="whitespace-pre-wrap rounded-2xl border border-white/10 bg-white/[0.035] p-4 text-sm leading-6 text-slate-300">
             {truncate(node.summary || node.body)}
           </p>
         )}
@@ -855,7 +1322,7 @@ function DetailsPanel({
           <button
             type="button"
             onClick={() => onOpenRecord(node.id)}
-            className="h-10 w-full rounded-md bg-sky-500 px-4 text-sm font-medium text-white transition hover:bg-sky-400"
+            className="h-10 w-full rounded-full bg-sky-400 px-4 text-sm font-semibold text-slate-950 shadow-[0_0_24px_rgba(56,189,248,0.25)] transition hover:bg-sky-300"
           >
             Open full record
           </button>
@@ -869,7 +1336,7 @@ function DetailsPanel({
 
   return (
     <div className="space-y-4">
-      <div>
+      <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
         <Badge>{humanizeToken(selection.edge.kind)}</Badge>
         <h2 className="mt-2 text-base font-semibold leading-6 text-white">
           {relationshipLabel(selection.edge)}
@@ -880,7 +1347,7 @@ function DetailsPanel({
       </div>
 
       {selection.edge.rationale && (
-        <p className="whitespace-pre-wrap text-sm leading-6 text-slate-300">
+        <p className="whitespace-pre-wrap rounded-2xl border border-white/10 bg-white/[0.035] p-4 text-sm leading-6 text-slate-300">
           {selection.edge.rationale}
         </p>
       )}
@@ -897,7 +1364,7 @@ function DetailsPanel({
 
 function Badge({ children }: { children: React.ReactNode }) {
   return (
-    <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-xs font-medium text-slate-300">
+    <span className="rounded-full border border-white/10 bg-white/[0.055] px-2 py-1 text-xs font-medium text-slate-300">
       {children}
     </span>
   );
@@ -905,7 +1372,7 @@ function Badge({ children }: { children: React.ReactNode }) {
 
 function Detail({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-md border border-white/10 bg-white/5 p-3">
+    <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">
       <dt className="text-slate-500">{label}</dt>
       <dd className="mt-1 truncate font-medium text-slate-100" title={value}>
         {value}

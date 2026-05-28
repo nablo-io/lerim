@@ -136,6 +136,8 @@ def build_semantic_candidates(
     edges: dict[str, set[str]] = defaultdict(set)
     for record_id, neighbor_ids in directed_neighbors.items():
         for neighbor_id in neighbor_ids:
+            if record_id not in directed_neighbors.get(neighbor_id, set()):
+                continue
             edges[record_id].add(neighbor_id)
             edges[neighbor_id].add(record_id)
 

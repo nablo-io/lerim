@@ -20,7 +20,16 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from lerim.config.logging import logger
+from lerim.context import resolve_project_identity
 from lerim.context.store import ContextStore
+from lerim.context_brief import (
+    CONTEXT_BRIEF_FILENAME,
+    CONTEXT_BRIEF_OPERATION,
+    ContextBriefProject,
+    context_brief_paths,
+    context_brief_status,
+    status_to_dict,
+)
 from lerim.server.api import (
     api_answer,
     api_connect,
@@ -57,6 +66,13 @@ from lerim.sessions.catalog import (
     latest_service_run,
     list_session_jobs,
     list_sessions_window,
+)
+from lerim.working_memory import (
+    WORKING_MEMORY_FILENAME,
+    WORKING_MEMORY_OPERATION,
+    working_memory_paths,
+    working_memory_status,
+    working_memory_status_to_dict,
 )
 
 
@@ -377,6 +393,124 @@ def _save_config_patch(patch: dict[str, Any]) -> dict[str, Any]:
     """Apply config patch to user config TOML file and return updated config."""
     config = save_config_patch(patch)
     return _serialize_full_config(config)
+
+
+def _read_text_artifact(path: Path) -> str:
+    """Read one generated artifact, returning empty text when unavailable."""
+    try:
+        if path.is_file():
+            return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    return ""
+
+
+def _read_manifest_artifact(path: Path) -> dict[str, Any]:
+    """Read one generated artifact manifest."""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _memory_artifact_payload(
+    *,
+    artifact_type: str,
+    label: str,
+    filename: str,
+    operation: str,
+    current_file: Path,
+    current_manifest: Path,
+    status: dict[str, Any],
+    workspace_root: Path,
+) -> dict[str, Any]:
+    """Return current and historical generated memory artifact payloads."""
+    current_version = _artifact_version_payload(
+        artifact_type=artifact_type,
+        label=label,
+        filename=filename,
+        manifest_path=current_manifest,
+        content_path=current_file,
+        current=True,
+    )
+    versions = _artifact_history_versions(
+        artifact_type=artifact_type,
+        label=label,
+        filename=filename,
+        operation=operation,
+        workspace_root=workspace_root,
+    )
+    if current_version["content"] and all(
+        version["id"] != current_version["id"] for version in versions
+    ):
+        versions.insert(0, current_version)
+    return {
+        "type": artifact_type,
+        "label": label,
+        "status": status,
+        "current": current_version,
+        "versions": versions,
+    }
+
+
+def _artifact_history_versions(
+    *,
+    artifact_type: str,
+    label: str,
+    filename: str,
+    operation: str,
+    workspace_root: Path,
+) -> list[dict[str, Any]]:
+    """Load historical generated artifact versions from dated run folders."""
+    candidates = list(workspace_root.glob(f"*/*/*/{operation}/{operation}-*/manifest.json"))
+    versions: list[dict[str, Any]] = []
+    for manifest_path in candidates:
+        content_path = manifest_path.parent / filename
+        version = _artifact_version_payload(
+            artifact_type=artifact_type,
+            label=label,
+            filename=filename,
+            manifest_path=manifest_path,
+            content_path=content_path,
+            current=False,
+        )
+        if version["content"]:
+            versions.append(version)
+    versions.sort(key=lambda item: str(item.get("generated_at") or ""), reverse=True)
+    return versions[:30]
+
+
+def _artifact_version_payload(
+    *,
+    artifact_type: str,
+    label: str,
+    filename: str,
+    manifest_path: Path,
+    content_path: Path,
+    current: bool,
+) -> dict[str, Any]:
+    """Build one generated artifact version payload."""
+    manifest = _read_manifest_artifact(manifest_path)
+    content = _read_text_artifact(content_path)
+    return {
+        "id": str(manifest.get("run_id") or ("current-" + artifact_type)),
+        "type": artifact_type,
+        "label": label,
+        "filename": filename,
+        "content": content,
+        "content_path": str(content_path),
+        "manifest_path": str(manifest_path),
+        "current": current,
+        "generated_at": str(manifest.get("generated_at") or ""),
+        "trigger": str(manifest.get("trigger") or ""),
+        "status": str(manifest.get("status") or ""),
+        "run_folder": str(manifest.get("run_folder") or manifest_path.parent),
+        "records_included": int(manifest.get("records_included") or 0),
+        "records_considered": int(manifest.get("records_considered") or 0),
+        "recent_versions_considered": int(manifest.get("recent_versions_considered") or 0),
+        "included_record_ids": list(manifest.get("included_record_ids") or []),
+    }
 
 
 def _decode_json_list(raw: Any) -> list[Any]:
@@ -739,6 +873,72 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
         models = sorted(set(list_provider_models(provider)))
         self._json({"models": models})
 
+    def _api_memory_artifacts(self, query: dict[str, list[str]]) -> None:
+        """Return generated Context Brief and Working Memory artifacts."""
+        config = get_config()
+        projects = config.projects or {}
+        project_name = _query_param(query, "project") or next(iter(projects), "")
+        if not project_name or project_name not in projects:
+            self._json(
+                {
+                    "projects": list(projects.keys()),
+                    "selected_project": project_name,
+                    "artifacts": {},
+                    "versions": [],
+                    "error": "No registered project found for memory artifacts.",
+                }
+            )
+            return
+        project_path = Path(projects[project_name]).expanduser().resolve()
+        identity = resolve_project_identity(project_path)
+        project = ContextBriefProject(name=project_name, identity=identity)
+        store = ContextStore(config.context_db_path)
+        brief_paths = context_brief_paths(config, identity.project_id)
+        memory_paths = working_memory_paths(config, identity.project_id)
+        artifacts = {
+            "context_brief": _memory_artifact_payload(
+                artifact_type="context_brief",
+                label="Context Brief",
+                filename=CONTEXT_BRIEF_FILENAME,
+                operation=CONTEXT_BRIEF_OPERATION,
+                current_file=brief_paths.current_file,
+                current_manifest=brief_paths.current_manifest,
+                status=status_to_dict(
+                    context_brief_status(config=config, store=store, project=project)
+                ),
+                workspace_root=config.global_data_dir / "workspace",
+            ),
+            "working_memory": _memory_artifact_payload(
+                artifact_type="working_memory",
+                label="Working Memory",
+                filename=WORKING_MEMORY_FILENAME,
+                operation=WORKING_MEMORY_OPERATION,
+                current_file=memory_paths.current_file,
+                current_manifest=memory_paths.current_manifest,
+                status=working_memory_status_to_dict(
+                    working_memory_status(config=config, store=store, project=project)
+                ),
+                workspace_root=config.global_data_dir / "workspace",
+            ),
+        }
+        versions: list[dict[str, Any]] = []
+        for artifact in artifacts.values():
+            versions.extend(artifact.get("versions", []))
+        self._json(
+            {
+                "projects": list(projects.keys()),
+                "selected_project": project_name,
+                "project_id": identity.project_id,
+                "repo_path": str(identity.repo_path),
+                "artifacts": artifacts,
+                "versions": sorted(
+                    versions,
+                    key=lambda item: str(item.get("generated_at") or ""),
+                    reverse=True,
+                ),
+            }
+        )
+
     def _api_graph_query(self) -> None:
         """Return learned context graph nodes and edges for the dashboard."""
         body = self._read_json_body()
@@ -925,6 +1125,9 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
         }
         if path in query_handlers:
             query_handlers[path](query)
+            return
+        if path == "/api/memory-artifacts":
+            self._api_memory_artifacts(query)
             return
         if path in no_query_handlers:
             no_query_handlers[path]()

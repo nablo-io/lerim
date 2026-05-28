@@ -34,7 +34,7 @@ export default function ContextGraphPage() {
 			<div className="sr-only">
 				<div>
 					<h1 className="text-lg font-semibold text-[var(--text)]">
-						Context Graph
+						Graph
 					</h1>
 					<p className="mt-0.5 text-xs text-[var(--text-muted)]">
 						Explore clustered records and evidence-backed relationships

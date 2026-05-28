@@ -2431,6 +2431,7 @@ class TestBuildParser:
             ],
             ["curate"],
             ["context-brief"],
+            ["working-memory"],
             ["dashboard"],
             ["dashboard", "--port", "3001"],
             ["answer", "question text"],

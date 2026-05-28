@@ -500,3 +500,67 @@ export interface ActivityFeedItem {
 export interface ActivityFeedResponse {
 	items: ActivityFeedItem[];
 }
+
+/* ----- Generated Memory Artifacts ---------------------------------- */
+
+export type MemoryArtifactType = "context_brief" | "working_memory";
+
+export interface MemoryArtifactStatus {
+	availability: string;
+	project: string;
+	project_id: string;
+	repo_path: string;
+	generated_at: string | null;
+	age_seconds: number | null;
+	age: string;
+	records_included: number;
+	records_changed_since_generation: number;
+	records_missing_since_generation: number;
+	current_file: string;
+	current_manifest: string;
+	latest_run_folder: string | null;
+	suggested_action: string;
+	window_hours?: number;
+	window_started_at?: string | null;
+	recent_versions_considered?: number;
+}
+
+export interface MemoryArtifactVersion {
+	id: string;
+	type: MemoryArtifactType;
+	label: string;
+	filename: string;
+	content: string;
+	content_path: string;
+	manifest_path: string;
+	current: boolean;
+	generated_at: string;
+	trigger: string;
+	status: string;
+	run_folder: string;
+	records_included: number;
+	records_considered: number;
+	recent_versions_considered: number;
+	included_record_ids: string[];
+}
+
+export interface MemoryArtifact {
+	type: MemoryArtifactType;
+	label: string;
+	status: MemoryArtifactStatus;
+	current: MemoryArtifactVersion;
+	versions: MemoryArtifactVersion[];
+}
+
+export interface MemoryArtifactsResponse {
+	projects: string[];
+	selected_project: string;
+	project_id: string;
+	repo_path: string;
+	artifacts: {
+		context_brief?: MemoryArtifact;
+		working_memory?: MemoryArtifact;
+	};
+	versions: MemoryArtifactVersion[];
+	error?: string;
+}

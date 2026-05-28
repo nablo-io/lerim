@@ -7,6 +7,7 @@ import type {
   IntelligenceResponse,
   LiveStatusResponse,
   LogsResponse,
+  MemoryArtifactsResponse,
   MessagesResponse,
   PipelineReportResponse,
   PipelineStatusResponse,
@@ -606,6 +607,11 @@ export const api = {
   getLiveStatus: async () => {
     const raw = await apiFetch<Record<string, unknown>>("/api/live");
     return normalizeLiveStatus(raw);
+  },
+
+  getMemoryArtifacts: async (project?: string): Promise<MemoryArtifactsResponse> => {
+    const qs = project ? toQuery({ project }) : "";
+    return apiFetch<MemoryArtifactsResponse>(`/api/memory-artifacts${qs}`);
   },
 
   retryAllDeadLetter: () =>

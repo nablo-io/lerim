@@ -6,8 +6,9 @@ import { usePathname } from "next/navigation";
 const NAV_ITEMS = [
 	{ href: "/overview", label: "Overview", mobileLabel: "Home", icon: ActivityIcon },
 	{ href: "/analytics", label: "Insights", icon: InsightsIcon },
-	{ href: "/context", label: "Context", icon: BrainIcon },
-	{ href: "/context-graph", label: "Context Graph", mobileLabel: "Graph", icon: PipelineIcon },
+	{ href: "/memory", label: "Briefs", icon: MemoryIcon },
+	{ href: "/context", label: "Records", icon: BrainIcon },
+	{ href: "/context-graph", label: "Graph", icon: PipelineIcon },
 	{ href: "/operations", label: "Operations", mobileLabel: "Ops", icon: LogsIcon },
 	{ href: "/traces", label: "Sources", mobileLabel: "Sources", icon: TableIcon, secondary: true },
 ];
@@ -113,7 +114,7 @@ export default function Sidebar({
 					</Link>
 				</div>
 			</aside>
-			<nav aria-label="Mobile primary" className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-7 gap-1 border-t border-[var(--border)] bg-[rgba(17,24,39,0.96)] px-1 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] pt-2 backdrop-blur md:hidden">
+			<nav aria-label="Mobile primary" className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 gap-1 border-t border-[var(--border)] bg-[rgba(17,24,39,0.96)] px-1 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] pt-2 backdrop-blur min-[420px]:grid-cols-8 md:hidden">
 				{[...NAV_ITEMS, { href: "/settings", label: "Settings", mobileLabel: "Settings", icon: GearIcon }].map(({ href, label, mobileLabel, icon: Icon }) => {
 					const active = isActiveRoute(pathname, href);
 					return (
@@ -217,6 +218,27 @@ function BrainIcon({ className }: { className?: string }) {
 			<path d="M12 2a7 7 0 0 0-7 7c0 3 2 5.5 4 7l1.5 1.5h3L15 16c2-1.5 4-4 4-7a7 7 0 0 0-7-7z" />
 			<path d="M12 22v-4" />
 			<path d="M9 18h6" />
+		</svg>
+	);
+}
+
+function MemoryIcon({ className }: { className?: string }) {
+	return (
+		<svg
+			className={className}
+			xmlns="http://www.w3.org/2000/svg"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth={2}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+		>
+			<path d="M5 5a2 2 0 0 1 2-2h11v16H7a2 2 0 0 0-2 2z" />
+			<path d="M5 5v16" />
+			<path d="M9 7h5" />
+			<path d="M9 11h6" />
+			<path d="M9 15h4" />
 		</svg>
 	);
 }

@@ -4,7 +4,9 @@
 
 This folder contains the Lerim runtime package.
 Current architecture uses BAML plus LangGraph for trace ingestion, context
-curation, context graph linking, context answering, and context-brief compilation.
+curation, context graph linking, context answering, and context-brief
+compilation. Working Memory is deterministic and derived from recent
+`record_versions`.
 Durable Lerim context now lives in the global SQLite store at `~/.lerim/context.sqlite3`.
 Project identity is used to separate records by repo inside that shared DB.
 
@@ -19,6 +21,7 @@ The package is organized by feature boundary:
 - `cloud/`: hosted auth/shipper integration (`auth.py`, `shipper.py`)
 - `skills/`: bundled skill markdown files
 - `context_brief.py`: deterministic Context Brief use-case logic, artifact paths, status, rendering, and validation
+- `working_memory.py`: deterministic short-term Working Memory logic over recent record versions and current replacements
 
 ## How to use
 
@@ -26,8 +29,8 @@ If you are new to the codebase, read in this order:
 
 1. `server/cli.py` for the public command surface.
 2. `server/daemon.py` for ingest/curate scheduling and lock flow.
-3. `server/runtime.py` for runtime orchestration across trace ingestion, context curation, context graph linking, context answering, and context briefs.
-4. `context_brief.py` and `agents/context_brief/` for generated Context Brief.
+3. `server/runtime.py` for runtime orchestration across trace ingestion, context curation, context graph linking, context answering, context briefs, and working memory.
+4. `context_brief.py`, `working_memory.py`, and `agents/context_brief/` for generated startup artifacts.
 5. `context/store.py` for the canonical SQLite schema and retrieval/write logic.
    This is where hybrid search happens: local ONNX embeddings, `sqlite-vec` KNN, SQLite FTS5, and RRF fusion.
 6. `agents/trace_ingestion/` and `agents/context_curator/` for the write-side BAML/LangGraph flows.
@@ -61,4 +64,18 @@ flowchart TD
     G --> H["Validate cited output"]
     H --> I["Render and write dated artifacts"]
     I --> J["Copy current CONTEXT_BRIEF.md"]
+```
+
+## Working Memory flow
+
+```mermaid
+flowchart TD
+    A["CLI, daily daemon, or curate trigger"] --> B["LerimRuntime.working_memory"]
+    B --> C["working_memory.py deterministic use case"]
+    C --> D{"Records changed or short window moved?"}
+    D -- "no" --> E["Skip"]
+    D -- "yes or --force" --> F["Load recent record_versions"]
+    F --> G["Resolve active records and replacements"]
+    G --> H["Render and write dated artifacts"]
+    H --> I["Copy current WORKING_MEMORY.md"]
 ```

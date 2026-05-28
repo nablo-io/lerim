@@ -11,7 +11,8 @@ The flow is:
 3. the trace ingestor extracts durable context records and drops low-value candidates
 4. the context curator cleans, merges, archives, and supersedes records
 5. the context graph agent links related records and assigns semantic clusters
-6. the context-brief compiler generates fast startup context from records
+6. the context-brief compiler generates durable startup context from records
+7. working-memory generation renders recent record-version movement for short-term handoff
 7. the context answerer retrieves records and answers questions
 
 The current package includes supported source adapters and custom clean-trace
@@ -43,6 +44,7 @@ flowchart TD
     I --> J["lerim answer / agent tools"]
 
     G --> K["Context Brief"]
+    G --> L["Working Memory"]
     K --> L["Startup context"]
     L --> M["Future agent startup"]
 
@@ -144,18 +146,27 @@ Search indexes are derived, not canonical:
 ## Context Brief
 
 Context Brief is also derived, not canonical. It renders a compact
-`CONTEXT_BRIEF.md` from active project records so an agent can start with fast
-context and then query deeper only when needed.
+`CONTEXT_BRIEF.md` from active project records so an agent can start with
+long-term durable context and then query deeper only when needed.
 
 ```mermaid
 flowchart LR
     A["Context Store"] --> B["Context Brief synthesis"]
     B --> C["dated run artifacts"]
-    C --> D["Current startup context"]
+    C --> D["Current long-term startup context"]
     D --> E["agent startup"]
 ```
 
 See [Context Brief](context-brief.md) for the full generation flow.
+
+## Working Memory
+
+Working Memory is another derived view. It renders `WORKING_MEMORY.md` from
+recent `record_versions`, then resolves superseded records to the active
+replacement record so agents see the current final decision alongside recent
+change history.
+
+See [Working Memory](working-memory.md) for the short-term memory flow.
 
 ## Why this design
 

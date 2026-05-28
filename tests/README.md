@@ -12,10 +12,10 @@ The maintained test surface is DB-first.
 
 What we test:
 
-- unit tests for config, adapters, store, CLI, API, daemon, runtime, benchmarks, and generated Context Brief
+- unit tests for config, adapters, store, CLI, API, daemon, runtime, benchmarks, generated Context Brief, and Working Memory
 - unit tests for release metadata preflight checks that gate package publishing
 - smoke tests for quick real-LLM trace-ingestion sanity
-- integration tests for real trace ingestion, context curation, context answering, context briefs, cloud ingest state, and multi-project scope flows
+- integration tests for real trace ingestion, context curation, context answering, context briefs, working memory, cloud ingest state, and multi-project scope flows
 - integration tests for runtime/API/DB boundaries like workspace artifact layout, queue processing, custom project ingestion, memory reset, and cloud sync state
 - e2e surface tests for CLI/API rendering and deterministic query behavior
 - deterministic query tests preserve the difference between unscoped queries and empty project selections
@@ -91,7 +91,7 @@ Design rule:
 - `context_answerer` and `context_curator` cases are mostly seeded-state-driven
 - `test_debug_entrypoint.py` keeps one real-LLM debugger entry point in each LLM-backed agent folder
 - scope/runtime/cloud/queue clusters use the smallest real setup that exercises that behavior
-- runtime cases cover generated Context Brief artifact layout, current-copy behavior, skip behavior, and empty-state generation
+- runtime cases cover generated Context Brief and Working Memory artifact layout, current-copy behavior, skip behavior, and empty-state generation
 
 Some trace-ingestion pressure cases generate a long trace dynamically instead of checking in a giant fixture. That is intentional. Use a generated trace when the test is about context pressure or pruning, not about exact transcript wording.
 
@@ -136,7 +136,8 @@ Rules:
 - config tests cover provider capability validation, provider-specific model normalization, strict config parsing, MLflow env/tracing configuration, and SDK log-noise filters
 - cloud tests cover local dashboard auth verification through host-to-local endpoint fallbacks
 - profile tests cover bundled signal packs, registered custom YAML profiles, and project-level default source profiles
-- Context Brief tests cover cwd project resolution, freshness counts, markdown citations, CLI local reads, and artifact writes without live LLM calls
+- Context Brief tests cover cwd project resolution, fixed-section kind cleanup, freshness counts, markdown citations, CLI local reads, and artifact writes without live LLM calls
+- Working Memory tests cover separate artifact paths, continuation-handoff rendering, superseded-record replacement rendering, freshness counts, CLI local reads, and artifact writes without live LLM calls
 - MCP integration tests cover client config writers, dry-run/backup behavior, exposed MCP tool registration, in-process context search/brief calls, and trace-submit importer routing
 - Context store search tests cover derived-index generation metadata, fast-path retrieval, and stale-index repair without live LLM calls
 - Benchmark doc tests cover README launch links and visual references, duplicate demo media, public benchmark table values, artifact-path wording, and positioning guardrails for non-coding workflows
@@ -162,6 +163,7 @@ The current system is:
 - canonical session catalog in `~/.lerim/index/sessions.sqlite3`
 - canonical run artifacts in `~/.lerim/workspace/`
 - generated Context Brief artifacts in `~/.lerim/workspace/current/<project_id>/CONTEXT_BRIEF.md`
+- generated Working Memory artifacts in `~/.lerim/workspace/current/<project_id>/WORKING_MEMORY.md`
 - local semantic retrieval via ONNX embeddings + `sqlite-vec` + FTS5 + RRF
 - ingest graph: deterministic window reads, BAML trace observation, BAML durable-signal filtering, BAML context writing, context-store persistence
 - curate graph: active-record inventory, semantic-neighbor clusters, BAML context-cluster review, BAML record-health review for records without prior cluster actions, validated store mutations

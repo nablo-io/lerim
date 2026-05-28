@@ -1,10 +1,14 @@
 # Context Brief
 
-Context Brief is Lerim's fast startup context for workflow-scoped agent work.
+Context Brief is Lerim's long-term startup context for workflow-scoped agent work.
 
 It is a generated Markdown view of durable context records. It is not a second
 memory store, and agents should not edit it by hand. The source of truth remains
 the durable context store.
+
+Use Context Brief for stable project decisions, constraints, preferences, and
+facts. Use [Working Memory](working-memory.md) for short-term continuation context
+from the last few hours.
 
 In the current CLI, workflow scope is resolved through project registration.
 For customer pilots, the same idea can map to clients, engagements, research
@@ -29,19 +33,20 @@ workspace, or pass `--project <name-or-path>`.
 ```mermaid
 flowchart TD
     A["Agent starts project work"] --> B["lerim context-brief show"]
-    B --> C{"Current artifact exists?"}
-    C -- "yes" --> D["Read live freshness preface and CONTEXT_BRIEF.md"]
-    C -- "no" --> E["Use lerim context-brief status"]
-    E --> F["Suggested action: refresh"]
-    D --> G{"Need deeper or newer context?"}
-    G -- "yes" --> H["lerim context-brief status"]
-    H --> I{"DB records changed since generation?"}
-    I -- "yes" --> J["lerim context-brief refresh"]
-    I -- "no" --> K["Use lerim query or lerim answer for deeper lookup"]
-    G -- "no" --> L["Proceed with project work"]
-    J --> M["Runtime generates dated artifacts"]
-    M --> N["Copy latest markdown and manifest to workspace/current"]
-    N --> D
+    B --> C["lerim working-memory show"]
+    C --> D{"Current Context Brief exists?"}
+    D -- "yes" --> E["Read live freshness preface and CONTEXT_BRIEF.md"]
+    D -- "no" --> F["Use lerim context-brief status"]
+    F --> G["Suggested action: refresh"]
+    E --> H{"Need deeper or newer long-term context?"}
+    H -- "yes" --> I["lerim context-brief status"]
+    I --> J{"DB records changed since generation?"}
+    J -- "yes" --> K["lerim context-brief refresh"]
+    J -- "no" --> L["Use lerim query or lerim answer for deeper lookup"]
+    H -- "no" --> M["Proceed with project work"]
+    K --> N["Runtime generates dated artifacts"]
+    N --> O["Copy latest markdown and manifest to workspace/current"]
+    O --> E
 ```
 
 ## Generation Architecture
@@ -83,7 +88,8 @@ The Context Brief feature has two layers:
 
 `LerimRuntime.context_brief()` ties those layers together. The daemon calls the
 runtime for all registered projects during the daily pass, and after `curate`
-only when curate changed records.
+only when curate changed records. The same scheduling point refreshes Working
+Memory separately.
 
 ## Refresh Rules
 
@@ -95,8 +101,8 @@ Context Brief refresh is intentionally not part of the ingest hot path.
   `--force` is passed.
 - The daemon runs a daily pass across registered projects and skips unchanged
   projects.
-- `curate` triggers Context Brief only when it creates, updates, archives,
-  or otherwise changed records.
+- `curate` triggers Context Brief and Working Memory when it creates, updates,
+  archives, or otherwise changed records.
 - Empty projects get an empty-state Markdown file without a model call.
 
 ## Fixed Markdown Shape
@@ -106,7 +112,7 @@ predictably:
 
 1. `Summary`
 2. `Start Here`
-3. `Current Handoff`
+3. `Continuation Handoff`
 4. `Decisions`
 5. `Constraints & Preferences`
 6. `Project Facts`
@@ -114,16 +120,17 @@ predictably:
 8. `Follow-up Queries`
 9. `Sources`
 
-`Summary` is the compact startup cache. `Start Here` is deterministic and
-rendered by Lerim from project metadata and artifact status. `Current Handoff`
-must come only from recent episode evidence; without that evidence, it should
-explicitly say no persisted implementation handoff is available and point agents
-back to the current chat, workspace state, and relevant checks for live work.
+`Summary` is the compact durable startup cache. `Start Here` is deterministic
+and rendered by Lerim from project metadata and artifact status. `Continuation
+Handoff` must come only from recent episode evidence; without that evidence, it
+should explicitly say no persisted implementation handoff is available and point
+agents to Working Memory, the current chat, workspace state, and relevant checks
+for live work.
 
 `Decisions`, `Constraints & Preferences`, and `Project Facts` hold durable
 records. `Open Risks / Review Queue` and `Follow-up Queries` are populated only
 from records that explicitly describe unresolved work, review concerns, or
-questions worth asking next. `Sources` lists the cited record IDs used in the
+questions worth asking if the next prompt continues that work. `Sources` lists the cited record IDs used in the
 body. Any test/build result in these sections is historical persisted evidence;
 agents must rerun relevant checks after making edits.
 
@@ -157,9 +164,10 @@ changed-record count before generation.
 At startup, an agent working in a workspace should:
 
 1. Run `lerim context-brief show` from the workspace.
-2. If the file is missing or the task depends on newest context, run
+2. Run `lerim working-memory show` when recent decisions or handoff may matter.
+3. If the file is missing or the task depends on newest long-term context, run
    `lerim context-brief status`.
-3. If status reports changed DB records, suggest or run
+4. If status reports changed DB records, suggest or run
    `lerim context-brief refresh`.
-4. Use `lerim query` for exact inspection and `lerim answer` for synthesized
+5. Use `lerim query` for exact inspection and `lerim answer` for synthesized
    answers across more context.

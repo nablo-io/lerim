@@ -50,13 +50,16 @@ class TestSkills(unittest.TestCase):
         self.assertTrue(len(body) > 20, "SKILL.md has no body content")
 
     def test_skill_documents_context_brief_startup(self) -> None:
-        """Packaged skill should tell agents to read Context Brief first."""
+        """Packaged skill should tell agents to read startup artifacts first."""
         text = (SKILLS_DIR / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("lerim context-brief show", text)
+        self.assertIn("lerim working-memory show", text)
         self.assertIn("Context Brief is a generated markdown view", text)
 
-    def test_cli_reference_documents_context_brief(self) -> None:
-        """CLI reference should describe Context Brief commands."""
+    def test_cli_reference_documents_startup_artifacts(self) -> None:
+        """CLI reference should describe startup artifact commands."""
         text = (SKILLS_DIR / "cli-reference.md").read_text(encoding="utf-8")
         self.assertIn("lerim context-brief show", text)
         self.assertIn("context-brief refresh --force", text)
+        self.assertIn("lerim working-memory show", text)
+        self.assertIn("working-memory refresh --force", text)

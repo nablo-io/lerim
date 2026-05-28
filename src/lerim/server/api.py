@@ -839,7 +839,11 @@ def _normalize_activity_item(run: dict[str, Any]) -> dict[str, Any]:
         project_label = "global"
 
     raw_job_type = str(run.get("job_type") or "ingest").strip()
-    op_type = raw_job_type if raw_job_type in {"curate", "context-brief"} else "ingest"
+    op_type = (
+        raw_job_type
+        if raw_job_type in {"curate", "context-brief", "working-memory"}
+        else "ingest"
+    )
     base: dict[str, Any] = {
         "time": run.get("started_at"),
         "op_type": op_type,

@@ -82,9 +82,9 @@ export default function MemoryTimelineChart({
 			<section className="mt-6 border-y border-[var(--border)] py-5">
 				<div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
 					<div>
-						<h2 className="text-base font-semibold text-[var(--text)]">Memory Timeline</h2>
+						<h2 className="text-base font-semibold text-[var(--text)]">Record Timeline</h2>
 						<p className="mt-1 text-xs text-[var(--text-muted)]">
-							Created, revised, archived, and active context
+							Created, revised, archived, and active records
 						</p>
 					</div>
 

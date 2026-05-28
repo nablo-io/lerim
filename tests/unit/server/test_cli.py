@@ -40,7 +40,7 @@ def test_help_lists_minimal_commands() -> None:
         "dashboard",
         "answer",
         "context-brief",
-        "context-brief",
+        "working-memory",
         "status",
         "memory",
     ):

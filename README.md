@@ -320,6 +320,8 @@ lerim ingest
 lerim curate
 lerim context-brief show
 lerim context-brief status
+lerim working-memory show
+lerim working-memory status
 lerim answer "What decisions exist about caching?"
 ```
 

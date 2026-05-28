@@ -22,12 +22,17 @@ from lerim.context_brief import (
     status_to_dict,
 )
 from lerim.server.api import api_answer, api_query, api_status
-from lerim.server.daemon import run_context_brief_for_project
+from lerim.server.daemon import run_context_brief_for_project, run_working_memory_for_project
 from lerim.traces import import_trace_file
 from lerim.traces.submissions import (
     create_submission_manifest,
     mark_submission_failed,
     mark_submission_succeeded,
+)
+from lerim.working_memory import (
+    working_memory_paths,
+    working_memory_status,
+    working_memory_status_to_dict,
 )
 
 
@@ -91,6 +96,58 @@ def create_mcp_server() -> FastMCP:
                 "project_id": resolved.identity.project_id,
                 "repo_path": str(resolved.identity.repo_path),
                 "status": status_to_dict(status),
+                "content": content,
+                "truncated": truncated,
+                "suggested_action": status.suggested_action,
+            }
+
+        return _run_with_stdout_guard(_impl)
+
+    @mcp.tool(
+        name="lerim_working_memory",
+        description=(
+            "Return Lerim Working Memory for recent project movement. "
+            "Set refresh=true to regenerate the short-term artifact first."
+        ),
+    )
+    def lerim_working_memory(
+        project: str | None = None,
+        refresh: bool = False,
+        max_chars: int = 12000,
+    ) -> dict[str, Any]:
+        """Return the current project short-term Working Memory."""
+        def _impl() -> dict[str, Any]:
+            """Load or refresh Working Memory while stdout is redirected."""
+            cfg = get_config()
+            resolved = resolve_context_brief_project(
+                config=cfg,
+                project=project,
+                cwd=Path.cwd(),
+            )
+            if refresh:
+                run_working_memory_for_project(
+                    project_name=resolved.name,
+                    project_path=resolved.identity.repo_path,
+                    trigger="mcp",
+                    force=True,
+                )
+            store = ContextStore(cfg.context_db_path)
+            status = working_memory_status(config=cfg, store=store, project=resolved)
+            paths = working_memory_paths(cfg, resolved.identity.project_id)
+            content = ""
+            if paths.current_file.is_file():
+                content = paths.current_file.read_text(encoding="utf-8", errors="replace")
+            truncated = False
+            budget = max(1000, int(max_chars or 12000))
+            if len(content) > budget:
+                content = content[:budget].rstrip() + "\n\n[truncated]"
+                truncated = True
+            return {
+                "error": False,
+                "project": resolved.name,
+                "project_id": resolved.identity.project_id,
+                "repo_path": str(resolved.identity.repo_path),
+                "status": working_memory_status_to_dict(status),
                 "content": content,
                 "truncated": truncated,
                 "suggested_action": status.suggested_action,

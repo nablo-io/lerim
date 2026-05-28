@@ -60,7 +60,7 @@ export default function OverviewPage() {
 				<div>
 					<h1 className="text-lg font-semibold text-[var(--text)]">Overview</h1>
 					<p className="mt-0.5 text-xs text-[var(--text-muted)]">
-						Context health, graph readiness, and recent agent processing activity
+						Record health, graph readiness, and recent agent processing activity
 					</p>
 				</div>
 				<button
@@ -85,8 +85,8 @@ export default function OverviewPage() {
 
 			<div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
 				<MetricCard label="Source Sessions" value={sessions} />
-				<MetricCard label="Context Records" value={records} secondary={`${activeRecords.toLocaleString()} active`} />
-				<MetricCard label="Context Health" value={health == null ? "–" : `${health}/100`} />
+				<MetricCard label="Records" value={records} secondary={`${activeRecords.toLocaleString()} active`} />
+				<MetricCard label="Record Health" value={health == null ? "–" : `${health}/100`} />
 				<MetricCard label="Runtime Errors" value={errors} accent={errors > 0 ? "red" : undefined} />
 			</div>
 

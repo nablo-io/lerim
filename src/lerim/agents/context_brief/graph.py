@@ -125,8 +125,10 @@ def _candidate_profile(records: list[dict[str, Any]]) -> dict[str, Any]:
         "has_recent_flow_evidence": episode_count > 0,
         "current_handoff_evidence_record_ids": episode_record_ids,
         "guidance": (
-            "Only populate current_handoff when cited records describe recent flow, "
-            "current work, open loops, or next commands. Leave open_risks empty unless "
+            "Treat current_handoff as continuation-only context. Only populate it "
+            "when cited episode records describe recent flow, current work, or open "
+            "loops. Do not invent next actions because the next user prompt decides "
+            "what happens next. Leave open_risks empty unless "
             "cited record text explicitly supports an unresolved risk, blocker, or "
             "requested follow-up. Treat all test/build results as historical persisted "
             "evidence and tell agents to rerun relevant checks after edits."
