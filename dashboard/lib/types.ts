@@ -346,12 +346,6 @@ export interface GraphQueryResponse {
   graph_mode?: "empty" | "learned_graph" | "mixed" | "record_fallback" | string;
 }
 
-export interface GraphExpandResponse {
-  nodes: GraphNode[];
-  edges: GraphEdge[];
-  center_id: string;
-}
-
 /* ----- Live Status -------------------------------------------------- */
 
 export interface LiveStatusResponse {

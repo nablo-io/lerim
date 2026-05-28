@@ -2,7 +2,6 @@ import type {
   ActivityFeedResponse,
   ContextRecord,
   ContextRecordVersion,
-  GraphExpandResponse,
   GraphQueryResponse,
   IntelligenceResponse,
   LiveStatusResponse,
@@ -574,26 +573,6 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     });
-  },
-
-  expandGraph: async (body: { node_id: string }) => {
-    const record = await api.getRecord(body.node_id);
-    return {
-      center_id: body.node_id,
-      nodes: [{
-        id: record.record_id,
-        label: record.title || record.record_id,
-        kind: "record",
-        record_kind: record.record_kind || "record",
-        summary: record.body || "",
-        project: record.project ?? undefined,
-        status: record.status,
-        semantic_cluster: record.record_kind || "records",
-        created_at: record.created_at,
-        updated_at: record.updated_at,
-      }],
-      edges: [],
-    } satisfies GraphExpandResponse;
   },
 
   getIntelligence: async (_limit?: number) => {

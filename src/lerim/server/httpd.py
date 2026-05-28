@@ -528,11 +528,12 @@ def _decode_json_list(raw: Any) -> list[Any]:
 
 def _graph_node_payload(row: sqlite3.Row) -> dict[str, Any]:
     """Serialize a context graph node row for the dashboard graph UI."""
+    keys = row.keys()
     return {
         "id": row["node_id"],
         "label": row["label"],
         "kind": "record",
-        "record_kind": row["node_type"],
+        "record_kind": row["record_kind"] if "record_kind" in keys and row["record_kind"] else row["node_type"],
         "summary": row["summary"],
         "project": row["scope_label"],
         "status": row["status"],
@@ -1047,10 +1048,12 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
                 })
                 return
             node_rows = conn.execute(
-                f"""SELECT node_id, node_type, label, summary, status, semantic_cluster,
-                          scope_label, created_at, updated_at
-                   FROM context_nodes
-                   WHERE status = 'active' AND node_id IN ({_placeholders(selected_ids)})""",
+                f"""SELECT cn.node_id, cn.node_type, COALESCE(r.kind, cn.node_type) AS record_kind,
+                          cn.label, cn.summary, cn.status, cn.semantic_cluster,
+                          cn.scope_label, cn.created_at, cn.updated_at
+                   FROM context_nodes cn
+                   LEFT JOIN records r ON r.record_id = cn.node_id
+                   WHERE cn.status = 'active' AND cn.node_id IN ({_placeholders(selected_ids)})""",
                 selected_ids,
             ).fetchall()
             selected_set = {row["node_id"] for row in node_rows}

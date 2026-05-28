@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lerim"
-version = "0.3.16"
+version = "0.3.17"
 description = "Source-session context compiler for AI agent workflows."
 readme = "README.md"
 requires-python = ">=3.11"

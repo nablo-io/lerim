@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.17] - 2026-05-28
+
+### Changed
+- Replaced the dashboard Context Graph renderer with AntV G6, keeping the graph
+  focused on topic clustering and clustering-off modes.
+- Improved the clustering-off graph with record-kind node colors, a compact
+  topology layout, and a record type legend.
+
+### Fixed
+- Returned durable record kinds in graph API node payloads so dashboard node
+  colors reflect the real data catalog instead of the derived context-node type.
+
 ## [0.3.16] - 2026-05-28
 
 ### Added
