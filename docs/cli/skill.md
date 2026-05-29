@@ -15,6 +15,8 @@ locations so supported agents can query Lerim before they start work.
 
 Add a short Lerim startup instruction to the repository's agent instruction file,
 such as `AGENTS.md`, `CLAUDE.md`, or another tool-specific instruction file.
+The instruction should tell agents to use Lerim when past project context may
+matter, not as a ritual for every chat.
 
 The recommended startup flow is:
 

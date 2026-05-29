@@ -35,10 +35,11 @@ Do not treat `lerim: command not found` as Lerim being unavailable until the `uv
 
 ## When to use
 
-- Before starting a task in a workspace with existing Lerim history
+- At the start of a chat or task when past project context may change the work
 - When a decision, constraint, or preference may already have precedent
 - When debugging and you want prior facts or earlier decisions
 - When you need current vs historical truth from stored records
+- Skip Lerim for self-contained tasks where past project context would not help
 
 ## Fast path
 

@@ -5,10 +5,11 @@ read-only.
 
 ## Agent startup context
 
-If you want an agent to read Lerim before it starts work, follow
-[Agent Startup Context](agent-startup-context.md). That guide covers installing
-the skill, adding a short `AGENTS.md` or `CLAUDE.md` instruction, and verifying
-`lerim context-brief show` plus `lerim working-memory show`.
+If you want an agent to use Lerim as project context and memory when past work
+may matter, follow [Agent Startup Context](agent-startup-context.md). That guide
+covers installing the skill, adding a short `AGENTS.md` or `CLAUDE.md`
+instruction, and verifying `lerim context-brief show` plus
+`lerim working-memory show`.
 
 ## Start with `lerim answer`
 

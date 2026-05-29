@@ -1,7 +1,7 @@
 # Agent Startup Context
 
-Use this guide when you want a coding agent to read Lerim context before it starts
-work in a repository.
+Use this guide when you want a coding agent to use Lerim as project context and
+memory when past work may matter.
 
 The setup has three parts:
 
@@ -66,10 +66,15 @@ such as `AGENTS.md`, `CLAUDE.md`, or another tool-specific instruction file.
 ```markdown
 ## Lerim startup context
 
-At the start of substantive work in this repo, invoke the `lerim` skill.
-In clients that expose slash skills, invoke `/lerim`.
+Use Lerim as the project context and memory layer when a new chat or task needs
+past project knowledge: prior decisions, constraints, preferences, handoffs,
+historical failures, or current-vs-historical truth.
 
-Then read both generated context views:
+Do not use Lerim as a ritual for every chat. Skip it for self-contained tasks
+where past project context would not change the answer.
+
+When past context may help, invoke the `lerim` skill. In clients that expose
+slash skills, invoke `/lerim`. Then read both generated context views:
 
 - `lerim context-brief show` for durable project decisions, constraints, preferences, and facts.
 - `lerim working-memory show` for recent continuation context and short-term project movement.
