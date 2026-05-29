@@ -1,4 +1,4 @@
-"""Tests for the BAML/LangGraph context-curator package."""
+"""Tests for the context-curator package."""
 
 from __future__ import annotations
 
@@ -6,14 +6,14 @@ import inspect
 from types import SimpleNamespace
 
 from lerim.agents.context_curator import ContextCuratorResult, ContextCuratorRunDetails, run_context_curator
-from lerim.agents.baml_helpers import call_baml_with_retries
-from lerim.agents.context_curator.graph import _validate_action_plan_for_records
 from lerim.agents.context_curator.inventory import (
     build_health_batches,
     build_similarity_clusters,
     record_search_query,
 )
 from lerim.agents.context_curator.operations import apply_context_curation_plans
+from lerim.agents.context_curator.pipeline import validate_action_plan_for_records
+from lerim.agents.model_helpers import call_model_step
 from lerim.context import ContextStore
 from lerim.context.project_identity import ProjectIdentity
 
@@ -86,24 +86,24 @@ class TestRunCurateSignature:
             lambda **_kwargs: None,
         )
         monkeypatch.setattr(
-            "lerim.agents.context_curator.api.run_context_curator_graph",
-            lambda **_kwargs: {
-                "completion_summary": "ok",
-                "observations": [
-                    {
-                        "action": "final_result",
-                        "ok": True,
-                        "content": "ok",
-                        "args": {},
-                        "done": True,
-                        "completion_summary": "ok",
-                    }
-                ],
-                "llm_calls": 1,
-                "done": True,
-                "records": [],
-                "clusters": [],
-            },
+            "lerim.agents.context_curator.api.ContextCuratorPipeline",
+            lambda **_kwargs: lambda: {
+                    "completion_summary": "ok",
+                    "observations": [
+                        {
+                            "action": "final_result",
+                            "ok": True,
+                            "content": "ok",
+                            "args": {},
+                            "done": True,
+                            "completion_summary": "ok",
+                        }
+                    ],
+                    "llm_calls": 1,
+                    "done": True,
+                    "records": [],
+                    "clusters": [],
+                },
         )
 
         result, details = run_context_curator(
@@ -120,10 +120,10 @@ class TestRunCurateSignature:
 
 
 class TestContextCuratorGraphValidation:
-    """Tests for BAML action-plan validation before mutation."""
+    """Tests for action-plan validation before mutation."""
 
     def test_episode_revision_requires_complete_episode_fields(self):
-        feedback = _validate_action_plan_for_records(
+        feedback = validate_action_plan_for_records(
             {
                 "actions": [
                     {
@@ -188,13 +188,13 @@ class TestContextCuratorGraphValidation:
                 ]
             }
 
-        result, observations, attempts = call_baml_with_retries(
+        result, observations, attempts = call_model_step(
             fake_call,
             stage="review_health",
             progress=False,
             progress_label="context-curator",
             run_instruction="Keep records compact.",
-            validate_result=lambda result: _validate_action_plan_for_records(
+            validate_result=lambda result: validate_action_plan_for_records(
                 result,
                 records=[
                     {
@@ -212,7 +212,7 @@ class TestContextCuratorGraphValidation:
         assert len(calls) == 2
         assert "Previous structured output was unsafe" in calls[1]
         assert observations[0]["action"] == "model_retry"
-        assert _validate_action_plan_for_records(
+        assert validate_action_plan_for_records(
             result,
             records=[
                 {

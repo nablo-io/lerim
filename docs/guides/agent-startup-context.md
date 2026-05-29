@@ -85,7 +85,7 @@ run `git status`, and rerun relevant checks after edits.
 
 Use `lerim query ...` for exact lookup and
 `lerim answer "<question>"` for synthesized context.
-Do not use deprecated aliases such as `lerim ask`, `sync`, or `maintain`.
+Do not use removed aliases: `lerim ask`, `lerim sync`, or `lerim maintain`.
 Do not inspect repo-local store artifacts or hardcode project IDs.
 ```
 

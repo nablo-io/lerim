@@ -132,7 +132,7 @@ lerim trace submissions --status failed
 lerim trace retry <submitted_trace_path>
 ```
 
-This retry path reruns Lerim's normal importer and BAML/LangGraph extraction. It
+This retry path reruns Lerim's normal importer and DSPy extraction. It
 does not create a separate memory-save path.
 
 ## Choose A Scope

@@ -254,7 +254,7 @@
       <circle class="surface-icon" cx="20" cy="17" r="10"/>
       <path d="M 15 14 L 21 17 L 15 20 M 23 20 H 27" stroke="#64f5b8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
       <text x="38" y="15" class="surface-chip-title">CLI</text>
-      <text x="38" y="28" class="surface-chip-sub">lerim ask</text>
+      <text x="38" y="28" class="surface-chip-sub">lerim answer</text>
     </g>
 
     <g transform="translate(14 120)">

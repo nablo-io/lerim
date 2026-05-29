@@ -104,12 +104,6 @@ from lerim.working_memory import (
     working_memory_status_to_dict,
 )
 
-_LEGACY_COMMAND_ALIASES = {
-    "sync": "ingest",
-    "maintain": "curate",
-    "ask": "answer",
-}
-_LEGACY_COMMAND_REMOVAL_VERSION = "v0.3.0"
 _PLANNED_PLUGIN_TARGETS = {
     "openclaw": {
         "display_name": "OpenClaw",
@@ -162,18 +156,6 @@ def _emit(message: object = "", *, file: Any | None = None) -> None:
     """Write one CLI output line to stdout or a provided file-like target."""
     target = file if file is not None else sys.stdout
     target.write(f"{message}\n")
-
-
-def _warn_if_legacy_command(args: argparse.Namespace) -> None:
-    """Emit a one-line deprecation notice for legacy command aliases."""
-    command = str(getattr(args, "command", "") or "")
-    replacement = _LEGACY_COMMAND_ALIASES.get(command)
-    if replacement:
-        _emit(
-            f"`lerim {command}` is deprecated; use `lerim {replacement}`. "
-            f"This alias will be removed in {_LEGACY_COMMAND_REMOVAL_VERSION}.",
-            file=sys.stderr,
-        )
 
 
 def _emit_structured(*, title: str, payload: dict[str, Any], as_json: bool) -> None:
@@ -711,7 +693,6 @@ def _format_mcp_connect_result(payload: dict[str, Any]) -> str:
 
 def _cmd_ingest(args: argparse.Namespace) -> int:
     """Forward ingest request to the running Lerim server."""
-    _warn_if_legacy_command(args)
     body: dict[str, Any] = {
         "agent": getattr(args, "agent", None),
         "window": getattr(args, "window", None),
@@ -741,7 +722,6 @@ def _cmd_ingest(args: argparse.Namespace) -> int:
 
 def _cmd_curate(args: argparse.Namespace) -> int:
     """Forward context curation request to the running Lerim server."""
-    _warn_if_legacy_command(args)
     body = {
         "dry_run": getattr(args, "dry_run", False),
         "blocking": True,
@@ -773,7 +753,6 @@ def _context_brief_project_from_args(args: argparse.Namespace) -> Any:
 
 def _cmd_context_brief(args: argparse.Namespace) -> int:
     """Handle local context brief commands."""
-    _warn_if_legacy_command(args)
     action = getattr(args, "context_brief_action", None)
     command = str(getattr(args, "command", None) or "context-brief")
     if not action:
@@ -1297,8 +1276,15 @@ def _render_answer_trace(debug: dict[str, Any]) -> list[str]:
                 result_count = content.get("result_count", "?")
                 lines.append(f"  [retrieval] {part_kind} results={result_count}")
                 continue
-            if part_kind in {"PlanContextRetrieval", "AnswerFromContext"}:
-                lines.append(f"  [baml] {part_kind}")
+            if part_kind in {
+                "plan_retrieval",
+                "plan_context_retrieval",
+                "write_answer",
+                "answer_from_context",
+                "PlanContextRetrieval",
+                "AnswerFromContext",
+            }:
+                lines.append(f"  [model] {part_kind}")
                 continue
             if part_kind == "text":
                 lines.append(f"  [text] {str(part.get('content') or '')}")
@@ -1309,7 +1295,6 @@ def _render_answer_trace(debug: dict[str, Any]) -> list[str]:
 
 def _cmd_answer(args: argparse.Namespace) -> int:
     """Forward context answer query to the running Lerim server."""
-    _warn_if_legacy_command(args)
     scope = _normalize_scope(getattr(args, "scope", None))
     payload: dict[str, Any] = {
         "question": args.question,
@@ -3032,7 +3017,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=_F,
         help="Ingest new sessions and extract context records (hot path)",
         description=(
-            "Index new sessions and extract context records via BAML/LangGraph.\n\n"
+            "Index new sessions and extract context records via DSPy pipelines.\n\n"
             "Examples:\n"
             "  lerim ingest                      # default 7d window\n"
             "  lerim ingest --window 30d         # last 30 days\n"
@@ -3041,20 +3026,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_ingest_args(ingest, config=config)
     ingest.set_defaults(func=_cmd_ingest)
-
-    ingest_alias = sub.add_parser(
-        "sync",
-        formatter_class=_F,
-        help="Deprecated alias for `lerim ingest`",
-        description=(
-            "`lerim sync` is a deprecated compatibility alias for `lerim ingest`.\n\n"
-            "Examples:\n"
-            "  lerim ingest                      # default 7d window\n"
-            "  lerim ingest --window 30d         # last 30 days"
-        ),
-    )
-    _add_ingest_args(ingest_alias, config=config)
-    ingest_alias.set_defaults(func=_cmd_ingest)
 
     # ── trace ────────────────────────────────────────────────────────
     trace = sub.add_parser(
@@ -3166,20 +3137,6 @@ def build_parser() -> argparse.ArgumentParser:
     _add_dry_run_flag(curate)
     curate.set_defaults(func=_cmd_curate)
 
-    curate_alias = sub.add_parser(
-        "maintain",
-        formatter_class=_F,
-        help="Deprecated alias for `lerim curate`",
-        description=(
-            "`lerim maintain` is a deprecated compatibility alias for `lerim curate`.\n\n"
-            "Examples:\n"
-            "  lerim curate            # one pass\n"
-            "  lerim curate --dry-run  # preview only"
-        ),
-    )
-    _add_dry_run_flag(curate_alias)
-    curate_alias.set_defaults(func=_cmd_curate)
-
     # ── context-brief ────────────────────────────────────────────────
     context_brief = sub.add_parser(
         "context-brief",
@@ -3257,34 +3214,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show context-answerer retrieval steps and concise results.",
     )
     answer.set_defaults(func=_cmd_answer)
-
-    answer_alias = sub.add_parser(
-        "ask",
-        formatter_class=_F,
-        help="Deprecated alias for `lerim answer`",
-        description=(
-            "`lerim ask` is a deprecated compatibility alias for `lerim answer`.\n\n"
-            "Example: lerim answer 'What auth pattern do we use?'"
-        ),
-    )
-    answer_alias.add_argument(
-        "question", help="Your question (use quotes if it contains spaces)."
-    )
-    answer_alias.add_argument(
-        "--scope",
-        choices=["all", "project"],
-        default="all",
-        help="Read scope: all projects (default) or one project.",
-    )
-    answer_alias.add_argument(
-        "--project", help="Project name/path when --scope=project."
-    )
-    answer_alias.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Show context-answerer retrieval steps and concise results.",
-    )
-    answer_alias.set_defaults(func=_cmd_answer)
 
     # ── query ────────────────────────────────────────────────────────
     query = sub.add_parser(

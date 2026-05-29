@@ -3,7 +3,7 @@
 The context brief agent compiles startup context from stored records so a new
 agent session can begin with compact project memory.
 
-The graph below is generated from the compiled LangGraph runtime.
+The pipeline below shows the DSPy module flow.
 
 ```mermaid
 ---

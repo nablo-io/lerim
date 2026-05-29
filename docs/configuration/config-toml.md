@@ -91,7 +91,7 @@ endpoint = "https://api.lerim.dev"
 - `[observability].mlflow_enabled` enables local MLflow tracing for the long-running server process
 - there is one active model role today: `[roles.agent]`
 - API keys come from environment variables, not TOML
-- `curate_max_llm_calls` caps context-curator BAML calls; `answer_max_retrieval_actions` caps context-answerer retrieval actions
+- `curate_max_llm_calls` caps context-curator model calls; `answer_max_retrieval_actions` caps context-answerer retrieval actions
 - `[project_types]` marks custom clean-trace folders; accepted values are `supported` and `custom`
 - `[project_profiles]` gives a registered project a default source profile for extraction
 - `[profiles]` maps custom source-profile ids to YAML files; `lerim profile register <file.yaml>` writes this table

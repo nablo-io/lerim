@@ -4,7 +4,7 @@ expected:
     - "list"
     - "search"
   message_kinds:
-    - "baml_call"
+    - "model_step"
     - "retrieval"
     - "retrieval"
-    - "baml_call"
+    - "model_step"

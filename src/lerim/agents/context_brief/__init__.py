@@ -1,4 +1,4 @@
-"""BAML context brief compiler public API."""
+"""Context brief compiler public API."""
 
 from lerim.agents.context_brief.api import compile_context_brief
 

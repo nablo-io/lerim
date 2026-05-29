@@ -3,7 +3,7 @@
 Trace ingestion is the hot path. It turns one indexed source session into a
 small episode record plus zero or more durable context records.
 
-The graph below is generated from the compiled LangGraph runtime.
+The pipeline below shows the DSPy module flow.
 
 ```mermaid
 ---

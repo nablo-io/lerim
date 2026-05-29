@@ -32,6 +32,16 @@ def test_configure_logging_keeps_anthropic_sdk_at_warning() -> None:
     assert logging.getLogger("anthropic").level == logging.WARNING
 
 
+def test_configure_logging_quiets_litellm_loggers() -> None:
+    logging.getLogger("LiteLLM").setLevel(logging.DEBUG)
+    logging.getLogger("litellm").setLevel(logging.DEBUG)
+
+    logging_mod.configure_logging("INFO")
+
+    assert logging.getLogger("LiteLLM").level == logging.ERROR
+    assert logging.getLogger("litellm").level == logging.ERROR
+
+
 def test_log_file_path_uses_utc_dated_layout(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(logging_mod, "LOG_DIR", tmp_path)
     path = logging_mod.log_file_path(

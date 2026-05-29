@@ -1,4 +1,4 @@
-"""BAML-planned context answerer public API."""
+"""Context answerer public API."""
 
 from lerim.agents.context_answerer.api import CONTEXT_ANSWERER_SYSTEM_PROMPT, run_context_answerer
 from lerim.agents.context_answerer.types import ContextAnswerResult

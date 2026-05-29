@@ -17,7 +17,7 @@ def _source_payload() -> dict[str, object]:
     """Build a small full-run-like extraction source fixture with negative cases."""
     return {
         "timestamp": "20260519_045951",
-        "framework": "baml_langgraph",
+        "framework": "dspy",
         "agent_model": "MiniMax-M2.7",
         "agent_provider": "minimax",
         "judge_model": "MiniMax-M2.5",

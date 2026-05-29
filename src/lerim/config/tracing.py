@@ -1,6 +1,6 @@
 """MLflow tracing for Lerim agent observability.
 
-Activates MLflow when ``LERIM_MLFLOW=true`` is set. BAML/LangGraph flows emit
+Activates MLflow when ``LERIM_MLFLOW=true`` is set. Agent pipelines emit
 explicit spans through Lerim's runtime instrumentation. When
 ``MLFLOW_TRACKING_URI`` is configured, traces go to the shared tracking server;
 otherwise Lerim keeps the legacy local SQLite fallback.

@@ -760,7 +760,7 @@ class TestQueryContextRecords:
 		assert results[0]["valid_from"]
 
 	def test_queries_record_provenance(self, tmp_path):
-		"""Query includes BAML/LangGraph provenance needed by the dashboard."""
+		"""Query includes DSPy provenance needed by the dashboard."""
 		project_dir = tmp_path / "project_a"
 		project_dir.mkdir()
 		context_db_path = tmp_path / "context.sqlite3"
@@ -771,7 +771,7 @@ class TestQueryContextRecords:
 		store.upsert_session(
 			project_id=identity.project_id,
 			session_id="ctx-session",
-			agent_type="baml-langgraph-trace-ingestion",
+			agent_type="trace_ingestion",
 			source_trace_ref="/tmp/trace.jsonl",
 			repo_path=str(project_dir),
 			cwd=str(project_dir),
@@ -794,7 +794,7 @@ class TestQueryContextRecords:
 			context_db_path, {"project_a": str(project_dir)}, "", 100
 		)
 
-		assert results[0]["ingestion_agent"] == "baml-langgraph-trace-ingestion"
+		assert results[0]["ingestion_agent"] == "trace_ingestion"
 		assert results[0]["source_trace_ref"] == "/tmp/trace.jsonl"
 		assert results[0]["changed_by_session_id"] == "ctx-session"
 		assert results[0]["change_reason"] == "create"
@@ -1007,7 +1007,7 @@ class TestShipRecords:
 		store.upsert_session(
 			project_id=identity.project_id,
 			session_id="ctx-session",
-			agent_type="baml-langgraph-trace-ingestion",
+			agent_type="trace_ingestion",
 			source_trace_ref="/tmp/trace.jsonl",
 			repo_path=str(project_dir),
 			cwd=str(project_dir),
@@ -1040,7 +1040,7 @@ class TestShipRecords:
 
 		assert shipped == 1
 		payload = captured[0]["records"][0]
-		assert payload["ingestion_agent"] == "baml-langgraph-trace-ingestion"
+		assert payload["ingestion_agent"] == "trace_ingestion"
 		assert payload["source_trace_ref"] == "/tmp/trace.jsonl"
 		assert payload["changed_by_session_id"] == "ctx-session"
 		assert payload["change_reason"] == "create"

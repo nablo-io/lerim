@@ -288,7 +288,7 @@ def test_cmd_retry_not_dead_letter(monkeypatch: pytest.MonkeyPatch) -> None:
 	rc = cli._cmd_retry(args)
 
 	assert rc == 1
-	assert any("not in dead_letter" in line for line in output)
+	assert any("not in failed/dead_letter" in line for line in output)
 
 
 def test_cmd_retry_project(monkeypatch: pytest.MonkeyPatch) -> None:

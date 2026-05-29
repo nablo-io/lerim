@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from lerim.agents.model_helpers import prediction_payload
 from lerim.context import ContextStore, ProjectIdentity
 from lerim.context.spec import RECORD_TYPED_FIELDS, normalize_record_kind, normalize_record_status
 
@@ -30,7 +31,7 @@ def apply_context_curation_plans(
     action_plans: list[dict[str, Any]],
     evidence_record_ids: set[str],
 ) -> ActionApplicationSummary:
-    """Validate and apply BAML-proposed context-curation actions."""
+    """Validate and apply proposed context-curation actions."""
     store = ContextStore(context_db_path)
     store.initialize()
     store.register_project(project_identity)
@@ -45,7 +46,7 @@ def apply_context_curation_plans(
     applied_actions = 0
 
     for raw_action in _iter_actions(action_plans):
-        action = _model_payload(raw_action)
+        action = prediction_payload(raw_action)
         action_type = _clean_action_type(action.get("action_type"))
         record_id = str(action.get("record_id") or "").strip()
         if action_type == "noop":
@@ -67,7 +68,7 @@ def apply_context_curation_plans(
                     record_id=record_id,
                     session_id=session_id,
                     project_ids=[project_identity.project_id],
-                    reason=str(action.get("reason") or "").strip() or "baml_context_curation_archive",
+                    reason=str(action.get("reason") or "").strip() or "context_curation_archive",
                 )
                 counts["records_archived"] += 1
             elif action_type == "supersede":
@@ -77,7 +78,7 @@ def apply_context_curation_plans(
                     session_id=session_id,
                     project_ids=[project_identity.project_id],
                     replacement_record_id=replacement_record_id,
-                    reason=str(action.get("reason") or "").strip() or "baml_context_curation_supersede",
+                    reason=str(action.get("reason") or "").strip() or "context_curation_supersede",
                     valid_until=str(action.get("valid_until") or "").strip() or None,
                 )
                 counts["records_updated"] += 1
@@ -88,7 +89,7 @@ def apply_context_curation_plans(
                     session_id=session_id,
                     project_ids=[project_identity.project_id],
                     changes=changes,
-                    change_reason=str(action.get("reason") or "").strip() or "baml_context_curation_revise",
+                    change_reason=str(action.get("reason") or "").strip() or "context_curation_revise",
                 )
                 counts["records_updated"] += 1
             else:
@@ -146,12 +147,12 @@ def summarize_application(summary: ActionApplicationSummary) -> str:
 
 
 def _iter_actions(action_plans: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Flatten BAML action plans into action dictionaries."""
+    """Flatten action plans into action dictionaries."""
     actions: list[dict[str, Any]] = []
     for plan in action_plans:
-        payload = _model_payload(plan)
+        payload = prediction_payload(plan, output_field="plan")
         for action in payload.get("actions") or []:
-            actions.append(_model_payload(action))
+            actions.append(prediction_payload(action))
     return actions
 
 
@@ -186,7 +187,7 @@ def _validate_action(
             str((current_records.get(record_id) or {}).get("kind") or "")
         )
         patch_kind = normalize_record_kind(
-            str((_model_payload(action.get("patch") or {})).get("kind") or "")
+            str((prediction_payload(action.get("patch") or {})).get("kind") or "")
         )
         if current_kind and patch_kind and current_kind != patch_kind:
             return f"kind_change_not_allowed:{record_id}:{current_kind}->{patch_kind}"
@@ -213,8 +214,8 @@ def _load_evidence_records(
 
 
 def _changes_from_patch(patch: dict[str, Any]) -> dict[str, Any]:
-    """Convert a BAML record patch into ContextStore update changes."""
-    payload = _model_payload(patch)
+    """Convert a record patch into ContextStore update changes."""
+    payload = prediction_payload(patch)
     changes = {
         "kind": normalize_record_kind(str(payload.get("kind") or "")),
         "title": str(payload.get("title") or "").strip(),
@@ -236,29 +237,6 @@ def _clean_action_type(value: Any) -> str:
     enum_value = getattr(value, "value", None)
     text = str(enum_value if enum_value is not None else value or "").strip().lower()
     return text or "noop"
-
-
-def _model_payload(value: Any) -> dict[str, Any]:
-    """Convert generated BAML objects into plain dictionaries."""
-    if hasattr(value, "model_dump"):
-        return _plain_value(value.model_dump(exclude_none=True))
-    if isinstance(value, dict):
-        return _plain_value({key: item for key, item in value.items() if item is not None})
-    if value is None:
-        return {}
-    return _plain_value(getattr(value, "__dict__", {}))
-
-
-def _plain_value(value: Any) -> Any:
-    """Convert enum-ish values recursively into JSON-like values."""
-    enum_value = getattr(value, "value", None)
-    if enum_value is not None:
-        return enum_value
-    if isinstance(value, dict):
-        return {key: _plain_value(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_plain_value(item) for item in value]
-    return value
 
 
 def _observation(action: str, ok: bool, content: str, args: dict[str, Any]) -> dict[str, Any]:

@@ -3,7 +3,7 @@
 The context curator is the cold path. It keeps existing records compact,
 non-duplicative, and current.
 
-The graph below is generated from the compiled LangGraph runtime.
+The pipeline below shows the DSPy module flow.
 
 ```mermaid
 ---

@@ -171,7 +171,7 @@ def build_health_batches(
 
 
 def format_records_json(records: list[dict[str, Any]]) -> str:
-    """Render records as compact JSON for BAML prompts."""
+    """Render records as compact JSON for model prompts."""
     return json.dumps(
         [_compact_record(record, preview=False) for record in records],
         ensure_ascii=True,

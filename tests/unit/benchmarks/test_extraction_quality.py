@@ -17,7 +17,7 @@ def _source_payload() -> dict[str, object]:
     """Build a small full-run-like extraction source fixture."""
     return {
         "timestamp": "20260519_045951",
-        "framework": "baml_langgraph",
+        "framework": "dspy",
         "config_file": "evals/configs/bench_minimax_m27.toml",
         "agent_model": "MiniMax-M2.7",
         "agent_provider": "minimax",
@@ -26,7 +26,7 @@ def _source_payload() -> dict[str, object]:
         "partial": False,
         "publishable": False,
         "summary": {
-            "framework": "baml_langgraph",
+            "framework": "dspy",
             "task_completion_rate_pct": 100.0,
             "quality_avg": 0.75,
             "quality_gate_rate_pct": 50.0,

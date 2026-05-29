@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import io
 from dataclasses import replace
-from contextlib import redirect_stdout, redirect_stderr
+from contextlib import redirect_stdout
 from pathlib import Path
 
 import pytest
@@ -251,14 +251,6 @@ def test_connect_plugin_mode_is_pending_not_mcp(
     assert payload["installed"] is False
 
 
-def test_legacy_sync_alias_still_accepts_flags() -> None:
-    parser = cli.build_parser()
-    args = parser.parse_args(["sync", "--run-id", "run-1", "--window", "7d"])
-    assert args.command == "sync"
-    assert args.run_id == "run-1"
-    assert args.window == "7d"
-
-
 def test_ingest_help_uses_loaded_config_defaults(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -364,7 +356,7 @@ def test_answer_verbose_forwards_flag_and_prints_debug(monkeypatch: pytest.Monke
                 "messages": [
                     {
                         "message_index": 0,
-                        "kind": "baml_call",
+                        "kind": "model_step",
                         "parts": [
                             {"part_kind": "PlanContextRetrieval", "content": {}},
                         ],
@@ -392,7 +384,7 @@ def test_answer_verbose_forwards_flag_and_prints_debug(monkeypatch: pytest.Monke
     assert code == 0
     assert captured["body"]["verbose"] is True
     assert "ANSWER TRACE" in output
-    assert "[baml] PlanContextRetrieval" in output
+    assert "[model] PlanContextRetrieval" in output
     assert "[retrieval] count results=3" in output
 
 
@@ -412,37 +404,6 @@ def test_answer_returns_nonzero_when_server_not_running(
     monkeypatch.setattr(cli, "_api_post", _raise_api_error)
     code, _output = run_cli(["answer", "how to deploy"])
     assert code == 1
-
-
-def test_legacy_ask_warns_and_forwards(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake_response = {"answer": "Use bearer tokens.", "error": False}
-    monkeypatch.setattr(cli, "_api_post", lambda _path, _body: fake_response)
-    err = io.StringIO()
-    with redirect_stderr(err):
-        code, output = run_cli(["ask", "how to deploy"])
-    assert code == 0
-    assert "Use bearer tokens." in output
-    assert "`lerim ask` is deprecated; use `lerim answer`." in err.getvalue()
-
-
-def test_legacy_sync_warns_and_forwards(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake_response = {"indexed": 0, "queue_health": {"degraded": False}}
-    monkeypatch.setattr(cli, "_api_post", lambda _path, _body: fake_response)
-    err = io.StringIO()
-    with redirect_stderr(err):
-        code, _output = run_cli(["sync", "--json"])
-    assert code == 0
-    assert "`lerim sync` is deprecated; use `lerim ingest`." in err.getvalue()
-
-
-def test_legacy_maintain_warns_and_forwards(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake_response = {"projects": {}, "queue_health": {"degraded": False}}
-    monkeypatch.setattr(cli, "_api_post", lambda _path, _body: fake_response)
-    err = io.StringIO()
-    with redirect_stderr(err):
-        code, _output = run_cli(["maintain", "--json"])
-    assert code == 0
-    assert "`lerim maintain` is deprecated; use `lerim curate`." in err.getvalue()
 
 
 def test_memory_command_shows_help() -> None:

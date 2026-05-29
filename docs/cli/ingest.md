@@ -31,12 +31,12 @@ flowchart TD
     A["Trigger: lerim ingest or daemon"] --> B["Discover and queue changed sessions"]
     B --> C["Extractor receives one session trace"]
 
-    C --> D["Deterministic graph reads the next trace window"]
-    D --> E["BAML ObserveSourceWindow returns typed findings"]
+    C --> D["Pipeline reads the next trace window"]
+    D --> E["DSPy observes typed findings"]
     E --> F{"More trace windows?"}
     F -- "yes" --> D
-    F -- "no" --> G["BAML FilterDurableSignal keeps reusable signal"]
-    G --> H["BAML SynthesizeContextRecords creates one episode and zero or more durable candidates"]
+    F -- "no" --> G["DSPy keeps reusable signal"]
+    G --> H["DSPy creates one episode and zero or more durable candidates"]
 
     H --> I{"Durable records present?"}
     I -- "yes" --> J["Write active durable records"]

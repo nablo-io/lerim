@@ -1,24 +1,60 @@
-"""Tests for the BAML-backed extract graph."""
+"""Tests for the trace-ingestion pipeline."""
 
 from __future__ import annotations
 
 import json
 
 from lerim.agents.trace_ingestion.api import run_trace_ingestion
-from lerim.agents.trace_ingestion.graph import (
-    _apply_coding_retention_decisions,
-    _coding_eval_polish_to_synthesized,
+from lerim.agents.trace_ingestion.coding_records import (
+    _prioritize_coding_records,
+    apply_coding_retention_decisions,
+    coding_eval_polish_to_synthesized,
+)
+from lerim.agents.trace_ingestion.summaries import (
     _episode_summary,
     _implementation_summary,
-    _prioritize_coding_records,
 )
 from lerim.agents.trace_ingestion.windowing import TRACE_MAX_CHUNK_BYTES, read_trace_window
 from lerim.context import ContextStore, resolve_project_identity
 from tests.helpers import make_config
 
 
-class FakeBamlRuntime:
-    """BAML client double that exercises scan, filter, and synthesize phases."""
+def _pipeline_steps(steps):
+    """Return fake model steps keyed by TraceIngestionPipeline phase."""
+    return {
+        "observe": steps.ObserveSourceWindow,
+        "filter": steps.FilterDurableSignal,
+        "synthesize": steps.SynthesizeContextRecords,
+        "guard": steps.GuardSynthesizedContextRecords,
+        "strategy": steps.ExtractCodingStrategySlots,
+        "polish": getattr(steps, "PolishContextRecords", _pass_through_records),
+        "project_identity": getattr(
+            steps,
+            "ExtractCodingProjectIdentitySlot",
+            _empty_identity_slots,
+        ),
+        "retention": getattr(steps, "SelectCodingDurableRecords", _keep_all_records),
+        "coding_polish": steps.PolishCodingEvalContextRecords,
+    }
+
+
+def _empty_identity_slots(**_kwargs):
+    """Return no supplemental project identity slot."""
+    return {"project_identity_fact": None}
+
+
+def _keep_all_records(**_kwargs):
+    """Return retention decisions that keep every candidate record."""
+    return {"save_any": True, "session_reason": "keep", "decisions": []}
+
+
+def _pass_through_records(**kwargs):
+    """Return the draft records unchanged."""
+    return json.loads(kwargs["draft_records_json"])
+
+
+class FakeModelSteps:
+    """Model step double that exercises scan, filter, and synthesize phases."""
 
     def __init__(self) -> None:
         """Track the filtered summary passed into synthesis."""
@@ -86,7 +122,7 @@ class FakeBamlRuntime:
                 "body": "The trace was scanned, filtered, and persisted.",
                 "status": "active",
                 "user_intent": "Extract durable signal.",
-                "what_happened": "The graph filtered candidates before synthesis.",
+                "what_happened": "The pipeline filtered candidates before synthesis.",
                 "outcomes": "One durable decision was created.",
             },
             "durable_records": [
@@ -148,8 +184,8 @@ class FakeBamlRuntime:
         }
 
 
-class NoDurableFakeBamlRuntime:
-    """BAML double for no-signal sessions with discarded source details."""
+class NoDurableFakeModelSteps:
+    """Model step double for no-signal sessions with discarded source details."""
 
     def ObserveSourceWindow(self, **_kwargs):
         """Return only implementation and discarded details."""
@@ -236,8 +272,8 @@ class NoDurableFakeBamlRuntime:
         }
 
 
-class CodingPolishDropsFakeBamlRuntime:
-    """BAML double where coding polish intentionally rejects synthesized noise."""
+class CodingPolishDropsFakeModelSteps:
+    """Model step double where coding polish intentionally rejects synthesized noise."""
 
     def ObserveSourceWindow(self, **_kwargs):
         """Return a weak implementation candidate that synthesis over-keeps."""
@@ -294,7 +330,7 @@ class CodingPolishDropsFakeBamlRuntime:
         }
 
     def GuardSynthesizedContextRecords(self, **kwargs):
-        """The coding budget path skips this in the graph-level test."""
+        """The coding budget path skips this in the pipeline-level test."""
         return json.loads(kwargs["draft_records_json"])
 
     def PolishCodingEvalContextRecords(self, **kwargs):
@@ -324,13 +360,9 @@ class CodingPolishDropsFakeBamlRuntime:
         }
 
 
-def test_extract_graph_filters_candidates_before_synthesis(tmp_path, monkeypatch):
-    """The graph applies an explicit signal-filter phase before record synthesis."""
-    fake_runtime = FakeBamlRuntime()
-    monkeypatch.setattr(
-        "lerim.agents.trace_ingestion.graph.build_baml_client_for_role",
-        lambda **_kwargs: fake_runtime,
-    )
+def test_trace_pipeline_filters_candidates_before_synthesis(tmp_path):
+    """The pipeline applies an explicit signal-filter phase before record synthesis."""
+    fake_runtime = FakeModelSteps()
     trace_path = tmp_path / "trace.jsonl"
     trace_path.write_text(
         '{"role":"user","content":"generalize trace extraction"}\n'
@@ -346,6 +378,7 @@ def test_extract_graph_filters_candidates_before_synthesis(tmp_path, monkeypatch
         config=make_config(tmp_path / ".lerim"),
         return_details=True,
         max_llm_calls=5,
+        steps=_pipeline_steps(fake_runtime),
     )
 
     assert result.completion_summary == "Trace ingestion completed: 1 durable record created."
@@ -379,7 +412,7 @@ def test_coding_fixture_slot_preserves_source_backed_body(tmp_path):
     trace_path = tmp_path / "trace.jsonl"
     trace_path.write_text('{"role":"assistant","content":"source evidence"}\n', encoding="utf-8")
 
-    payload = _coding_eval_polish_to_synthesized(
+    payload = coding_eval_polish_to_synthesized(
         {
             "episode": {"title": "Qwen context-window debugging", "status": "active"},
             "model_setting_fact": None,
@@ -420,7 +453,7 @@ def test_coding_project_identity_repairs_source_ref_to_identity_url(tmp_path):
         encoding="utf-8",
     )
 
-    payload = _coding_eval_polish_to_synthesized(
+    payload = coding_eval_polish_to_synthesized(
         {
             "episode": {"title": "Project identity", "status": "active"},
             "project_identity_fact": {
@@ -460,7 +493,7 @@ def test_coding_project_identity_limits_lower_level_setup_records(tmp_path):
         encoding="utf-8",
     )
 
-    payload = _coding_eval_polish_to_synthesized(
+    payload = coding_eval_polish_to_synthesized(
         {
             "episode": {"title": "Project identity", "status": "active"},
             "project_identity_fact": {
@@ -522,7 +555,7 @@ def test_coding_other_records_drop_initial_task_only_details(tmp_path):
         encoding="utf-8",
     )
 
-    payload = _coding_eval_polish_to_synthesized(
+    payload = coding_eval_polish_to_synthesized(
         {
             "episode": {"title": "Implementation plan", "status": "active"},
             "project_identity_fact": None,
@@ -572,7 +605,7 @@ def test_coding_records_drop_failed_tool_followup_debugging(tmp_path):
         encoding="utf-8",
     )
 
-    payload = _coding_eval_polish_to_synthesized(
+    payload = coding_eval_polish_to_synthesized(
         {
             "episode": {"title": "Failed tool follow-up", "status": "active"},
             "project_identity_fact": None,
@@ -619,7 +652,7 @@ def test_coding_unilateral_code_edit_execution_archives_without_records(tmp_path
         encoding="utf-8",
     )
 
-    payload = _coding_eval_polish_to_synthesized(
+    payload = coding_eval_polish_to_synthesized(
         {
             "episode": {"title": "Routing implementation", "status": "active"},
             "project_identity_fact": None,
@@ -761,7 +794,7 @@ def test_coding_role_split_record_is_semantic_recommendation(tmp_path):
         encoding="utf-8",
     )
 
-    payload = _coding_eval_polish_to_synthesized(
+    payload = coding_eval_polish_to_synthesized(
         {
             "episode": {"title": "Role split", "status": "active"},
             "role_split_record": {
@@ -801,7 +834,7 @@ def test_coding_source_refs_repair_hidden_lines_to_nearby_visible_text(tmp_path)
         encoding="utf-8",
     )
 
-    payload = _coding_eval_polish_to_synthesized(
+    payload = coding_eval_polish_to_synthesized(
         {
             "episode": {"title": "Source repair", "status": "active"},
             "model_setting_fact": None,
@@ -838,7 +871,7 @@ def test_coding_source_refs_drop_tool_payload_lines_instead_of_repairing(tmp_pat
         encoding="utf-8",
     )
 
-    payload = _coding_eval_polish_to_synthesized(
+    payload = coding_eval_polish_to_synthesized(
         {
             "episode": {"title": "Tool payload", "status": "active"},
             "model_setting_fact": None,
@@ -873,7 +906,7 @@ def test_coding_source_refs_repair_tool_payloads_to_visible_assistant_explanatio
         encoding="utf-8",
     )
 
-    payload = _coding_eval_polish_to_synthesized(
+    payload = coding_eval_polish_to_synthesized(
         {
             "episode": {"title": "Tool payload", "status": "active"},
             "model_setting_fact": None,
@@ -907,7 +940,7 @@ def test_coding_polish_drops_unsupported_evidence_refs(tmp_path):
         encoding="utf-8",
     )
 
-    payload = _coding_eval_polish_to_synthesized(
+    payload = coding_eval_polish_to_synthesized(
         {
             "episode": {"title": "Evidence pruning", "status": "active"},
             "model_setting_fact": None,
@@ -943,7 +976,7 @@ def test_coding_full_fixed_slots_drop_optional_upstream_duplicate(tmp_path):
         encoding="utf-8",
     )
 
-    payload = _coding_eval_polish_to_synthesized(
+    payload = coding_eval_polish_to_synthesized(
         {
             "episode": {"title": "Fixed slots", "status": "active"},
             "upstream_bug_report_record": {
@@ -1005,7 +1038,7 @@ def test_coding_strategy_slots_require_visible_user_source(tmp_path):
         encoding="utf-8",
     )
 
-    payload = _coding_eval_polish_to_synthesized(
+    payload = coding_eval_polish_to_synthesized(
         {
             "episode": {"title": "Strategy filter", "status": "active"},
             "silent_change_feedback_record": {
@@ -1045,7 +1078,7 @@ def test_coding_strategy_records_drop_supporting_benchmark_numbers(tmp_path):
         encoding="utf-8",
     )
 
-    payload = _coding_eval_polish_to_synthesized(
+    payload = coding_eval_polish_to_synthesized(
         {
             "episode": {"title": "Strategy compression", "status": "active"},
             "model_size_priority_record": {
@@ -1092,7 +1125,7 @@ def test_coding_polish_dedupes_user_strategy_after_source_alignment(tmp_path):
         encoding="utf-8",
     )
 
-    payload = _coding_eval_polish_to_synthesized(
+    payload = coding_eval_polish_to_synthesized(
         {
             "episode": {"title": "Dashboard graph constraints", "status": "active"},
             "model_setting_fact": None,
@@ -1167,7 +1200,7 @@ def test_coding_polish_dedupes_exact_body_with_different_refs(tmp_path):
         encoding="utf-8",
     )
 
-    payload = _coding_eval_polish_to_synthesized(
+    payload = coding_eval_polish_to_synthesized(
         {
             "episode": {"title": "Duplicate user guidance", "status": "active"},
             "user_strategy_records": [
@@ -1210,7 +1243,7 @@ def test_coding_strategy_slots_drop_plain_model_trial_facts(tmp_path):
         encoding="utf-8",
     )
 
-    payload = _coding_eval_polish_to_synthesized(
+    payload = coding_eval_polish_to_synthesized(
         {
             "episode": {"title": "Strategy compression", "status": "active"},
             "model_size_priority_record": {
@@ -1249,7 +1282,7 @@ def test_coding_polish_drops_records_with_only_cleared_source_refs(tmp_path):
         encoding="utf-8",
     )
 
-    payload = _coding_eval_polish_to_synthesized(
+    payload = coding_eval_polish_to_synthesized(
         {
             "episode": {"title": "Parser debugging", "status": "active"},
             "model_setting_fact": None,
@@ -1272,12 +1305,9 @@ def test_coding_polish_drops_records_with_only_cleared_source_refs(tmp_path):
     assert payload["durable_records"] == []
 
 
-def test_extract_graph_keeps_discarded_details_out_of_synthesis(tmp_path, monkeypatch):
+def test_trace_pipeline_keeps_discarded_details_out_of_synthesis(tmp_path):
     """No-signal synthesis receives a generic episode summary instead of noise."""
-    monkeypatch.setattr(
-        "lerim.agents.trace_ingestion.graph.build_baml_client_for_role",
-        lambda **_kwargs: NoDurableFakeBamlRuntime(),
-    )
+    fake_runtime = NoDurableFakeModelSteps()
     trace_path = tmp_path / "trace.jsonl"
     trace_path.write_text(
         '{"role":"user","content":"temporary browser debugging"}\n',
@@ -1292,6 +1322,7 @@ def test_extract_graph_keeps_discarded_details_out_of_synthesis(tmp_path, monkey
         config=make_config(tmp_path / ".lerim"),
         return_details=True,
         max_llm_calls=5,
+        steps=_pipeline_steps(fake_runtime),
     )
 
     assert result.completion_summary == "Trace ingestion completed: no reusable durable context found."
@@ -1318,13 +1349,9 @@ def test_extract_graph_keeps_discarded_details_out_of_synthesis(tmp_path, monkey
 
 def test_coding_polish_empty_payload_does_not_restore_noisy_synthesis(
     tmp_path,
-    monkeypatch,
 ):
     """Coding polish may deliberately reject every synthesized durable record."""
-    monkeypatch.setattr(
-        "lerim.agents.trace_ingestion.graph.build_baml_client_for_role",
-        lambda **_kwargs: CodingPolishDropsFakeBamlRuntime(),
-    )
+    fake_runtime = CodingPolishDropsFakeModelSteps()
     trace_path = tmp_path / "trace.jsonl"
     trace_path.write_text(
         '{"role":"user","content":"one-off implementation plan"}\n',
@@ -1339,6 +1366,7 @@ def test_coding_polish_empty_payload_does_not_restore_noisy_synthesis(
         config=make_config(tmp_path / ".lerim"),
         return_details=True,
         max_llm_calls=5,
+        steps=_pipeline_steps(fake_runtime),
     )
 
     assert result.completion_summary == "Trace ingestion completed: no reusable durable context found."
@@ -1368,7 +1396,7 @@ def test_coding_retention_decisions_drop_rejected_records():
         "completion_summary": "Done.",
     }
 
-    pruned = _apply_coding_retention_decisions(
+    pruned = apply_coding_retention_decisions(
         payload,
         {
             "decisions": [
@@ -1396,7 +1424,7 @@ def test_coding_retention_session_gate_can_drop_all_records():
         "completion_summary": "Done.",
     }
 
-    pruned = _apply_coding_retention_decisions(
+    pruned = apply_coding_retention_decisions(
         payload,
         {
             "save_any": False,

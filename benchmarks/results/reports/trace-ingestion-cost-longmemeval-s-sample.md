@@ -22,7 +22,7 @@
 ## Methodology Notes
 
 - Input traces are public LongMemEval-S haystack sessions normalized through Lerim's generic trace envelope.
-- Ingestion uses Lerim's BAML/LangGraph trace-ingestion path with live LLM calls.
+- Ingestion uses Lerim's DSPy trace-ingestion path with live LLM calls.
 - LLM call counts come from `TraceIngestionRunDetails.llm_calls`.
 - Database growth excludes empty schema initialization, then measures cumulative SQLite file-size deltas around each trace.
 - Cost is not inferred. It stays unavailable unless provider usage or billing data is measured.

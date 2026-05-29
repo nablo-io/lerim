@@ -1,27 +1,14 @@
-class ContextBriefLineDraft {
-  text string @description("Compact memory statement without inline citations.")
-  record_ids string[] @description("Exact source record IDs copied from the candidate records.")
-}
+"""DSPy signatures for Context Brief compilation."""
 
-class ContextBriefDraftOutput {
-  summary ContextBriefLineDraft[]
-  start_here ContextBriefLineDraft[]
-  current_handoff ContextBriefLineDraft[]
-  decisions ContextBriefLineDraft[] @description("Only cite candidate records whose kind is decision.")
-  constraints_preferences ContextBriefLineDraft[] @description("Only cite candidate records whose kind is preference or constraint.")
-  project_facts ContextBriefLineDraft[] @description("Only cite candidate records whose kind is fact.")
-  open_risks ContextBriefLineDraft[]
-  follow_up_queries ContextBriefLineDraft[]
-}
+from __future__ import annotations
 
-function CompileContextBrief(
-  candidate_profile_json: string,
-  candidate_records_json: string
-) -> ContextBriefDraftOutput {
-  client MiniMaxM27
-  prompt #"
-    {{ _.role("system") }}
-    You are Lerim's context-brief compiler. Compile a compact startup brief from persisted context records.
+from lerim.agents.dspy_compat import dspy
+
+from lerim.agents.context_brief.schemas import ContextBriefDraftOutput
+
+
+class CompileContextBrief(dspy.Signature):
+    """You are Lerim's context-brief compiler. Compile a compact startup brief from persisted context records.
     Return only structured output. Do not include <think> tags, hidden reasoning, markdown, or prose.
 
     Rules:
@@ -45,14 +32,10 @@ function CompileContextBrief(
     - Select, do not enumerate. Leave out true-but-low-leverage records.
     - Maximum lines: summary 2, start_here 4, current_handoff 4, decisions 8, constraints_preferences 8, project_facts 6, open_risks 4, follow_up_queries 3.
     - The ideal output is useful in under 60 seconds at agent startup.
+    """
 
-    {{ _.role("user") }}
-    CANDIDATE PROFILE JSON:
-    {{ candidate_profile_json }}
-
-    CANDIDATE RECORDS JSON:
-    {{ candidate_records_json }}
-
-    {{ ctx.output_format }}
-  "#
-}
+    candidate_profile_json: str = dspy.InputField(desc="CANDIDATE PROFILE JSON")
+    candidate_records_json: str = dspy.InputField(desc="CANDIDATE RECORDS JSON")
+    brief: ContextBriefDraftOutput = dspy.OutputField(
+        desc="Fixed-section Context Brief draft"
+    )

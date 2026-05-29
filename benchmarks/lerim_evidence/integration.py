@@ -894,7 +894,7 @@ def run_stdio_trace_submit_extraction_probe(timeout_seconds: float) -> dict[str,
             "input_trace_kind": "synthetic_protocol_acceptance_trace",
             "input_trace_disclosure": (
                 "Synthetic submitted trace fixture; MCP protocol submission and "
-                "BAML/LangGraph extraction path are real."
+                "DSPy extraction path are real."
             ),
             "acceptance_scope": "local_stdio_server_trace_submit_extraction_path",
             "counts_as_installed_agent_acceptance": False,
@@ -1460,8 +1460,8 @@ def build_report(
             "The stdio tools-list probe starts Lerim's MCP server directly and lists tools; it does not prove every external MCP client can launch the command.",
             "The stdio context tool-call probe calls lerim_context_brief through the MCP protocol and proves Lerim's local tool path; it does not prove an external client selected the tool.",
             "The default stdio trace-submit probe calls lerim_trace_submit through the MCP protocol on an idempotent duplicate trace; it proves submission and normalization plumbing but not LLM extraction quality.",
-            "The opt-in stdio trace-submit extraction probe calls the same MCP tool on a synthetic submitted trace and requires BAML/LangGraph extraction to create one episode record plus at least one durable record.",
-            "The opt-in stdio trace-submit extraction probe uses a synthetic submitted trace fixture; the MCP submission and BAML/LangGraph extraction path are real, but this is not organic client-session evidence.",
+            "The opt-in stdio trace-submit extraction probe calls the same MCP tool on a synthetic submitted trace and requires DSPy extraction to create one episode record plus at least one durable record.",
+            "The opt-in stdio trace-submit extraction probe uses a synthetic submitted trace fixture; the MCP submission and DSPy extraction path are real, but this is not organic client-session evidence.",
             "Installed-client MCP CLI probes prove client config/connection visibility only; they do not prove context tool-call behavior unless a client actually calls lerim_context_brief.",
             "Public artifacts preserve aggregate installed-client counts and statuses but omit per-machine installed-client inventory from detail rows.",
             "Live client tool-call probes may spend model/subscription credits and are skipped unless explicitly enabled.",
@@ -1814,7 +1814,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help=(
             "Also submit a synthetic trace through lerim_trace_submit and run "
-            "real BAML/LangGraph extraction. This may spend LLM credits."
+            "real DSPy extraction. This may spend LLM credits."
         ),
     )
     parser.add_argument(

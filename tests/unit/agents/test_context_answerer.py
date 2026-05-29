@@ -17,6 +17,14 @@ from lerim.context import ContextStore
 from lerim.context.project_identity import ProjectIdentity
 
 
+def _pipeline_steps(steps):
+    """Return fake model steps keyed by ContextAnswerPipeline phase."""
+    return {
+        "plan": steps.PlanContextRetrieval,
+        "answer": steps.AnswerFromContext,
+    }
+
+
 class TestContextAnswerResult:
     """Tests for ContextAnswerResult model."""
 
@@ -54,10 +62,11 @@ class TestRunAnswerSignature:
             "config",
             "hints",
             "return_messages",
+            "steps",
         }
         assert set(params.keys()) == expected
 
-    def test_runs_baml_planned_retrieval(self, tmp_path, monkeypatch):
+    def test_runs_model_planned_retrieval(self, tmp_path):
         identity = ProjectIdentity(
             project_id="proj_abc",
             project_slug="test",
@@ -83,15 +92,15 @@ class TestRunAnswerSignature:
             project_id=identity.project_id,
             session_id="seed",
             kind="decision",
-            title="Use BAML-planned answer",
-            body="Answer retrieves context through a structured BAML plan.",
+            title="Use model-planned answer",
+            body="Answer retrieves context through a structured model plan.",
             status="active",
-            decision="Use BAML-planned answer retrieval.",
+            decision="Use model-planned answer retrieval.",
             why="Answer should retrieve through structured store reads before synthesis.",
             change_reason="test",
         )
 
-        class FakeBamlRuntime:
+        class FakeModelSteps:
             def PlanContextRetrieval(self, **_kwargs):
                 return {
                     "actions": [
@@ -110,10 +119,7 @@ class TestRunAnswerSignature:
                 count = retrieval["results"][0]["count"]
                 return {"answer": f"There is {count} active decision."}
 
-        monkeypatch.setattr(
-            "lerim.agents.context_answerer.graph.build_baml_client_for_role",
-            lambda **_kwargs: FakeBamlRuntime(),
-        )
+        steps = FakeModelSteps()
 
         result = run_context_answerer(
             context_db_path=tmp_path / "context.sqlite3",
@@ -121,11 +127,12 @@ class TestRunAnswerSignature:
             project_ids=["proj_abc"],
             session_id="sess_1",
             question="what do we know about X?",
+            steps=_pipeline_steps(steps),
         )
         assert result.answer == "There is 1 active decision."
         assert result.supporting_record_ids == []
 
-    def test_retries_search_plan_without_query(self, tmp_path, monkeypatch):
+    def test_retries_search_plan_without_query(self, tmp_path):
         identity = ProjectIdentity(
             project_id="proj_abc",
             project_slug="test",
@@ -136,7 +143,7 @@ class TestRunAnswerSignature:
         store.register_project(identity)
         plan_instructions: list[str] = []
 
-        class FakeBamlRuntime:
+        class FakeModelSteps:
             def PlanContextRetrieval(self, **kwargs):
                 plan_instructions.append(kwargs["run_instruction"])
                 if len(plan_instructions) == 1:
@@ -167,10 +174,7 @@ class TestRunAnswerSignature:
                 count = retrieval["results"][0]["count"]
                 return {"answer": f"There are {count} active facts."}
 
-        monkeypatch.setattr(
-            "lerim.agents.context_answerer.graph.build_baml_client_for_role",
-            lambda **_kwargs: FakeBamlRuntime(),
-        )
+        steps = FakeModelSteps()
 
         result, events = run_context_answerer(
             context_db_path=tmp_path / "context.sqlite3",
@@ -179,14 +183,15 @@ class TestRunAnswerSignature:
             session_id="sess_1",
             question="compare retrieval design",
             return_messages=True,
+            steps=_pipeline_steps(steps),
         )
         assert result.answer == "There are 0 active facts."
         assert len(plan_instructions) == 2
         assert events[0]["kind"] == "model_retry"
-        assert events[1]["function"] == "PlanContextRetrieval"
+        assert events[1]["stage"] == "plan_retrieval"
         assert events[1]["attempts"] == 2
 
-    def test_returns_valid_supporting_record_ids(self, tmp_path, monkeypatch):
+    def test_returns_valid_supporting_record_ids(self, tmp_path):
         identity = ProjectIdentity(
             project_id="proj_abc",
             project_slug="test",
@@ -218,7 +223,7 @@ class TestRunAnswerSignature:
             change_reason="test",
         )
 
-        class FakeBamlRuntime:
+        class FakeModelSteps:
             def PlanContextRetrieval(self, **_kwargs):
                 return {
                     "actions": [
@@ -238,10 +243,7 @@ class TestRunAnswerSignature:
                     "supporting_record_ids": [created["record_id"], "not_a_real_record"],
                 }
 
-        monkeypatch.setattr(
-            "lerim.agents.context_answerer.graph.build_baml_client_for_role",
-            lambda **_kwargs: FakeBamlRuntime(),
-        )
+        steps = FakeModelSteps()
 
         result = run_context_answerer(
             context_db_path=tmp_path / "context.sqlite3",
@@ -249,11 +251,12 @@ class TestRunAnswerSignature:
             project_ids=["proj_abc"],
             session_id="sess_1",
             question="what should refund agents check?",
+            steps=_pipeline_steps(steps),
         )
         assert result.answer == "Verify entitlement and latest invoice."
         assert result.supporting_record_ids == [created["record_id"]]
 
-    def test_retries_placeholder_only_answers(self, tmp_path, monkeypatch):
+    def test_retries_placeholder_only_answers(self, tmp_path):
         identity = ProjectIdentity(
             project_id="proj_abc",
             project_slug="test",
@@ -286,7 +289,7 @@ class TestRunAnswerSignature:
         )
         answer_instructions: list[str] = []
 
-        class FakeBamlRuntime:
+        class FakeModelSteps:
             def PlanContextRetrieval(self, **_kwargs):
                 return {
                     "actions": [
@@ -313,10 +316,7 @@ class TestRunAnswerSignature:
                     "supporting_record_ids": [created["record_id"]],
                 }
 
-        monkeypatch.setattr(
-            "lerim.agents.context_answerer.graph.build_baml_client_for_role",
-            lambda **_kwargs: FakeBamlRuntime(),
-        )
+        steps = FakeModelSteps()
 
         result, events = run_context_answerer(
             context_db_path=tmp_path / "context.sqlite3",
@@ -325,6 +325,7 @@ class TestRunAnswerSignature:
             session_id="sess_1",
             question="what is the answer timeout?",
             return_messages=True,
+            steps=_pipeline_steps(steps),
         )
         assert result.answer == "Answer requests use a five minute server deadline."
         assert result.supporting_record_ids == [created["record_id"]]
@@ -332,7 +333,7 @@ class TestRunAnswerSignature:
         assert events[-2]["kind"] == "model_retry"
         assert events[-1]["attempts"] == 2
 
-    def test_rejects_repeated_placeholder_only_answers(self, tmp_path, monkeypatch):
+    def test_rejects_repeated_placeholder_only_answers(self, tmp_path):
         identity = ProjectIdentity(
             project_id="proj_abc",
             project_slug="test",
@@ -342,7 +343,7 @@ class TestRunAnswerSignature:
         store.initialize()
         store.register_project(identity)
 
-        class FakeBamlRuntime:
+        class FakeModelSteps:
             def PlanContextRetrieval(self, **_kwargs):
                 return {
                     "actions": [
@@ -359,10 +360,7 @@ class TestRunAnswerSignature:
             def AnswerFromContext(self, **_kwargs):
                 return {"answer": "...", "supporting_record_ids": []}
 
-        monkeypatch.setattr(
-            "lerim.agents.context_answerer.graph.build_baml_client_for_role",
-            lambda **_kwargs: FakeBamlRuntime(),
-        )
+        steps = FakeModelSteps()
 
         with pytest.raises(RuntimeError, match="invalid answer_from_context output"):
             run_context_answerer(
@@ -371,9 +369,10 @@ class TestRunAnswerSignature:
                 project_ids=["proj_abc"],
                 session_id="sess_1",
                 question="what is the answer timeout?",
+                steps=_pipeline_steps(steps),
             )
 
-    def test_can_return_debug_events(self, tmp_path, monkeypatch):
+    def test_can_return_debug_events(self, tmp_path):
         identity = ProjectIdentity(
             project_id="proj_abc",
             project_slug="test",
@@ -383,7 +382,7 @@ class TestRunAnswerSignature:
         store.initialize()
         store.register_project(identity)
 
-        class FakeBamlRuntime:
+        class FakeModelSteps:
             def PlanContextRetrieval(self, **_kwargs):
                 return SimpleNamespace(
                     actions=[
@@ -398,15 +397,12 @@ class TestRunAnswerSignature:
                 )
 
             def AnswerFromContext(self, **_kwargs):
-                return SimpleNamespace(
-                    answer="No facts found.",
-                    supporting_record_ids=["fabricated_count_result"],
-                )
+                return {
+                    "answer": "No facts found.",
+                    "supporting_record_ids": ["fabricated_count_result"],
+                }
 
-        monkeypatch.setattr(
-            "lerim.agents.context_answerer.graph.build_baml_client_for_role",
-            lambda **_kwargs: FakeBamlRuntime(),
-        )
+        steps = FakeModelSteps()
 
         result, events = run_context_answerer(
             context_db_path=tmp_path / "context.sqlite3",
@@ -415,12 +411,13 @@ class TestRunAnswerSignature:
             session_id="sess_1",
             question="what facts exist?",
             return_messages=True,
+            steps=_pipeline_steps(steps),
         )
         assert result.answer == "No facts found."
         assert [event["kind"] for event in events] == [
-            "baml_call",
+            "model_step",
             "retrieval",
-            "baml_call",
+            "model_step",
         ]
         assert events[1]["action_type"] == "list"
         assert events[-1]["supporting_record_ids"] == []

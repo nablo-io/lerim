@@ -52,7 +52,7 @@ with `lerim trace retry <submitted_trace_path>`.
 
 MCP is the access layer. Lerim's durable context still lives in the global
 SQLite context store, and extraction still runs through Lerim's normal
-BAML/LangGraph compiler.
+DSPy extraction pipeline.
 
 Think of MCP as two tool groups:
 

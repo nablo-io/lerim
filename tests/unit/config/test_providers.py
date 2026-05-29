@@ -1,4 +1,4 @@
-"""Unit tests for provider helpers used by BAML-backed agents."""
+"""Unit tests for provider helpers used by model-backed agents."""
 
 from __future__ import annotations
 
@@ -6,11 +6,12 @@ from dataclasses import replace
 
 import pytest
 
-from lerim.agents.baml_runtime import (
+from lerim.agents.model_runtime import (
     MINIMAX_TEMPERATURE_FLOOR,
-    _resolve_base_url,
-    _resolve_temperature,
+    build_model_runtime,
     model_label,
+    resolve_model_api_base,
+    resolve_model_temperature,
 )
 from lerim.config.providers import (
     api_key_env_for_provider,
@@ -77,7 +78,7 @@ def test_resolve_base_url_prefers_role_api_base_for_matching_provider(tmp_path) 
     )
 
     assert (
-        _resolve_base_url(cfg, role_cfg=role, provider="ollama", override=None)
+        resolve_model_api_base(cfg, role_cfg=role, provider="ollama", override=None)
         == "http://127.0.0.1:11434/v1"
     )
 
@@ -87,12 +88,12 @@ def test_resolve_base_url_rejects_provider_without_default_base(tmp_path) -> Non
     role = RoleConfig(provider="unknown", model="model")
 
     with pytest.raises(RuntimeError, match="missing_api_base"):
-        _resolve_base_url(cfg, role_cfg=role, provider="unknown", override=None)
+        resolve_model_api_base(cfg, role_cfg=role, provider="unknown", override=None)
 
 
 def test_resolve_temperature_applies_minimax_floor() -> None:
-    assert _resolve_temperature(provider="minimax", value=0.0) == MINIMAX_TEMPERATURE_FLOOR
-    assert _resolve_temperature(provider="openai", value=0.0) == 0.0
+    assert resolve_model_temperature(provider="minimax", value=0.0) == MINIMAX_TEMPERATURE_FLOOR
+    assert resolve_model_temperature(provider="openai", value=0.0) == 0.0
 
 
 def test_model_label_normalizes_known_model_casing(tmp_path) -> None:
@@ -103,6 +104,20 @@ def test_model_label_normalizes_known_model_casing(tmp_path) -> None:
     )
 
     assert model_label(config=cfg) == "minimax/MiniMax-M2.7"
+
+
+def test_build_model_runtime_configures_writable_dspy_cache(tmp_path) -> None:
+    cfg = make_config(tmp_path)
+    role = RoleConfig(
+        provider="ollama",
+        model="qwen3:8b",
+        api_base="http://127.0.0.1:11434",
+    )
+
+    runtime = build_model_runtime(config=cfg, role=role)
+
+    assert runtime.label == "ollama/qwen3:8b"
+    assert (tmp_path / "cache" / "dspy").is_dir()
 
 
 def test_list_provider_models_known_and_unknown() -> None:

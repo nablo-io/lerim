@@ -41,7 +41,7 @@ case that is easy to run from VS Code with F5. These files live beside the
 behavior tests for the same agent. Use the matching `Agent: ... Real LLM` launch
 configuration, or open one of these files and run `Pytest: Current File`.
 
-These tests run real BAML/LangGraph code, real SQLite writes, and real provider
+These tests run real DSPy code, real SQLite writes, and real provider
 calls, but they isolate state in temporary directories. They do not read or
 mutate your normal `~/.lerim/context.sqlite3`. Provider/API-key settings must be
 available through environment variables or an explicit `LERIM_CONFIG`; pytest
@@ -165,10 +165,10 @@ The current system is:
 - generated Context Brief artifacts in `~/.lerim/workspace/current/<project_id>/CONTEXT_BRIEF.md`
 - generated Working Memory artifacts in `~/.lerim/workspace/current/<project_id>/WORKING_MEMORY.md`
 - local semantic retrieval via ONNX embeddings + `sqlite-vec` + FTS5 + RRF
-- ingest graph: deterministic window reads, BAML trace observation, BAML durable-signal filtering, BAML context writing, context-store persistence
-- curate graph: active-record inventory, semantic-neighbor clusters, BAML context-cluster review, BAML record-health review for records without prior cluster actions, validated store mutations
-- context graph: active-record inventory, semantic candidate pairs, BAML link/review steps, semantic cluster persistence, context graph shipping
-- answer flow: BAML retrieval planning, read-only `ContextStore` count/list/search execution, BAML answer synthesis
+- ingest graph: deterministic window reads, model trace observation, model durable-signal filtering, model context writing, context-store persistence
+- curate graph: active-record inventory, semantic-neighbor clusters, model context-cluster review, model record-health review for records without prior cluster actions, validated store mutations
+- context graph: active-record inventory, semantic candidate pairs, model link/review steps, semantic cluster persistence, context graph shipping
+- answer flow: model retrieval planning, read-only `ContextStore` count/list/search execution, model answer synthesis
 
 ## Fixtures
 

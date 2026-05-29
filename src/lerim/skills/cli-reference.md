@@ -63,12 +63,6 @@ generation for the resolved project and record service runs.
 - `skill` (`install`) (host-only)
 - `auth` (`login`, `status`, `logout`, or bare `lerim auth`)
 
-Compatibility aliases:
-
-- `sync` -> `ingest` (deprecated; may be removed in a future release)
-- `maintain` -> `curate` (deprecated; may be removed in a future release)
-- `ask` -> `answer` (deprecated; may be removed in a future release)
-
 ## Commands
 
 ### `lerim init` (host-only)
@@ -263,7 +257,7 @@ lerim ingest --max-sessions 100       # process up to 100 sessions
 | `--dry-run` | off | Preview mode, no writes |
 
 Notes:
-- `ingest` is the hot path (queue + BAML/LangGraph extraction + context write).
+- `ingest` is the hot path (queue + DSPy extraction + context write).
 - Normal backlog ingest claims the newest available session per project first.
 - `--ignore-lock` exists only as a CLI-local debug flag and is intentionally not supported by `/api/ingest`; skipping the writer lock risks corruption.
 - Cold curation work is not executed in `ingest`.
@@ -338,7 +332,7 @@ lerim trace retry ~/.lerim/workspace/mcp-submissions/2026/05/19/example.json --f
 
 `trace retry` uses the saved source name, source profile, scope, label, and
 session id from the `.lerim-submission.json` manifest. It reruns Lerim's normal
-generic importer and BAML/LangGraph extraction; it does not bypass extraction or
+generic importer and DSPy extraction; it does not bypass extraction or
 save arbitrary memories.
 
 ### `lerim curate`

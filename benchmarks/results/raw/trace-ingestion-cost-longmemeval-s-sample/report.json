@@ -4,7 +4,7 @@
   "cost_estimate": {
     "available": false,
     "external_llm_usd": null,
-    "notes": "Lerim trace-ingestion details expose live LLM call counts, but this runtime does not expose provider token usage or billed cost for BAML calls."
+    "notes": "Lerim trace-ingestion details expose live LLM call counts, but this runtime does not expose provider token usage or billed cost for DSPy calls."
   },
   "dataset": {
     "abstention_excluded": 0,
@@ -34,7 +34,7 @@
   "generated_at": "2026-05-20T09:54:07.343491+00:00",
   "limit": 3,
   "methodology": {
-    "cost_unavailable_reason": "Lerim trace-ingestion details expose live LLM call counts, but this runtime does not expose provider token usage or billed cost for BAML calls.",
+    "cost_unavailable_reason": "Lerim trace-ingestion details expose live LLM call counts, but this runtime does not expose provider token usage or billed cost for DSPy calls.",
     "cost_usd_available": false,
     "llm_calls_measured": true,
     "llm_in_loop": true,
@@ -42,7 +42,7 @@
     "public_dataset": true,
     "quality_score": false,
     "schema_initialization_excluded_from_trace_growth": true,
-    "trace_ingestion_path": "baml_langgraph"
+    "trace_ingestion_path": "dspy_pipeline"
   },
   "model_provider": {
     "embedding_model": "mixedbread-ai/mxbai-embed-xsmall-v1",
@@ -104,7 +104,7 @@
         "trace_bytes": 1568,
         "trace_lines": 2,
         "trace_sha256": "826797a8168b05061456dbde6750c993e81907ec99cda15c5320efb4959a53c0",
-        "unavailable_reason": "Lerim trace-ingestion details expose live LLM call counts, but this runtime does not expose provider token usage or billed cost for BAML calls."
+        "unavailable_reason": "Lerim trace-ingestion details expose live LLM call counts, but this runtime does not expose provider token usage or billed cost for DSPy calls."
       },
       {
         "case_id": "longmemeval_s:118b2229:000",
@@ -137,7 +137,7 @@
         "trace_bytes": 16335,
         "trace_lines": 12,
         "trace_sha256": "56a1a886a039a6fee53f417b94da3fa97223d08b90d681485ed8b5b58989a421",
-        "unavailable_reason": "Lerim trace-ingestion details expose live LLM call counts, but this runtime does not expose provider token usage or billed cost for BAML calls."
+        "unavailable_reason": "Lerim trace-ingestion details expose live LLM call counts, but this runtime does not expose provider token usage or billed cost for DSPy calls."
       },
       {
         "case_id": "longmemeval_s:51a45a95:000",
@@ -170,7 +170,7 @@
         "trace_bytes": 938,
         "trace_lines": 2,
         "trace_sha256": "d163d7c66dcef293308bbd9b5d872d877b6163e52ec2d1ef6383c4cfd4f473af",
-        "unavailable_reason": "Lerim trace-ingestion details expose live LLM call counts, but this runtime does not expose provider token usage or billed cost for BAML calls."
+        "unavailable_reason": "Lerim trace-ingestion details expose live LLM call counts, but this runtime does not expose provider token usage or billed cost for DSPy calls."
       }
     ]
   },

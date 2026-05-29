@@ -208,6 +208,8 @@ def configure_logging(level: str | None = None) -> None:
     # Silence noisy third-party loggers
     for noisy in ("httpx", "httpcore", "openai", "anthropic"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
+    for noisy in ("LiteLLM", "litellm"):
+        logging.getLogger(noisy).setLevel(logging.ERROR)
 
 
 logger = _logger

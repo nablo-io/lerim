@@ -141,7 +141,7 @@ def build_live_config(base: Path) -> Config:
 
 
 def dump_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return BAML/LangGraph event history as stable JSON-like objects."""
+    """Return DSPy event history as stable JSON-like objects."""
     return [dict(message) for message in messages]
 
 

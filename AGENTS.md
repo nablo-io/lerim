@@ -52,7 +52,7 @@ Do not inspect repo-local store artifacts or hardcode project IDs.
 
 ## Runtime tool contract
 
-Ingest extraction and curate are BAML/LangGraph graphs under `src/lerim/agents/`.
+The main agent flows are DSPy module pipelines under `src/lerim/agents/`.
 They do not use PydanticAI tool loops.
 
 The answer agent-facing tools are:

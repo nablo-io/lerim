@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import overload
+from typing import Any, overload
 
-from lerim.agents.baml_runtime import model_label
-from lerim.agents.trace_ingestion.graph import run_trace_ingestion_graph
+from lerim.agents.model_runtime import model_label
+from lerim.agents.trace_ingestion.pipeline import TraceIngestionPipeline
 from lerim.agents.trace_ingestion.persistence import (
     PersistenceContext,
     format_existing_record_manifest,
@@ -43,6 +43,7 @@ def run_trace_ingestion(
     temperature: float | None = None,
     max_llm_calls: int | None = None,
     progress: bool = False,
+    steps: dict[str, Any] | None = None,
 ) -> TraceIngestionResult:
     ...
 
@@ -65,6 +66,7 @@ def run_trace_ingestion(
     temperature: float | None = None,
     max_llm_calls: int | None = None,
     progress: bool = False,
+    steps: dict[str, Any] | None = None,
 ) -> tuple[TraceIngestionResult, TraceIngestionRunDetails]:
     ...
 
@@ -88,8 +90,9 @@ def run_trace_ingestion(
     progress: bool = False,
     source_name: str | None = None,
     source_profile: str | None = None,
+    steps: dict[str, Any] | None = None,
 ) -> TraceIngestionResult | tuple[TraceIngestionResult, TraceIngestionRunDetails]:
-    """Run the BAML and LangGraph trace-ingestion agent on one source session."""
+    """Run the trace-ingestion pipeline on one source session."""
     cfg = config or get_config()
     resolved_context_db_path = context_db_path.expanduser().resolve()
     resolved_trace_path = trace_path.expanduser().resolve()
@@ -147,7 +150,7 @@ def run_trace_ingestion(
             "model_name": effective_model_label,
         },
     ):
-        final_state = run_trace_ingestion_graph(
+        final_state = TraceIngestionPipeline(
             persistence_context=persistence_context,
             config=cfg,
             run_instruction=run_instruction,
@@ -157,9 +160,10 @@ def run_trace_ingestion(
             api_base_url=api_base_url,
             api_key=api_key,
             temperature=temperature,
-            max_llm_calls=max_llm_calls,
+            max_model_steps=max_llm_calls,
             progress=progress,
-        )
+            steps=steps,
+        )()
     result = TraceIngestionResult(
         completion_summary=str(final_state.get("completion_summary") or "").strip()
         or "Source session ingestion completed."
@@ -196,7 +200,7 @@ def _build_run_instruction(
     source_name: str | None = None,
     source_profile: str | None = None,
 ) -> str:
-    """Build source-session ingestion task framing for the BAML graph."""
+    """Build source-session ingestion task framing."""
     del context_db_path, project_identity
     line_count = trace_line_count(trace_path)
     source_time_text = str(session_started_at or "").strip() or "unknown"

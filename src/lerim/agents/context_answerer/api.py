@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from lerim.agents.context_answerer.graph import run_context_answerer_graph
+from lerim.agents.context_answerer.pipeline import run_context_answer_pipeline
 from lerim.agents.context_answerer.types import ContextAnswerResult
 from lerim.agents.mlflow_observability import mlflow_span
 from lerim.config.settings import Config, get_config
@@ -28,6 +28,7 @@ def run_context_answerer(
     config: Config | None = None,
     hints: str = "",
     return_messages: bool = False,
+    steps: dict[str, Any] | None = None,
 ) -> ContextAnswerResult | tuple[ContextAnswerResult, list[dict[str, Any]]]:
     """Plan retrieval, execute store reads, and synthesize a grounded answer."""
     cfg = config or get_config()
@@ -42,13 +43,14 @@ def run_context_answerer(
             "session_id": session_id,
         },
     ):
-        final_state = run_context_answerer_graph(
+        final_state = run_context_answer_pipeline(
             context_db_path=context_db_path,
             project_identity=project_identity,
             project_ids=resolved_project_ids,
             question=question,
             config=cfg,
             hints=hints,
+            steps=steps,
         )
     result = final_state.get("result")
     if not isinstance(result, ContextAnswerResult):

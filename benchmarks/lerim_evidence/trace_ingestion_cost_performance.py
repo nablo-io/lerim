@@ -2,7 +2,7 @@
 
 The runner uses LongMemEval-S haystack sessions as public source-session input,
 normalizes them through Lerim's generic trace envelope, and ingests them through
-the same BAML/LangGraph trace-ingestion path used by the product. It records
+the same DSPy trace-ingestion path used by the product. It records
 wall-clock time, live LLM call counts, and context database growth. Provider
 cost is reported only when measured usage data is available.
 """
@@ -62,7 +62,7 @@ BENCHMARK_ID = "longmemeval_s_trace_ingestion_cost_performance"
 DEFAULT_OUTPUT_DIR = Path("benchmarks/results/raw/trace-ingestion-cost-longmemeval-s-sample")
 COST_UNAVAILABLE_REASON = (
     "Lerim trace-ingestion details expose live LLM call counts, but this runtime "
-    "does not expose provider token usage or billed cost for BAML calls."
+    "does not expose provider token usage or billed cost for model calls."
 )
 
 
@@ -353,7 +353,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "## Methodology Notes",
         "",
         "- Input traces are public LongMemEval-S haystack sessions normalized through Lerim's generic trace envelope.",
-        "- Ingestion uses Lerim's BAML/LangGraph trace-ingestion path with live LLM calls.",
+        "- Ingestion uses Lerim's DSPy trace-ingestion path with live LLM calls.",
         "- LLM call counts come from `TraceIngestionRunDetails.llm_calls`.",
         "- Database growth excludes empty schema initialization, then measures cumulative SQLite file-size deltas around each trace.",
         "- Cost is not inferred. It stays unavailable unless provider usage or billing data is measured.",
@@ -481,7 +481,7 @@ def run_benchmark(args: argparse.Namespace) -> Path:
         },
         "methodology": {
             "public_dataset": True,
-            "trace_ingestion_path": "baml_langgraph",
+            "trace_ingestion_path": "dspy",
             "llm_in_loop": True,
             "llm_calls_measured": True,
             "cost_usd_available": False,

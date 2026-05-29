@@ -1,56 +1,14 @@
-enum ContextCuratorRecordKind {
-  DECISION @alias("decision") @description("A durable project decision with decision and why fields.")
-  PREFERENCE @alias("preference") @description("A stable user or workflow preference.")
-  CONSTRAINT @alias("constraint") @description("A durable invariant, limit, or must/cannot rule.")
-  FACT @alias("fact") @description("A durable project fact or setup truth.")
-  EPISODE @alias("episode") @description("A session recap record.")
-}
+"""DSPy signatures for context curation."""
 
-enum ContextCuratorActionType {
-  NOOP @alias("noop") @description("Leave the record unchanged.")
-  REVISE @alias("revise") @description("Rewrite one record into a clearer complete payload.")
-  ARCHIVE @alias("archive") @description("Archive a clearly low-value or obsolete record.")
-  SUPERSEDE @alias("supersede") @description("Mark one record as replaced by a stronger record.")
-}
+from __future__ import annotations
 
-class ContextCuratorRecordPatch {
-  kind ContextCuratorRecordKind
-  title string
-  body string
-  status RecordStatus?
-  valid_from string?
-  valid_until string?
-  decision string?
-  why string?
-  alternatives string?
-  consequences string?
-  user_intent string?
-  what_happened string?
-  outcomes string?
-}
+from lerim.agents.dspy_compat import dspy
 
-class ContextCurationAction {
-  action_type ContextCuratorActionType
-  record_id string
-  replacement_record_id string?
-  reason string
-  patch ContextCuratorRecordPatch?
-}
+from lerim.agents.context_curator.schemas import ContextCurationPlan
 
-class ContextCurationPlan {
-  actions ContextCurationAction[]
-  completion_summary string?
-}
 
-function CurateContextCluster(
-  run_instruction: string,
-  cluster_id: string,
-  records_json: string
-) -> ContextCurationPlan {
-  client MiniMaxM27
-  prompt #"
-    {{ _.role("system") }}
-    You are Lerim's context curator. Review one semantic cluster of context records.
+class CurateContextCluster(dspy.Signature):
+    """You are Lerim's context curator. Review one semantic cluster of context records.
     Return only structured output. Do not include <think> tags, hidden reasoning, markdown, or prose.
     The top-level output must include actions and completion_summary.
     Use an empty actions list when no mutation is justified.
@@ -89,30 +47,16 @@ function CurateContextCluster(
     - Decision patches need decision and why.
     - Write compact reusable context, not meeting minutes or cleanup narration.
     - Do not include incidental personal names or conversational identity markers unless identity itself is the durable context.
+    """
 
-    {{ _.role("user") }}
-    RUN INSTRUCTION:
-    {{ run_instruction }}
+    run_instruction: str = dspy.InputField(desc="RUN INSTRUCTION")
+    cluster_id: str = dspy.InputField(desc="CLUSTER ID")
+    records_json: str = dspy.InputField(desc="RECORDS JSON")
+    plan: ContextCurationPlan = dspy.OutputField(desc="Context curation action plan")
 
-    CLUSTER ID:
-    {{ cluster_id }}
 
-    RECORDS JSON:
-    {{ records_json }}
-
-    {{ ctx.output_format }}
-  "#
-}
-
-function CurateRecordHealthBatch(
-  run_instruction: string,
-  batch_id: string,
-  records_json: string
-) -> ContextCurationPlan {
-  client MiniMaxM27
-  prompt #"
-    {{ _.role("system") }}
-    You are Lerim's context curator. Review singleton context records for record-health problems.
+class CurateRecordHealthBatch(dspy.Signature):
+    """You are Lerim's context curator. Review singleton context records for record-health problems.
     Return only structured output. Do not include <think> tags, hidden reasoning, markdown, or prose.
     The top-level output must include actions and completion_summary.
     Use an empty actions list when no mutation is justified.
@@ -155,17 +99,9 @@ function CurateRecordHealthBatch(
     - Decision patches need decision and why.
     - Write compact reusable context, not meeting minutes or cleanup narration.
     - Do not include incidental personal names or conversational identity markers unless identity itself is the durable context.
+    """
 
-    {{ _.role("user") }}
-    RUN INSTRUCTION:
-    {{ run_instruction }}
-
-    BATCH ID:
-    {{ batch_id }}
-
-    RECORDS JSON:
-    {{ records_json }}
-
-    {{ ctx.output_format }}
-  "#
-}
+    run_instruction: str = dspy.InputField(desc="RUN INSTRUCTION")
+    batch_id: str = dspy.InputField(desc="BATCH ID")
+    records_json: str = dspy.InputField(desc="RECORDS JSON")
+    plan: ContextCurationPlan = dspy.OutputField(desc="Context curation action plan")

@@ -4,7 +4,7 @@ The context graph agent runs after curated records are available. It builds a
 sparse graph of useful relationships between decisions, constraints, facts,
 preferences, references, evidence, and handoffs.
 
-The graph below is generated from the compiled LangGraph runtime shape.
+The pipeline below shows the DSPy module flow.
 
 ```mermaid
 ---
@@ -40,17 +40,17 @@ graph TD;
 ## Flow
 
 1. `load_inventory` loads active durable records and existing graph edges.
-2. `build_candidates` builds mutual semantic-neighbor clusters and candidate
+2. `build_candidates` builds semantic-neighbor clusters and candidate
    record pairs.
-3. `link_records` asks BAML to propose sparse, grounded relationships.
-4. `review_links` asks BAML to drop weak, duplicate, or generic links.
+3. `link_records` asks DSPy to propose sparse, grounded relationships.
+4. `review_links` asks DSPy to drop weak, duplicate, or generic links.
 5. `persist_graph` writes graph nodes, graph edges, and semantic cluster labels.
 
 ## Clustering
 
 The persisted graph stores one durable cluster layer:
 
-- semantic clusters from mutual semantic-neighbor records
+- semantic clusters from semantic-neighbor records
 
 A planned hosted dashboard can derive Louvain communities and combined visual
 lenses from accepted graph links without adding transient visualization labels

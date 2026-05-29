@@ -198,7 +198,7 @@ def test_cli_answer_verbose_renders_trace_in_order(
             "messages": [
                 {
                     "message_index": 0,
-                    "kind": "baml_call",
+                    "kind": "model_step",
                     "parts": [
                         {"part_kind": "PlanContextRetrieval", "content": {}},
                     ],
@@ -215,7 +215,7 @@ def test_cli_answer_verbose_renders_trace_in_order(
                 },
                 {
                     "message_index": 2,
-                    "kind": "baml_call",
+                    "kind": "model_step",
                     "parts": [
                         {"part_kind": "AnswerFromContext", "content": {}}
                     ],
@@ -240,10 +240,10 @@ def test_cli_answer_verbose_renders_trace_in_order(
     assert expectation["answer_text"] in output
     assert expectation["trace_title"] in output
     assert output.index(expectation["answer_text"]) < output.index(expectation["trace_title"])
-    assert output.index("--- Message 0 [baml_call] ---") < output.index("--- Message 1 [retrieval] ---")
-    assert output.index("--- Message 1 [retrieval] ---") < output.index("--- Message 2 [baml_call] ---")
-    assert output.index("--- Message 2 [baml_call] ---") < output.index("--- Message 3 [answer] ---")
-    assert "  [baml] PlanContextRetrieval" in output
+    assert output.index("--- Message 0 [model_step] ---") < output.index("--- Message 1 [retrieval] ---")
+    assert output.index("--- Message 1 [retrieval] ---") < output.index("--- Message 2 [model_step] ---")
+    assert output.index("--- Message 2 [model_step] ---") < output.index("--- Message 3 [answer] ---")
+    assert "  [model] PlanContextRetrieval" in output
     assert "  [retrieval] count results=3" in output
 
 
@@ -265,7 +265,7 @@ def test_cli_answer_json_contains_debug_payload(
             "messages": [
                 {
                     "message_index": 0,
-                    "kind": "baml_call",
+                    "kind": "model_step",
                     "parts": [
                         {"part_kind": "PlanContextRetrieval", "content": {}}
                     ],

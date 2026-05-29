@@ -1,40 +1,14 @@
-enum ContextGraphRelationKind {
-  SUPPORTS @alias("supports") @description("The source record gives evidence for, confirms, or strengthens the target record.")
-  REFINES @alias("refines") @description("The source record narrows, clarifies, or makes the target record more specific.")
-  DEPENDS_ON @alias("depends_on") @description("The source record relies on the target record being true or accepted.")
-  CONTRADICTS @alias("contradicts") @description("The source record conflicts with the target record and both should be reviewed together.")
-  SAME_TOPIC @alias("same_topic") @description("The records are about the same reusable topic but neither replaces the other.")
-  EVIDENCE_FOR @alias("evidence_for") @description("The source record is concrete evidence for the target record.")
-  SUPERSEDES @alias("supersedes") @description("The source record is the newer or stronger context that replaces the target record.")
-  RELATED @alias("related") @description("The records are usefully adjacent for future retrieval, but the relationship is weaker than the other relation kinds.")
-}
+"""DSPy signatures for context graph linking."""
 
-class ContextGraphLink {
-  source_record_id string
-  target_record_id string
-  relation_kind ContextGraphRelationKind
-  label string
-  rationale string
-  evidence_record_ids string[]
-  confidence float
-}
+from __future__ import annotations
 
-class ContextGraphPlan {
-  links ContextGraphLink[]
-  completion_summary string?
-}
+from lerim.agents.dspy_compat import dspy
 
-function LinkContextRecords(
-  run_instruction: string,
-  cluster_id: string,
-  records_json: string,
-  candidate_pairs_json: string,
-  existing_edges_json: string
-) -> ContextGraphPlan {
-  client MiniMaxM27
-  prompt #"
-    {{ _.role("system") }}
-    You are Lerim's context graph linker. You run after noisy agent traces have already been filtered into curated context records.
+from lerim.agents.context_graph.schemas import ContextGraphPlan
+
+
+class LinkContextRecords(dspy.Signature):
+    """You are Lerim's context graph linker. You run after noisy agent traces have already been filtered into curated context records.
     Return only structured output. Do not include <think> tags, hidden reasoning, markdown, or prose.
     The top-level output must include links and completion_summary.
     Use an empty links list when no relationship is justified.
@@ -72,36 +46,18 @@ function LinkContextRecords(
     - Use confidence >= 0.75 only for relationships clearly supported by record text.
     - Use confidence between 0.55 and 0.74 for useful but weaker relationships.
     - Omit links below 0.55.
+    """
 
-    {{ _.role("user") }}
-    RUN INSTRUCTION:
-    {{ run_instruction }}
+    run_instruction: str = dspy.InputField(desc="RUN INSTRUCTION")
+    cluster_id: str = dspy.InputField(desc="CLUSTER ID")
+    records_json: str = dspy.InputField(desc="RECORDS JSON")
+    candidate_pairs_json: str = dspy.InputField(desc="CANDIDATE PAIRS JSON")
+    existing_edges_json: str = dspy.InputField(desc="EXISTING EDGES JSON")
+    plan: ContextGraphPlan = dspy.OutputField(desc="Context graph link plan")
 
-    CLUSTER ID:
-    {{ cluster_id }}
 
-    RECORDS JSON:
-    {{ records_json }}
-
-    CANDIDATE PAIRS JSON:
-    {{ candidate_pairs_json }}
-
-    EXISTING EDGES JSON:
-    {{ existing_edges_json }}
-
-    {{ ctx.output_format }}
-  "#
-}
-
-function ReviewContextGraphLinks(
-  run_instruction: string,
-  records_json: string,
-  proposed_links_json: string
-) -> ContextGraphPlan {
-  client MiniMaxM27
-  prompt #"
-    {{ _.role("system") }}
-    You are Lerim's context graph reviewer. Review proposed links before they are persisted.
+class ReviewContextGraphLinks(dspy.Signature):
+    """You are Lerim's context graph reviewer. Review proposed links before they are persisted.
     Return only structured output. Do not include <think> tags, hidden reasoning, markdown, or prose.
     The top-level output must include links and completion_summary.
 
@@ -116,17 +72,9 @@ function ReviewContextGraphLinks(
     Keep evidence_record_ids limited to records that support the link, and include both linked endpoint IDs when both endpoint texts support the relationship.
     Drop weak links rather than preserving them with lower confidence.
     Do not over-prune a small curated cluster: if a proposed link is grounded, useful, and above the confidence floor, keep it even when the graph already has another strong link.
+    """
 
-    {{ _.role("user") }}
-    RUN INSTRUCTION:
-    {{ run_instruction }}
-
-    RECORDS JSON:
-    {{ records_json }}
-
-    PROPOSED LINKS JSON:
-    {{ proposed_links_json }}
-
-    {{ ctx.output_format }}
-  "#
-}
+    run_instruction: str = dspy.InputField(desc="RUN INSTRUCTION")
+    records_json: str = dspy.InputField(desc="RECORDS JSON")
+    proposed_links_json: str = dspy.InputField(desc="PROPOSED LINKS JSON")
+    plan: ContextGraphPlan = dspy.OutputField(desc="Reviewed context graph link plan")

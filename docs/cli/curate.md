@@ -28,8 +28,8 @@ flowchart TD
 
     B --> C["Python: load active record inventory"]
     C --> D["Python: semantic search builds candidate clusters"]
-    D --> E["LLM/BAML: review each cluster"]
-    E --> F["LLM/BAML: review records without cluster actions"]
+    D --> E["DSPy: review each cluster"]
+    E --> F["DSPy: review records without cluster actions"]
 
     E --> G["Python: validate proposed actions"]
     F --> G

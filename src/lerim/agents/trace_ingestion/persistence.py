@@ -8,7 +8,7 @@ from pathlib import Path
 import textwrap
 from typing import Any
 
-from lerim.agents.baml_helpers import model_payload
+from lerim.agents.model_helpers import prediction_payload
 from lerim.context import ContextStore, ProjectIdentity, ScopeIdentity
 from lerim.context.spec import (
     DURABLE_RECORD_KINDS,
@@ -69,7 +69,7 @@ def prepare_context_store(ctx: PersistenceContext) -> None:
     store.upsert_session(
         project_id=ctx.project_identity.project_id if ctx.project_identity else None,
         session_id=ctx.session_id,
-        agent_type="baml-langgraph-trace-ingestion",
+        agent_type="trace_ingestion",
         source_trace_ref=str(ctx.trace_path),
         repo_path=str(ctx.project_identity.repo_path) if ctx.project_identity else None,
         cwd=str(ctx.project_identity.repo_path) if ctx.project_identity else None,
@@ -145,7 +145,7 @@ def persist_synthesized_extraction(
     ctx: PersistenceContext,
 ) -> tuple[list[dict[str, Any]], bool, str]:
     """Persist synthesized episode and durable records through ContextStore."""
-    payload = model_payload(synthesized)
+    payload = prediction_payload(synthesized)
     durable_records = [
         record
         for record in (
@@ -180,7 +180,7 @@ def persist_synthesized_extraction(
             result = store.create_record(
                 project_id=ctx.project_identity.project_id if ctx.project_identity else None,
                 session_id=ctx.session_id,
-                change_reason="baml_trace_ingestion",
+                change_reason="trace_ingestion",
                 created_at=ctx.session_started_at or None,
                 scope_identity=ctx.scope_identity,
                 source_name=ctx.source_name or "trace",
@@ -305,7 +305,7 @@ def _prepare_episode(
     archive_when_durable_signal: bool = False,
 ) -> dict[str, Any]:
     """Normalize a synthesized episode draft into a canonical record payload."""
-    episode = model_payload(value)
+    episode = prediction_payload(value)
     status = _status_value(episode.get("status"))
     if archive_when_durable_signal:
         status = "archived"
@@ -357,7 +357,7 @@ def _prepare_episode(
 
 def _prepare_durable_record(value: Any) -> dict[str, Any] | None:
     """Normalize one durable draft into a canonical record payload."""
-    record = model_payload(value)
+    record = prediction_payload(value)
     kind = normalize_record_kind(_enum_text(record.get("kind")))
     if kind not in DURABLE_RECORD_KINDS:
         return None
@@ -415,7 +415,7 @@ def _status_value(value: Any) -> str:
 
 
 def _enum_text(value: Any) -> str:
-    """Convert BAML enum text into lowercase alias text."""
+    """Convert enum-ish text into lowercase alias text."""
     return str(value or "").strip().lower()
 
 

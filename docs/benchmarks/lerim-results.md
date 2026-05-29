@@ -150,7 +150,7 @@ uv run python benchmarks/lerim_evidence/retrieval_latency.py \
 
 This runner measures Lerim's source-session write path. It normalizes public
 LongMemEval-S haystack sessions through Lerim's generic trace envelope, then
-ingests them through the MiniMax M2.7 BAML/LangGraph trace-ingestion graph in an
+ingests them through the MiniMax M2.7 DSPy trace-ingestion pipeline in an
 isolated context database.
 
 Source artifact:
@@ -172,12 +172,12 @@ This is a small performance sample, not an extraction-quality score. The sample
 uses the current `support` source profile on public chat sessions, and the
 durable-record count should not be interpreted as market quality evidence. Cost
 is not estimated because the runtime exposes LLM call counts but not provider
-token usage or billed cost for the BAML calls.
+token usage or billed cost for model calls.
 
 Run the sample artifact:
 
 ```bash
-BAML_LOG=ERROR uv run python benchmarks/lerim_evidence/trace_ingestion_cost_performance.py \
+uv run python benchmarks/lerim_evidence/trace_ingestion_cost_performance.py \
   --limit 3 \
   --output-dir benchmarks/results/raw/trace-ingestion-cost-longmemeval-s-sample
 ```

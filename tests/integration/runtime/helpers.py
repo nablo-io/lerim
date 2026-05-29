@@ -99,7 +99,7 @@ def build_ordered_answer_messages() -> list[dict[str, object]]:
     """Build an ordered context-answerer event trace."""
     return [
         {
-            "kind": "baml_call",
+            "kind": "model_step",
             "function": "PlanContextRetrieval",
             "action_count": 2,
             "rationale": "Inspect recent context and then search the relevant record.",
@@ -119,7 +119,7 @@ def build_ordered_answer_messages() -> list[dict[str, object]]:
             "rationale": "Find the matching context record.",
         },
         {
-            "kind": "baml_call",
+            "kind": "model_step",
             "function": "AnswerFromContext",
             "supporting_record_ids": ["rec_1"],
         },

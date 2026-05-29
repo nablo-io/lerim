@@ -1,4 +1,4 @@
-"""Provider capability helpers for BAML-backed Lerim agents."""
+"""Provider capability helpers for Lerim agents."""
 
 from __future__ import annotations
 

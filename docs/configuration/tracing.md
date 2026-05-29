@@ -15,14 +15,14 @@ When tracing is enabled, MLflow records:
 - **Named agent spans** -- trace ingestion, context curation, context answering,
   and context-brief compilation emit `lerim.agent.<name>` spans when they run
   inside a traced runtime operation.
-- **Graph events** -- ingest, curate, and Context Brief still write detailed
+- **Agent events** -- ingest, curate, and Context Brief still write detailed
   local `agent_trace.json` files under the run workspace. These are the most
   detailed per-phase record today; MLflow currently shows the operation and
-  named-agent boundaries rather than every graph node as its own nested span.
+  named-agent boundaries rather than every pipeline step as its own nested span.
 - **Retrieval actions** -- answerer retrieval planning and read-only context
   queries are recorded in the local debug trace when verbose answer output is enabled.
-- **agent_trace.json** -- each ingest/curate run also writes local graph events
-  under the run workspace. Answer debug output writes BAML and retrieval events.
+- **agent_trace.json** -- each ingest/curate run also writes local agent events
+  under the run workspace. Answer debug output writes model and retrieval events.
 - **Lerim run id correlation** -- each ingest/curate trace is tagged with
   `lerim.run_id`, and MLflow `client_request_id` is set to the same value used
   in the local run `manifest.json` and workspace folder name.
@@ -153,7 +153,7 @@ Important files:
 - `manifest.json` -- run id, operation, project, session id, artifact paths, and
   status. `mlflow_client_request_id` matches the MLflow trace request id.
 - `events.jsonl` -- compact started/succeeded/failed events for that run.
-- `agent_trace.json` -- serialized graph, BAML, or retrieval events when available.
+- `agent_trace.json` -- serialized pipeline, model, or retrieval events when available.
 - `agent.log` -- short human-readable agent summary on success.
 - `error.json` -- structured error details on failure.
 

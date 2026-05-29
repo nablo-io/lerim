@@ -1,4 +1,4 @@
-"""Tests for the BAML/LangGraph context-graph package."""
+"""Tests for the context-graph package."""
 
 from __future__ import annotations
 
@@ -8,15 +8,17 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from lerim.agents.context_graph import run_context_graph
 from lerim.agents.context_graph.clustering import build_cluster_assignments
-from lerim.agents.baml_helpers import call_baml_with_retries
-from lerim.agents.context_graph.graph import _validate_links_for_records
 from lerim.agents.context_graph.inventory import (
     build_semantic_candidates,
     load_graph_records,
 )
+from lerim.agents.context_graph.pipeline import (
+    ContextGraphPipeline,
+    validate_links_for_records,
+)
 from lerim.agents.context_graph.persistence import replace_context_graph
+from lerim.agents.model_helpers import call_model_step
 from lerim.context import ContextStore
 from lerim.context.project_identity import ProjectIdentity
 
@@ -99,7 +101,7 @@ class TestContextGraphValidation:
     """Tests for generated-link validation before persistence."""
 
     def test_valid_link_passes(self):
-        feedback = _validate_links_for_records(
+        feedback = validate_links_for_records(
             {
                 "links": [
                     {
@@ -158,7 +160,7 @@ class TestContextGraphValidation:
         assert [record["record_id"] for record in records] == ["rec_late_durable"]
 
     def test_rejects_link_outside_candidate_pairs(self):
-        feedback = _validate_links_for_records(
+        feedback = validate_links_for_records(
             {
                 "links": [
                     {
@@ -180,7 +182,7 @@ class TestContextGraphValidation:
         assert "candidate_pairs_json" in feedback
 
     def test_rejects_low_confidence(self):
-        feedback = _validate_links_for_records(
+        feedback = validate_links_for_records(
             {
                 "links": [
                     {
@@ -201,7 +203,7 @@ class TestContextGraphValidation:
         assert "too low" in feedback
 
     def test_rejects_unreviewed_evidence(self):
-        feedback = _validate_links_for_records(
+        feedback = validate_links_for_records(
             {
                 "links": [
                     {
@@ -223,7 +225,7 @@ class TestContextGraphValidation:
 
     def test_retry_exhaustion_raises_instead_of_persisting_invalid_output(self):
         with pytest.raises(RuntimeError, match="invalid link_records output"):
-            call_baml_with_retries(
+            call_model_step(
                 lambda _instruction: {"links": []},
                 stage="link_records",
                 progress=False,
@@ -346,13 +348,8 @@ class TestContextGraphPipeline:
                 SimpleNamespace(record_id="rec_decision"),
             ]
 
-        class FakeContextGraphClient:
-            def LinkContextRecords(
-                self,
-                *,
-                candidate_pairs_json: str,
-                **_kwargs,
-            ):
+        class FakeContextGraphStep:
+            def __call__(self, *, candidate_pairs_json: str, **_kwargs):
                 pairs = json.loads(candidate_pairs_json)
                 pair = pairs[0]
                 source = str(pair["target_record_id"])
@@ -371,32 +368,24 @@ class TestContextGraphPipeline:
                     ]
                 }
 
-            def ReviewContextGraphLinks(
-                self,
-                *,
-                proposed_links_json: str,
-                **_kwargs,
-            ):
+        class FakeReviewStep:
+            def __call__(self, *, proposed_links_json: str, **_kwargs):
                 return {"links": json.loads(proposed_links_json)}
 
         monkeypatch.setattr(ContextStore, "search", fake_search)
-        monkeypatch.setattr(
-            "lerim.agents.context_graph.graph.build_baml_client_for_role",
-            lambda **_kwargs: FakeContextGraphClient(),
-        )
-
-        result, details = run_context_graph(
+        state = ContextGraphPipeline(
             context_db_path=store.db_path,
             project_identity=identity,
             session_id="graph",
             config=tmp_config,
-            return_details=True,
-        )
+            link_step=FakeContextGraphStep(),
+            review_step=FakeReviewStep(),
+        )()
+        result = state["write_summary"]
 
-        assert result.nodes_written == 2
-        assert result.edges_written == 1
-        assert details.candidate_pair_count == 1
-        assert details.written_edge_count == 1
+        assert result["nodes_written"] == 2
+        assert result["edges_written"] == 1
+        assert len(state["candidate_pairs"]) == 1
         with store.connect() as conn:
             active_nodes = conn.execute(
                 "SELECT COUNT(1) FROM context_nodes WHERE status = 'active'"

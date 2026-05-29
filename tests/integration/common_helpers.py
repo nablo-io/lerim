@@ -66,7 +66,7 @@ def store_and_identity(live_config, live_repo_root):
 
 
 def retrieval_tool_calls(payload: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return retrieval/action payloads from serialized BAML event history."""
+    """Return retrieval/action payloads from serialized model event history."""
     calls: list[dict[str, Any]] = []
 
     def walk(value: Any) -> None:
@@ -91,7 +91,7 @@ def retrieval_tool_calls(payload: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def retrieval_tool_returns(payload: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return retrieval result summaries from serialized BAML event history."""
+    """Return retrieval result summaries from serialized model event history."""
     returns: list[dict[str, Any]] = []
 
     def walk(value: Any) -> None:

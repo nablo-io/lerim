@@ -3,7 +3,7 @@
 The context answerer retrieves stored context and synthesizes evidence-backed
 answers for agents and users.
 
-The graph below is generated from the compiled LangGraph runtime.
+The pipeline below shows the DSPy module flow.
 
 ```mermaid
 ---

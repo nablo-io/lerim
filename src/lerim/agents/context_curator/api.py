@@ -5,11 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import overload
 
-from lerim.agents.baml_runtime import model_label
-from lerim.agents.context_curator.graph import run_context_curator_graph
 from lerim.agents.context_curator.inventory import prepare_context_curator_store
+from lerim.agents.context_curator.pipeline import ContextCuratorPipeline
 from lerim.agents.context_curator.types import ContextCuratorEvent, ContextCuratorResult, ContextCuratorRunDetails
 from lerim.agents.mlflow_observability import mlflow_span
+from lerim.agents.model_runtime import model_label
 from lerim.config.settings import Config, get_config
 from lerim.context import ProjectIdentity
 
@@ -67,7 +67,7 @@ def run_context_curator(
     max_llm_calls: int | None = None,
     progress: bool = False,
 ) -> ContextCuratorResult | tuple[ContextCuratorResult, ContextCuratorRunDetails]:
-    """Run the BAML and LangGraph context-curator agent on one project scope."""
+    """Run the context-curator pipeline on one project scope."""
     cfg = config or get_config()
     resolved_context_db_path = context_db_path.expanduser().resolve()
     effective_model_label = model_label(
@@ -87,7 +87,7 @@ def run_context_curator(
         attributes={"lerim.agent_name": "context_curator"},
         inputs={"model_name": effective_model_label},
     ):
-        final_state = run_context_curator_graph(
+        final_state = ContextCuratorPipeline(
             context_db_path=resolved_context_db_path,
             project_identity=project_identity,
             session_id=session_id,
@@ -97,9 +97,9 @@ def run_context_curator(
             api_base_url=api_base_url,
             api_key=api_key,
             temperature=temperature,
-            max_llm_calls=max_llm_calls,
+            max_model_steps=max_llm_calls or 40,
             progress=progress,
-        )
+        )()
     result = ContextCuratorResult(
         completion_summary=str(final_state.get("completion_summary") or "").strip()
         or "Context curation completed."

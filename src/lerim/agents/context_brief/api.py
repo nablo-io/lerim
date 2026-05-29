@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from lerim.agents.context_brief.graph import run_context_brief_graph
+from lerim.agents.context_brief.pipeline import ContextBriefPipeline
 from lerim.agents.mlflow_observability import mlflow_span
 from lerim.config.settings import Config, get_config
 from lerim.context_brief import ContextBriefDraft
@@ -24,10 +24,7 @@ def compile_context_brief(
         attributes={"lerim.agent_name": "context_brief_compiler"},
         inputs={"candidate_count": len(candidates)},
     ):
-        final_state = run_context_brief_graph(
-            config=cfg,
-            candidates=candidates,
-        )
+        final_state = ContextBriefPipeline(config=cfg)(candidates=candidates)
     draft = final_state.get("draft")
     if not isinstance(draft, ContextBriefDraft):
         raise ValueError("context_brief_draft_missing")

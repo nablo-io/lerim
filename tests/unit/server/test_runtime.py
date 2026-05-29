@@ -78,7 +78,7 @@ class TestHelpers:
 
     def test_write_agent_trace_serializes_messages(self, tmp_path):
         path = tmp_path / "agent_trace.json"
-        messages = [{"kind": "baml_call", "function": "PlanContextRetrieval"}]
+        messages = [{"kind": "model_step", "function": "PlanContextRetrieval"}]
         _write_agent_trace(path, messages)
         data = json.loads(path.read_text(encoding="utf-8"))
         assert isinstance(data, list)
@@ -169,7 +169,7 @@ class TestContextBriefFlow:
                         ),
                     ),
                 ),
-                [{"kind": "baml_call", "function": "CompileContextBrief"}],
+                [{"kind": "model_step", "function": "CompileContextBrief"}],
             )
 
         monkeypatch.setattr("lerim.server.runtime.compile_context_brief", _fake_context_brief)
@@ -471,13 +471,13 @@ class TestAnswerFlow:
             return (
                 ContextAnswerResult(answer="answer text"),
                 [
-                    {"kind": "baml_call", "function": "PlanContextRetrieval"},
+                    {"kind": "model_step", "function": "PlanContextRetrieval"},
                     {
                         "kind": "retrieval",
                         "action_type": "count",
                         "result_count": 3,
                     },
-                    {"kind": "baml_call", "function": "AnswerFromContext"},
+                    {"kind": "model_step", "function": "AnswerFromContext"},
                 ],
             )
 

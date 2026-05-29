@@ -11,7 +11,7 @@ lerim answer "How is caching handled?" --scope project --project lerim-cli
 
 ## How it works
 
-`answer` uses the context answerer: BAML plans retrieval, Python executes read-only context-store queries, and BAML answers from the retrieved records.
+`answer` uses the context answerer: DSPy plans retrieval, Python executes read-only context-store queries, and DSPy answers from the retrieved records.
 
 ```mermaid
 flowchart TD

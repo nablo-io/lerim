@@ -26,9 +26,9 @@ provider = "minimax"               # opencode_go | minimax | zai | openrouter | 
 model = "MiniMax-M2.7"                 # package default model for minimax provider
 api_base = ""
 # Model names are auto-normalized per provider (e.g. minimax-m2.5 → MiniMax-M2.5 for minimax provider).
-# BAML/LangGraph trace ingestion reads deterministic trace windows and derives its
+# Trace ingestion reads deterministic trace windows and derives its
 # extraction budget from the trace size in lerim.agents.trace_ingestion.windowing.
-curate_max_llm_calls = 50               # max BAML calls for context curation
+curate_max_llm_calls = 50               # max model steps for context curation
 answer_max_retrieval_actions = 20       # max planned retrieval actions for context answering
 # MiniMax requires temperature > 0, and MiniMax smoke validation used 1.0.
 temperature = 1.0

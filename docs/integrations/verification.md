@@ -12,7 +12,7 @@ claim publicly.
 | `lerim connect doctor <agent>` | Lerim can parse the config and see the MCP entry. | Proof that the client loaded or used the tool. |
 | Local stdio MCP tool-call probe | Lerim's MCP server can execute `lerim_context_brief` through the MCP protocol. | Proof that an external client selected the tool. |
 | Local stdio trace-submit duplicate probe | Lerim's MCP server can accept, normalize, and idempotently skip a duplicate submitted trace. | Proof that LLM extraction quality passed. |
-| Opt-in local stdio trace-submit extraction probe | When accepted, a synthetic submitted trace ran through the BAML/LangGraph extraction path and created records. | Proof that an external installed client submitted an organic trace; the current public MCP artifact has 0 extraction acceptances. |
+| Opt-in local stdio trace-submit extraction probe | When accepted, a synthetic submitted trace ran through the DSPy extraction path and created records. | Proof that an external installed client submitted an organic trace; the current public MCP artifact has 0 extraction acceptances. |
 | Installed client CLI list/get command | The installed client can see the Lerim MCP entry. | Proof that `lerim_context_brief` was called. |
 | Live tool-call probe | The client called a Lerim MCP context tool. | Native completed-session capture. |
 | Native adapter ingest over a completed session | Native capture for that source shape. | MCP recall support. |

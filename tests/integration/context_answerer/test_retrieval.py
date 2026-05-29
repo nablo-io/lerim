@@ -16,7 +16,7 @@ def _normalize(text: str) -> str:
 
 
 def _event_functions(messages: list[dict[str, object]]) -> list[str]:
-    """Return the serialized BAML function names in event order."""
+    """Return the serialized model function names in event order."""
     return [str(item.get("function") or "") for item in messages]
 
 

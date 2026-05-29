@@ -136,8 +136,6 @@ def build_semantic_candidates(
     edges: dict[str, set[str]] = defaultdict(set)
     for record_id, neighbor_ids in directed_neighbors.items():
         for neighbor_id in neighbor_ids:
-            if record_id not in directed_neighbors.get(neighbor_id, set()):
-                continue
             edges[record_id].add(neighbor_id)
             edges[neighbor_id].add(record_id)
 
@@ -205,12 +203,12 @@ def load_existing_edges(
 
 
 def format_records_json(records: list[dict[str, Any]]) -> str:
-    """Render records as compact JSON for BAML prompts."""
+    """Render records as compact JSON for model prompts."""
     return json.dumps([_compact_record(record) for record in records], ensure_ascii=True, indent=2)
 
 
 def format_pairs_json(pairs: list[dict[str, Any]]) -> str:
-    """Render candidate pairs as compact JSON for BAML prompts."""
+    """Render candidate pairs as compact JSON for model prompts."""
     return json.dumps(pairs, ensure_ascii=True, indent=2)
 
 

@@ -1,7 +1,6 @@
 """Runtime orchestrator for Lerim ingest and context agent flows.
 
-All agent-facing flows use BAML-backed runtime clients over the DB-only context
-store.
+All agent-facing flows use DSPy-backed pipelines over the DB-only context store.
 """
 
 from __future__ import annotations
@@ -166,13 +165,13 @@ def _write_agent_trace(path: Path, messages: list[Any]) -> None:
 
 
 def _write_trace_ingestion_agent_trace(path: Path, details: TraceIngestionRunDetails) -> None:
-    """Serialize BAML/LangGraph trace-ingestion events to a stable JSON artifact."""
+    """Serialize trace-ingestion events to a stable JSON artifact."""
     payload = [event.model_dump(mode="json") for event in details.events]
     path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
 
 
 def _write_graph_agent_trace(path: Path, details: Any) -> None:
-    """Serialize BAML/LangGraph events to a stable JSON artifact."""
+    """Serialize graph/curation events to a stable JSON artifact."""
     payload = [event.model_dump(mode="json") for event in details.events]
     path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
 
@@ -218,7 +217,7 @@ def _mark_run_failed(
 
 
 def _build_answer_debug(events: list[dict[str, Any]]) -> dict[str, Any]:
-    """Build a sanitized context-answerer debug payload from BAML/retrieval events."""
+    """Build a sanitized context-answerer debug payload from model/retrieval events."""
     retrieval_actions = [
         event for event in events if str(event.get("kind") or "") == "retrieval"
     ]
@@ -230,6 +229,7 @@ def _build_answer_debug(events: list[dict[str, Any]]) -> dict[str, Any]:
                 {
                     "part_kind": str(
                         event.get("function")
+                        or event.get("stage")
                         or event.get("action_type")
                         or event.get("kind")
                         or "event"

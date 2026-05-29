@@ -1,4 +1,4 @@
-"""Tests for BAML extract persistence helpers."""
+"""Tests for model extract persistence helpers."""
 
 from __future__ import annotations
 

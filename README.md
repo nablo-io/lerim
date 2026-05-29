@@ -156,7 +156,7 @@ cited context, not more logs.
 flowchart LR
     source[Completed source session] --> adapter[Native adapter or trace submit]
     adapter --> normalized[Canonical trace]
-    normalized --> extractor[BAML / LangGraph extraction]
+    normalized --> extractor[DSPy extraction pipeline]
     extractor --> records[Evidence-backed context records]
     records --> curate[Curate and link]
     curate --> tools[CLI and MCP tools]

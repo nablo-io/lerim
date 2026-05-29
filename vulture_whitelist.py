@@ -42,6 +42,16 @@ skip_project_jobs  # noqa
 git_branch  # noqa
 model_config  # noqa
 current_utc  # noqa
+rationale  # noqa
+retrieval_json  # noqa
+brief  # noqa
+records_json  # noqa
+batch_id  # noqa
+source_record_id  # noqa
+target_record_id  # noqa
+candidate_pairs_json  # noqa
+existing_edges_json  # noqa
+proposed_links_json  # noqa
 candidate_profile_json  # noqa
 candidate_records_json  # noqa
 last_context_tokens  # noqa
@@ -55,6 +65,9 @@ discarded_noise  # noqa
 filtered_durable_findings  # noqa
 rejected_durable_findings  # noqa
 signal_filter_summary  # noqa
+filtering_summary  # noqa
+kept_durable_findings  # noqa
+rejected_findings  # noqa
 clustered_record_ids  # noqa
 active_record_count  # noqa
 cluster_count  # noqa
@@ -66,6 +79,21 @@ records_changed_since_previous  # noqa
 recent_versions_considered  # noqa
 episode_update_refs  # noqa
 skip_reason  # noqa
+silent_change_feedback_record  # noqa
+model_size_priority_record  # noqa
+provider_cost_record  # noqa
+user_strategy_records  # noqa
+role_split_record  # noqa
+upstream_bug_report_record  # noqa
+project_identity_fact  # noqa
+model_setting_fact  # noqa
+prompt_structure_decision  # noqa
+fixture_constraint  # noqa
+deferred_design_fact  # noqa
+record_index  # noqa
+keep  # noqa
+save_any  # noqa
+session_reason  # noqa
 
 # Pydantic validators registered by decorators
 validate_level  # noqa

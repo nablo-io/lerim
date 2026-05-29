@@ -119,13 +119,13 @@ uv run python benchmarks/lerim_evidence/retrieval_latency.py \
 ### Trace Ingestion Cost/Performance
 
 This uses public LongMemEval-S haystack sessions as source-session inputs and
-runs Lerim's BAML/LangGraph ingestion path. It measures ingestion time, live LLM
+runs Lerim's DSPy ingestion path. It measures ingestion time, live LLM
 call counts, and context DB file-size growth after schema initialization.
 Provider cost stays `not available` unless the runtime exposes measured token
 usage or billing data.
 
 ```bash
-BAML_LOG=ERROR uv run python benchmarks/lerim_evidence/trace_ingestion_cost_performance.py \
+uv run python benchmarks/lerim_evidence/trace_ingestion_cost_performance.py \
   --limit 3 \
   --output-dir benchmarks/results/raw/trace-ingestion-cost-longmemeval-s-sample
 ```
@@ -224,7 +224,7 @@ trace-to-context extraction quality.
 
 To also exercise the LLM extraction path through MCP, opt in to the live
 trace-submit extraction probe. It submits a fresh completed trace through
-`lerim_trace_submit`, runs MiniMax/BAML/LangGraph ingestion, and passes only if
+`lerim_trace_submit`, runs MiniMax-backed DSPy ingestion, and passes only if
 Lerim creates one episode record plus at least one durable record.
 
 ```bash

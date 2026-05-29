@@ -65,7 +65,7 @@ that smaller context still include the answer-bearing session?
 The trace-ingestion cost/performance runner measures the write path, not the
 retrieval path. It takes public LongMemEval-S haystack sessions, normalizes them
 through Lerim's generic trace envelope, then sends them through the same
-BAML/LangGraph trace-ingestion path used by Lerim.
+DSPy trace-ingestion path used by Lerim.
 
 The current public artifact is a small sample, not a full-suite result. It
 reports:
@@ -77,7 +77,7 @@ reports:
 
 Cost is not inferred from fixed stages or pricing guesses. In the current
 artifact, cost is `not available` because Lerim records LLM call counts but does
-not yet expose provider token usage or billed cost for the BAML calls.
+not yet expose provider token usage or billed cost for model calls.
 
 ## Extraction
 

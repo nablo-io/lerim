@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from pydantic import ValidationError
 
@@ -11,44 +9,43 @@ from lerim.agents.context_answerer import (
     CONTEXT_ANSWERER_SYSTEM_PROMPT,
     ContextAnswerResult,
 )
+from lerim.agents.context_answerer.signatures import AnswerFromContext, PlanContextRetrieval
+from lerim.agents.context_brief.signatures import CompileContextBrief
+from lerim.agents.context_curator.signatures import CurateContextCluster, CurateRecordHealthBatch
+from lerim.agents.context_graph.signatures import LinkContextRecords, ReviewContextGraphLinks
 from lerim.agents.trace_ingestion import TraceIngestionResult
+from lerim.agents.trace_ingestion.signatures import (
+    FilterDurableSignal,
+    ObserveSourceWindow,
+    SynthesizeContextRecords,
+)
 from lerim.agents.context_curator import ContextCuratorResult
 from lerim.agents.context_graph import ContextGraphResult
-REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 class TestBuildIngestAgent:
     """Tests for trace-ingestion public contract."""
 
-    def test_baml_source_exists(self):
-        path = REPO_ROOT / "src" / "lerim" / "agents" / "baml_src" / "trace_ingestion.baml"
-        assert path.exists()
-        content = path.read_text(encoding="utf-8")
-        assert "function ObserveSourceWindow" in content
-        assert "function FilterDurableSignal" in content
-        assert "function SynthesizeContextRecords" in content
+    def test_signatures_exist(self):
+        assert ObserveSourceWindow.instructions
+        assert FilterDurableSignal.instructions
+        assert SynthesizeContextRecords.instructions
 
 
 class TestBuildCurateAgent:
     """Tests for context-curator public contract."""
 
-    def test_baml_source_exists(self):
-        path = REPO_ROOT / "src" / "lerim" / "agents" / "baml_src" / "context_curator.baml"
-        assert path.exists()
-        content = path.read_text(encoding="utf-8")
-        assert "function CurateContextCluster" in content
-        assert "function CurateRecordHealthBatch" in content
+    def test_signatures_exist(self):
+        assert CurateContextCluster.instructions
+        assert CurateRecordHealthBatch.instructions
 
 
 class TestBuildContextGraphAgent:
     """Tests for context-graph public contract."""
 
-    def test_baml_source_exists(self):
-        path = REPO_ROOT / "src" / "lerim" / "agents" / "baml_src" / "context_graph.baml"
-        assert path.exists()
-        content = path.read_text(encoding="utf-8")
-        assert "function LinkContextRecords" in content
-        assert "function ReviewContextGraphLinks" in content
+    def test_signatures_exist(self):
+        assert LinkContextRecords.instructions
+        assert ReviewContextGraphLinks.instructions
 
 
 class TestBuildAnswerAgent:
@@ -58,21 +55,16 @@ class TestBuildAnswerAgent:
         assert isinstance(CONTEXT_ANSWERER_SYSTEM_PROMPT, str)
         assert len(CONTEXT_ANSWERER_SYSTEM_PROMPT.strip()) > 0
 
-    def test_baml_source_exists(self):
-        path = REPO_ROOT / "src" / "lerim" / "agents" / "baml_src" / "context_answerer.baml"
-        assert path.exists()
-        content = path.read_text(encoding="utf-8")
-        assert "function PlanContextRetrieval" in content
-        assert "function AnswerFromContext" in content
+    def test_signatures_exist(self):
+        assert PlanContextRetrieval.instructions
+        assert AnswerFromContext.instructions
 
 
 class TestBuildContextBriefAgent:
     """Tests for context-brief compiler public contract."""
 
-    def test_baml_source_exists(self):
-        path = REPO_ROOT / "src" / "lerim" / "agents" / "baml_src" / "context_brief_compiler.baml"
-        assert path.exists()
-        assert "function CompileContextBrief" in path.read_text(encoding="utf-8")
+    def test_signature_exists(self):
+        assert CompileContextBrief.instructions
 
 
 class TestTraceIngestionResultSchema:

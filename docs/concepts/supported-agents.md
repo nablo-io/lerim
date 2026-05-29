@@ -34,7 +34,7 @@ Do not treat these as identical. Native adapters are the strongest ingestion pat
 
 Each native adapter finds session traces and normalizes them into Lerim's internal trace shape.
 
-The adapter does not write durable context itself. It only feeds the BAML/LangGraph extraction flow.
+The adapter does not write durable context itself. It only feeds the DSPy extraction pipeline.
 
 Current native adapters:
 

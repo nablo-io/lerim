@@ -1,54 +1,14 @@
-enum ContextRetrievalActionType {
-  COUNT @alias("count")
-  LIST @alias("list")
-  SEARCH @alias("search")
-}
+"""DSPy signatures for the context-answer workflow."""
 
-enum ContextRecordKind {
-  DECISION @alias("decision")
-  PREFERENCE @alias("preference")
-  CONSTRAINT @alias("constraint")
-  FACT @alias("fact")
-  EPISODE @alias("episode")
-}
+from __future__ import annotations
 
-class ContextRetrievalAction {
-  action_type ContextRetrievalActionType
-  query string?
-  kind ContextRecordKind?
-  status string?
-  source_session_id string?
-  created_since string?
-  created_until string?
-  updated_since string?
-  updated_until string?
-  valid_at string?
-  include_archived bool?
-  order_by string?
-  limit int?
-  rationale string?
-}
+from lerim.agents.dspy_compat import dspy
 
-class ContextRetrievalPlan {
-  actions ContextRetrievalAction[]
-  rationale string?
-}
+from lerim.agents.context_answerer.schemas import ContextAnswer, ContextRetrievalPlan
 
-class ContextAnswer {
-  answer string
-  supporting_record_ids string[]
-}
 
-function PlanContextRetrieval(
-  run_instruction: string,
-  question: string,
-  current_utc: string,
-  hints: string
-) -> ContextRetrievalPlan {
-  client MiniMaxM27
-  prompt #"
-    {{ _.role("system") }}
-    You are Lerim's context answerer. Plan retrieval for a user question.
+class PlanContextRetrieval(dspy.Signature):
+    """You are Lerim's context answerer. Plan retrieval for a user question.
     Return only structured output. Do not include <think> tags, hidden reasoning, markdown, or prose.
 
     Lerim answers only from persisted context records.
@@ -78,35 +38,17 @@ function PlanContextRetrieval(
     - Never invent domain-specific kinds such as agent_provider, bug, task, policy, source, or queue. Use the valid record kind list only.
     - Prefer 1 action. Use 2 actions only when exact narrowing plus semantic support is clearly needed.
     - Never plan raw SQL or file access.
+    """
 
-    {{ _.role("user") }}
-    RUN INSTRUCTION:
-    {{ run_instruction }}
+    run_instruction: str = dspy.InputField(desc="RUN INSTRUCTION")
+    current_utc: str = dspy.InputField(desc="CURRENT UTC")
+    question: str = dspy.InputField(desc="QUESTION")
+    hints: str = dspy.InputField(desc="HINTS")
+    plan: ContextRetrievalPlan = dspy.OutputField(desc="Executable retrieval plan")
 
-    CURRENT UTC:
-    {{ current_utc }}
 
-    QUESTION:
-    {{ question }}
-
-    HINTS:
-    {{ hints }}
-
-    {{ ctx.output_format }}
-  "#
-}
-
-function AnswerFromContext(
-  run_instruction: string,
-  question: string,
-  current_utc: string,
-  hints: string,
-  retrieval_json: string
-) -> ContextAnswer {
-  client MiniMaxM27
-  prompt #"
-    {{ _.role("system") }}
-    You are Lerim's context answerer. Answer from retrieved context only.
+class AnswerFromContext(dspy.Signature):
+    """You are Lerim's context answerer. Answer from retrieved context only.
     Return only structured output. Do not include <think> tags, hidden reasoning, markdown, or prose.
 
     Rules:
@@ -120,23 +62,11 @@ function AnswerFromContext(
     - If support is only episode records, say support is only episodic.
     - Keep the answer concise.
     - Never return placeholders, schema examples, or empty answer text.
+    """
 
-    {{ _.role("user") }}
-    RUN INSTRUCTION:
-    {{ run_instruction }}
-
-    CURRENT UTC:
-    {{ current_utc }}
-
-    QUESTION:
-    {{ question }}
-
-    HINTS:
-    {{ hints }}
-
-    RETRIEVAL JSON:
-    {{ retrieval_json }}
-
-    {{ ctx.output_format }}
-  "#
-}
+    run_instruction: str = dspy.InputField(desc="RUN INSTRUCTION")
+    current_utc: str = dspy.InputField(desc="CURRENT UTC")
+    question: str = dspy.InputField(desc="QUESTION")
+    hints: str = dspy.InputField(desc="HINTS")
+    retrieval_json: str = dspy.InputField(desc="RETRIEVAL JSON")
+    answer: ContextAnswer = dspy.OutputField(desc="Grounded answer")

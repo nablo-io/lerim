@@ -42,7 +42,7 @@ class RoleConfig:
 	model: str
 	api_base: str = ""
 	temperature: float = 1.0
-	# BAML/LangGraph trace ingestion derives its windowing budget from trace size in
+	# Trace ingestion derives its windowing budget from trace size in
 	# lerim.agents.trace_ingestion.windowing. There is no static trace-ingestion
 	# budget field on RoleConfig.
 	curate_max_llm_calls: int = 30

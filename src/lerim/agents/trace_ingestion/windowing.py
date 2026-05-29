@@ -1,12 +1,10 @@
-"""Deterministic trace windowing for the trace-ingestion graph."""
+"""Deterministic trace windowing for trace ingestion."""
 
 from __future__ import annotations
 
 import math
 from pathlib import Path
 from typing import Any
-
-from lerim.agents.trace_ingestion.state import TraceIngestionGraphState
 
 TRACE_MAX_LINE_BYTES = 5_000
 TRACE_MAX_CHUNK_BYTES = 72_000
@@ -49,7 +47,7 @@ def compute_request_budget(trace_path: Path) -> int:
 
 def window_char_budget(
     *,
-    state: TraceIngestionGraphState,
+    state: dict[str, Any],
     run_instruction: str,
     existing_record_manifest: str,
     episode_summary: str,
