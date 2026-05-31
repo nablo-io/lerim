@@ -16,6 +16,10 @@ import type {
   Session,
   SessionDetail,
   SessionsResponse,
+  SkillProposal,
+  SkillProposalsResponse,
+  SkillTarget,
+  SkillTargetsResponse,
   StatsResponse,
   TeamInfo,
   TimelineEvent,
@@ -91,6 +95,8 @@ function normalizeRecord(row: Record<string, unknown>): ContextRecord {
     title: asNullableString(row.title),
     body: asNullableString(row.body),
     record_kind: asNullableString(row.kind),
+    record_role: asNullableString(row.record_role) || "general",
+    role_payload: asNullableString(row.role_payload),
     project,
     tags: [],
     confidence: null,
@@ -403,8 +409,10 @@ async function queryRecords(params?: Record<string, string>): Promise<RecordsRes
     body: JSON.stringify({
       entity: "records",
       mode: "list",
-      scope: "all",
+      scope: params?.project ? "project" : "all",
+      project: params?.project || undefined,
       kind: params?.record_kind || undefined,
+      record_role: params?.record_role || undefined,
       status: params?.status || undefined,
       source_session_id: params?.source_session_id || undefined,
       order_by: "updated_at",
@@ -427,8 +435,10 @@ async function queryRecordVersions(params?: Record<string, string>): Promise<Rec
     body: JSON.stringify({
       entity: "versions",
       mode: "list",
-      scope: "all",
+      scope: params?.project ? "project" : "all",
+      project: params?.project || undefined,
       kind: params?.record_kind || undefined,
+      record_role: params?.record_role || undefined,
       source_session_id: params?.source_session_id || undefined,
       order_by: "updated_at",
       limit: Number(params?.limit || 5000),
@@ -513,11 +523,7 @@ export const api = {
   },
 
   getRecordFilters: async (): Promise<RecordFiltersResponse> => {
-    const data = await queryRecords({ limit: "500" });
-    return {
-      types: Array.from(new Set(data.records.map((record) => record.record_kind).filter((kind): kind is string => Boolean(kind)))).sort(),
-      projects: Array.from(new Set(data.records.map((record) => record.project).filter((project): project is string => Boolean(project)))).sort(),
-    };
+    return apiFetch<RecordFiltersResponse>("/api/records/filters");
   },
 
   getRecords: queryRecords,
@@ -529,6 +535,62 @@ export const api = {
     const found = data.records.find((record) => record.record_id === recordId);
     if (!found) throw new Error("Record not found.");
     return found;
+  },
+
+  getSkillTargets: async (): Promise<SkillTargetsResponse> => {
+    return apiFetch<SkillTargetsResponse>("/api/skills/targets");
+  },
+
+  addSkillTarget: async (body: { path: string; name?: string; description?: string; update_mode?: string }) => {
+    return apiFetch<{ target: SkillTarget }>("/api/skills/targets", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  updateSkillTargetMode: async (
+    targetId: string,
+    body: { update_mode: string; auto_apply_policy?: Record<string, unknown> },
+  ) => {
+    return apiFetch<{ target: SkillTarget }>(`/api/skills/targets/${encodeURIComponent(targetId)}/mode`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  refreshSkillTarget: async (targetId: string) => {
+    return apiFetch<Record<string, unknown>>(`/api/skills/targets/${encodeURIComponent(targetId)}/refresh`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  },
+
+  getSkillProposals: async (params?: { target_id?: string; status?: string }): Promise<SkillProposalsResponse> => {
+    const query: Record<string, string> = {};
+    if (params?.target_id) query.target_id = params.target_id;
+    if (params?.status) query.status = params.status;
+    return apiFetch<SkillProposalsResponse>(`/api/skills/proposals${toQuery(query)}`);
+  },
+
+  applySkillProposal: async (proposalId: string) => {
+    return apiFetch<{ proposal: SkillProposal }>(`/api/skills/proposals/${encodeURIComponent(proposalId)}/apply`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  },
+
+  rejectSkillProposal: async (proposalId: string) => {
+    return apiFetch<{ proposal: SkillProposal }>(`/api/skills/proposals/${encodeURIComponent(proposalId)}/reject`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  },
+
+  editSkillProposal: async (proposalId: string, patchJson: Record<string, unknown>) => {
+    return apiFetch<{ proposal: SkillProposal }>(`/api/skills/proposals/${encodeURIComponent(proposalId)}/edit`, {
+      method: "POST",
+      body: JSON.stringify({ patch_json: patchJson }),
+    });
   },
 
   getLogs: async (_params?: Record<string, string>): Promise<LogsResponse> => ({ logs: [], total: 0 }),

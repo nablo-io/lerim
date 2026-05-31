@@ -218,6 +218,8 @@ def record_payload(record: dict[str, Any]) -> dict[str, Any]:
     return {
         "record_id": record.get("record_id"),
         "kind": record.get("kind"),
+        "record_role": record.get("record_role"),
+        "role_payload": record.get("role_payload"),
         "status": record.get("status"),
         "title": record.get("title"),
         "body": record.get("body"),
@@ -244,6 +246,7 @@ def recent_changes_payload(data: WorkingMemoryData) -> list[dict[str, Any]]:
             {
                 "record_id": record_id,
                 "kind": version.get("kind") or record.get("kind"),
+                "record_role": version.get("record_role") or record.get("record_role"),
                 "change_kind": version.get("change_kind"),
                 "changed_at": version.get("changed_at"),
                 "title": record.get("title"),
@@ -461,8 +464,10 @@ def append_sources(
             continue
         title = compact_text(record.get("title"), limit=100)
         kind = str(record.get("kind") or "record")
+        role = str(record.get("record_role") or "general")
+        role_text = f", role {role}" if role and role != "general" else ""
         updated_at = str(record.get("updated_at") or "")
-        lines.append(f"- `{record_id}` ({kind}, updated `{updated_at}`): {title}")
+        lines.append(f"- `{record_id}` ({kind}{role_text}, updated `{updated_at}`): {title}")
     if len(cited_record_ids) > WORKING_MEMORY_RECORD_LIMIT:
         remaining = len(cited_record_ids) - WORKING_MEMORY_RECORD_LIMIT
         lines.append(f"- {remaining} more cited record(s); run `lerim query versions list --scope project --json` for deeper detail.")

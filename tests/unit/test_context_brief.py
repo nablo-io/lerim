@@ -186,6 +186,7 @@ def test_context_brief_draft_has_fixed_sections_with_sections_fallback():
         "current_handoff",
         "decisions",
         "constraints_preferences",
+        "operational_context",
         "project_facts",
         "open_risks",
         "follow_up_queries",
@@ -276,6 +277,9 @@ def test_trim_context_brief_draft_keeps_startup_brief_compact():
         constraints_preferences=tuple(
             MemoryLine(f"Constraint {idx}", (f"rec_c{idx}",)) for idx in range(20)
         ),
+        operational_context=tuple(
+            MemoryLine(f"Workflow {idx}", (f"rec_o{idx}",)) for idx in range(20)
+        ),
         project_facts=tuple(MemoryLine(f"Fact {idx}", (f"rec_f{idx}",)) for idx in range(20)),
         sections=(
             MemorySection(
@@ -291,6 +295,7 @@ def test_trim_context_brief_draft_keeps_startup_brief_compact():
     assert len(trimmed.start_here) == 4
     assert len(trimmed.decisions) == 8
     assert len(trimmed.constraints_preferences) == 8
+    assert len(trimmed.operational_context) == 6
     assert len(trimmed.project_facts) == 6
     assert len(trimmed.sections[0].lines) == 6
 
@@ -310,6 +315,9 @@ def test_rendered_markdown_uses_fixed_section_order_and_sections_fallback(tmp_pa
         decisions=(MemoryLine("Keep SQLite canonical", ("rec_decision",)),),
         constraints_preferences=(
             MemoryLine("Respect the no-fallback rule", ("rec_constraint",)),
+        ),
+        operational_context=(
+            MemoryLine("Rerun graph projection after changing graph payloads", ("rec_workflow",)),
         ),
         project_facts=(MemoryLine("CLI code lives under src", ("rec_fact",)),),
         open_risks=(MemoryLine("Review queue still has risk", ("rec_risk",)),),
@@ -334,6 +342,7 @@ def test_rendered_markdown_uses_fixed_section_order_and_sections_fallback(tmp_pa
             ("rec_handoff", "episode", "Resume the handoff"),
             ("rec_decision", "decision", "Keep SQLite canonical"),
             ("rec_constraint", "constraint", "Respect the no-fallback rule"),
+            ("rec_workflow", "fact", "Rerun graph projection after changing graph payloads"),
             ("rec_fact", "fact", "CLI code lives under src"),
             ("rec_risk", "episode", "Review queue still has risk"),
             ("rec_query", "fact", "Query the newest records"),
@@ -359,6 +368,7 @@ def test_rendered_markdown_uses_fixed_section_order_and_sections_fallback(tmp_pa
         "## Continuation Handoff",
         "## Decisions",
         "## Constraints & Preferences",
+        "## Reusable Workflows & Gotchas",
         "## Project Facts",
         "## Open Risks / Review Queue",
         "## Follow-up Queries",
@@ -367,6 +377,7 @@ def test_rendered_markdown_uses_fixed_section_order_and_sections_fallback(tmp_pa
     ]
     positions = [_markdown_heading_index(markdown, heading) for heading in headings]
     assert positions == sorted(positions)
+    assert "Rerun graph projection after changing graph payloads [rec_workflow]" in markdown
     assert "Render older agent sections last [rec_legacy]" in markdown
 
 
@@ -408,6 +419,7 @@ def test_rendered_markdown_contains_freshness_and_citations(tmp_path):
             {
                 "record_id": "rec_456",
                 "kind": "constraint",
+                "record_role": "gotcha",
                 "title": "Keep SQLite canonical",
                 "updated_at": "2026-04-30T00:00:00+00:00",
                 "source_session_id": "sess_2",
@@ -423,6 +435,7 @@ def test_rendered_markdown_contains_freshness_and_citations(tmp_path):
     assert "Use generated Context Brief [rec_123]" in markdown
     assert "Keep SQLite canonical [rec_456]" in markdown
     assert "`rec_123` (decision" in markdown
+    assert "`rec_456` (constraint, role gotcha" in markdown
     assert "source_session: `sess_1`" in markdown
 
 

@@ -19,6 +19,7 @@ from lerim.agents.trace_ingestion.persistence import (
     persist_synthesized_extraction,
 )
 from lerim.agents.trace_ingestion.signatures import (
+    AnnotateOperationalRecordRoles,
     ExtractCodingProjectIdentitySlot,
     ExtractCodingStrategySlots,
     FilterDurableSignal,
@@ -123,6 +124,9 @@ class TraceIngestionPipeline(dspy.Module):
         self.coding_polish_step = configured_steps.get("coding_polish") or dspy.Predict(
             PolishCodingEvalContextRecords
         )
+        self.role_annotation_step = configured_steps.get("role_annotation") or dspy.Predict(
+            AnnotateOperationalRecordRoles
+        )
         self.uses_real_model = any(
             configured_steps.get(name) is None
             for name in (
@@ -135,6 +139,7 @@ class TraceIngestionPipeline(dspy.Module):
                 "project_identity",
                 "retention",
                 "coding_polish",
+                "role_annotation",
             )
         )
 
@@ -162,6 +167,7 @@ class TraceIngestionPipeline(dspy.Module):
         self.synthesize_records(state)
         self.guard_records(state)
         self.polish_records(state)
+        self.annotate_record_roles(state)
         self.persist_records(state)
         return state
 
@@ -652,6 +658,76 @@ class TraceIngestionPipeline(dspy.Module):
             ), retention_observations
         return payload, []
 
+    def annotate_record_roles(self, state: dict[str, Any]) -> None:
+        """Annotate accepted durable records with operational roles."""
+        payload = dict(state.get("synthesized") or {})
+        records = list(payload.get("durable_records") or [])
+        if not records:
+            return
+        if int(state.get("llm_calls") or 0) >= self.max_model_steps:
+            role_counts: dict[str, int] = {}
+            for record in records:
+                role = str(record.get("record_role") or "general")
+                role_counts[role] = role_counts.get(role, 0) + 1
+            state["observations"].append(
+                observation(
+                    "annotate_record_roles",
+                    True,
+                    f"skipped_for_budget {role_count_summary(role_counts)}",
+                    {"role_counts": role_counts, "skipped_for_budget": True},
+                )
+            )
+            return
+        if self.progress:
+            print(
+                f"  trace-ingestion role_annotation {int(state['llm_calls']) + 1}/{self.max_model_steps}",
+                flush=True,
+            )
+        with self.model_context():
+            result, observations, attempts = call_model_step(
+                lambda: self.role_annotation_step(
+                    run_instruction=self.run_instruction,
+                    source_profile_context=self.source_profile_context,
+                    durable_findings_summary=_filtered_durable_findings_summary(state),
+                    implementation_summary=_implementation_summary(state),
+                    rejected_findings_summary=_rejected_durable_findings_summary(state),
+                    durable_records_json=json.dumps(records, ensure_ascii=True),
+                ),
+                stage="annotate_record_roles",
+                progress=self.progress,
+                progress_label="trace-ingestion",
+            )
+        state["llm_calls"] += attempts
+        annotations = role_annotations_by_index(
+            prediction_payload(result, output_field="roles"),
+            record_count=len(records),
+        )
+        annotated_records: list[dict[str, Any]] = []
+        role_counts: dict[str, int] = {}
+        for index, record in enumerate(records):
+            annotation = annotations.get(index) or {}
+            role = str(annotation.get("record_role") or record.get("record_role") or "general")
+            role_counts[role] = role_counts.get(role, 0) + 1
+            annotated_records.append(
+                {
+                    **record,
+                    "record_role": role,
+                    "role_payload": annotation.get("role_payload") or record.get("role_payload"),
+                }
+            )
+        state["synthesized"] = {**payload, "durable_records": annotated_records}
+        state["observations"].extend(
+            [
+                *observations,
+                observation(
+                    "annotate_record_roles",
+                    True,
+                    role_count_summary(role_counts),
+                    {"role_counts": role_counts},
+                ),
+            ]
+        )
+
     def persist_records(self, state: dict[str, Any]) -> None:
         """Persist synthesized records and finish the workflow."""
         observations, done, completion_summary = persist_synthesized_extraction(
@@ -687,3 +763,36 @@ def observation(
         "done": False,
         "completion_summary": "",
     }
+
+
+def role_annotations_by_index(
+    payload: dict[str, Any],
+    *,
+    record_count: int,
+) -> dict[int, dict[str, Any]]:
+    """Return validated role annotations keyed by durable-record index."""
+    annotations: dict[int, dict[str, Any]] = {}
+    for value in payload.get("annotations") or []:
+        annotation = prediction_payload(value)
+        index = annotation.get("record_index")
+        if not isinstance(index, int) or index < 0 or index >= record_count:
+            continue
+        role = str(annotation.get("record_role") or "").strip()
+        if not role:
+            continue
+        annotations[index] = {
+            "record_role": role,
+            "role_payload": annotation.get("role_payload"),
+        }
+    return annotations
+
+
+def role_count_summary(role_counts: dict[str, int]) -> str:
+    """Return a compact role-count summary for ingestion observations."""
+    if not role_counts:
+        return "roles=none"
+    parts = [
+        f"{role}={count}"
+        for role, count in sorted(role_counts.items(), key=lambda item: item[0])
+    ]
+    return "roles " + " ".join(parts)

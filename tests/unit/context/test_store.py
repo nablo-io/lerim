@@ -853,6 +853,27 @@ class TestCreateRecord:
         assert rec["versions"][0]["source_event_refs"] == '["line:12","line:18"]'
         assert rec["versions"][0]["evidence_refs"] == '["Customer-provided cleaned trace"]'
 
+    def test_create_record_preserves_operational_role(self, mock_seeded):
+        store, pid = mock_seeded
+        rec = store.create_record(
+            project_id=pid,
+            session_id="sess_test",
+            kind="fact",
+            title="Replay duplicate episode gotcha",
+            body="Trace replay can encounter an existing episode.",
+            record_role="gotcha",
+            role_payload={
+                "condition": "Replaying an already-ingested trace.",
+                "symptom": "The episode already exists.",
+                "avoid": "Do not create duplicate episode records.",
+            },
+        )
+
+        assert rec["record_role"] == "gotcha"
+        assert "duplicate episode records" in rec["role_payload"]
+        assert rec["versions"][0]["record_role"] == "gotcha"
+        assert rec["versions"][0]["role_payload"] == rec["role_payload"]
+
     def test_create_episode(self, mock_seeded):
         store, pid = mock_seeded
         rec = _make_episode(store, pid)
@@ -1217,6 +1238,27 @@ class TestUpdateRecord:
         assert vs[1]["version_no"] == 2
         assert vs[1]["change_kind"] == "update"
         assert vs[1]["title"] == "V2 title"
+
+    def test_role_update_appends_version(self, mock_seeded):
+        store, pid = mock_seeded
+        rec = _make_decision(store, pid)
+
+        updated = store.update_record(
+            record_id=rec["record_id"],
+            session_id="sess_test",
+            project_ids=[pid],
+            changes={
+                "record_role": "procedure",
+                "role_payload": {
+                    "trigger": "Choosing the context store.",
+                    "steps": ["Use one SQLite database."],
+                },
+            },
+        )
+
+        assert updated["record_role"] == "procedure"
+        assert "Choosing the context store" in updated["role_payload"]
+        assert updated["versions"][0]["record_role"] == "procedure"
 
     def test_not_found_raises(self, mock_seeded):
         store, pid = mock_seeded
@@ -1647,6 +1689,36 @@ class TestQuery:
             entity="records", mode="list", project_ids=[pid], kind="decision"
         )
         assert all(r["kind"] == "decision" for r in result["rows"])
+
+    def test_record_role_filter(self, mock_seeded):
+        store, pid = mock_seeded
+        store.create_record(
+            project_id=pid,
+            session_id="sess_test",
+            kind="fact",
+            title="CLI gotcha",
+            body="The dashboard command may need the local backend.",
+            record_role="gotcha",
+            role_payload={"condition": "Launching the dashboard."},
+        )
+        _make_decision(store, pid)
+
+        listed = store.query(
+            entity="records",
+            mode="list",
+            project_ids=[pid],
+            record_role="gotcha",
+        )
+        versions = store.query(
+            entity="versions",
+            mode="list",
+            project_ids=[pid],
+            record_role="gotcha",
+            include_total=True,
+        )
+
+        assert [row["record_role"] for row in listed["rows"]] == ["gotcha"]
+        assert versions["total"] == 1
 
     def test_status_filter(self, mock_seeded):
         store, pid = mock_seeded

@@ -31,6 +31,7 @@ from lerim.context.query_spec import (
 import lerim.context.retrieval as retrieval
 from lerim.context.spec import (
     ALLOWED_CHANGE_KINDS,
+    DEFAULT_RECORD_ROLE,
     normalize_record_payload,
     record_search_text,
 )
@@ -38,7 +39,7 @@ from lerim.context.spec import (
 if TYPE_CHECKING:
     from lerim.context.retrieval import SearchHit
 
-SCHEMA_VERSION = "7"
+SCHEMA_VERSION = "8"
 LOGGER = logging.getLogger(__name__)
 RECORDS_INDEX_GENERATION_KEY = "records_index_generation"
 RECORDS_FTS_GENERATION_KEY = "records_fts_generation"
@@ -254,6 +255,8 @@ class ContextStore:
                     source_name TEXT,
                     source_profile TEXT,
                     kind TEXT NOT NULL,
+                    record_role TEXT NOT NULL DEFAULT 'general',
+                    role_payload TEXT,
                     title TEXT NOT NULL,
                     body TEXT NOT NULL,
                     status TEXT NOT NULL,
@@ -292,6 +295,8 @@ class ContextStore:
                     record_id TEXT NOT NULL,
                     version_no INTEGER NOT NULL,
                     kind TEXT NOT NULL,
+                    record_role TEXT NOT NULL DEFAULT 'general',
+                    role_payload TEXT,
                     title TEXT NOT NULL,
                     body TEXT NOT NULL,
                     status TEXT NOT NULL,
@@ -373,6 +378,8 @@ class ContextStore:
                     updated_at UNINDEXED,
                     title,
                     body,
+                    record_role,
+                    role_payload,
                     decision,
                     why,
                     user_intent,
@@ -385,6 +392,7 @@ class ContextStore:
             self._migrate_scope_schema(conn)
             self._ensure_record_reference_schema(conn)
             self._ensure_record_index_text_schema(conn)
+            self._ensure_record_role_schema(conn)
             self._ensure_secondary_indexes(conn)
             self._validate_schema(conn)
             conn.execute(
@@ -459,6 +467,7 @@ class ContextStore:
             CREATE INDEX IF NOT EXISTS idx_records_project_id ON records(project_id);
             CREATE INDEX IF NOT EXISTS idx_records_scope ON records(scope_type, scope_id);
             CREATE INDEX IF NOT EXISTS idx_records_kind ON records(kind);
+            CREATE INDEX IF NOT EXISTS idx_records_role ON records(record_role);
             CREATE INDEX IF NOT EXISTS idx_records_status ON records(status);
             CREATE INDEX IF NOT EXISTS idx_records_created_at ON records(created_at);
             CREATE INDEX IF NOT EXISTS idx_records_updated_at ON records(updated_at);
@@ -548,9 +557,9 @@ class ContextStore:
             )
 
     def _ensure_records_fts_schema(self, conn: sqlite3.Connection) -> None:
-        """Ensure the FTS table has scope columns, rebuilding from records if needed."""
+        """Ensure the FTS table has scope and role columns."""
         columns = self._table_columns(conn, "records_fts")
-        if columns and {"scope_type", "scope_id", "index_text"} <= columns:
+        if columns and {"scope_type", "scope_id", "record_role", "role_payload", "index_text"} <= columns:
             return
         conn.execute("DROP TABLE IF EXISTS records_fts")
         conn.execute(
@@ -563,6 +572,8 @@ class ContextStore:
                 updated_at UNINDEXED,
                 title,
                 body,
+                record_role,
+                role_payload,
                 decision,
                 why,
                 user_intent,
@@ -607,6 +618,20 @@ class ContextStore:
                 continue
             if "index_text" not in columns:
                 conn.execute(f"ALTER TABLE {table_name} ADD COLUMN index_text TEXT")
+
+    def _ensure_record_role_schema(self, conn: sqlite3.Connection) -> None:
+        """Add operational role columns to older record tables."""
+        for table_name in ("records", "record_versions"):
+            columns = self._table_columns(conn, table_name)
+            if not columns:
+                continue
+            if "record_role" not in columns:
+                conn.execute(
+                    f"ALTER TABLE {table_name} "
+                    "ADD COLUMN record_role TEXT NOT NULL DEFAULT 'general'"
+                )
+            if "role_payload" not in columns:
+                conn.execute(f"ALTER TABLE {table_name} ADD COLUMN role_payload TEXT")
 
     def _column_expr(self, columns: set[str], name: str, default_sql: str) -> str:
         """Return a SELECT expression for an existing column or SQL default."""
@@ -739,6 +764,8 @@ class ContextStore:
                 source_name TEXT,
                 source_profile TEXT,
                 kind TEXT NOT NULL,
+                record_role TEXT NOT NULL DEFAULT 'general',
+                role_payload TEXT,
                 title TEXT NOT NULL,
                 body TEXT NOT NULL,
                 status TEXT NOT NULL,
@@ -775,18 +802,20 @@ class ContextStore:
         source_event_refs = self._column_expr(columns, "source_event_refs", "NULL")
         evidence_refs = self._column_expr(columns, "evidence_refs", "NULL")
         index_text = self._column_expr(columns, "index_text", "NULL")
+        record_role = self._column_expr(columns, "record_role", "'general'")
+        role_payload = self._column_expr(columns, "role_payload", "NULL")
         conn.execute(
             f"""
             INSERT INTO records(
                 record_id, project_id, scope_type, scope_id, scope_label,
-                source_name, source_profile, kind, title, body, status,
+                source_name, source_profile, kind, record_role, role_payload, title, body, status,
                 source_session_id, source_event_refs, evidence_refs, index_text, created_at, updated_at, valid_from,
                 valid_until, superseded_by_record_id, decision, why,
                 alternatives, consequences, user_intent, what_happened, outcomes
             )
             SELECT
                 record_id, project_id, {scope_type}, {scope_id}, {scope_label},
-                {source_name}, {source_profile}, kind, title, body, status,
+                {source_name}, {source_profile}, kind, {record_role}, {role_payload}, title, body, status,
                 source_session_id, {source_event_refs}, {evidence_refs}, {index_text}, created_at, updated_at, valid_from,
                 valid_until, superseded_by_record_id, decision, why,
                 alternatives, consequences, user_intent, what_happened, outcomes
@@ -845,6 +874,8 @@ class ContextStore:
                 record_id TEXT NOT NULL,
                 version_no INTEGER NOT NULL,
                 kind TEXT NOT NULL,
+                record_role TEXT NOT NULL DEFAULT 'general',
+                role_payload TEXT,
                 title TEXT NOT NULL,
                 body TEXT NOT NULL,
                 status TEXT NOT NULL,
@@ -885,12 +916,14 @@ class ContextStore:
         source_event_refs = self._column_expr(columns, "source_event_refs", "NULL")
         evidence_refs = self._column_expr(columns, "evidence_refs", "NULL")
         index_text = self._column_expr(columns, "index_text", "NULL")
+        record_role = self._column_expr(columns, "record_role", "'general'")
+        role_payload = self._column_expr(columns, "role_payload", "NULL")
         conn.execute(
             f"""
             INSERT INTO record_versions(
                 version_id, project_id, scope_type, scope_id, scope_label,
                 source_name, source_profile, record_id, version_no, kind,
-                title, body, status, source_session_id, source_event_refs, evidence_refs,
+                record_role, role_payload, title, body, status, source_session_id, source_event_refs, evidence_refs,
                 index_text, created_at, updated_at,
                 valid_from, valid_until, superseded_by_record_id, decision, why,
                 alternatives, consequences, user_intent, what_happened, outcomes,
@@ -899,7 +932,7 @@ class ContextStore:
             SELECT
                 version_id, project_id, {scope_type}, {scope_id}, {scope_label},
                 {source_name}, {source_profile}, record_id, version_no, kind,
-                title, body, status, source_session_id, {source_event_refs}, {evidence_refs},
+                {record_role}, {role_payload}, title, body, status, source_session_id, {source_event_refs}, {evidence_refs},
                 {index_text}, created_at, updated_at,
                 valid_from, valid_until, superseded_by_record_id, decision, why,
                 alternatives, consequences, user_intent, what_happened, outcomes,
@@ -928,6 +961,8 @@ class ContextStore:
                 "scope_type",
                 "scope_id",
                 "kind",
+                "record_role",
+                "role_payload",
                 "title",
                 "body",
                 "status",
@@ -941,6 +976,8 @@ class ContextStore:
                 "scope_type",
                 "scope_id",
                 "version_no",
+                "record_role",
+                "role_payload",
                 "source_event_refs",
                 "evidence_refs",
                 "index_text",
@@ -976,6 +1013,8 @@ class ContextStore:
                 "updated_at",
                 "title",
                 "body",
+                "record_role",
+                "role_payload",
                 "decision",
                 "why",
                 "user_intent",
@@ -1142,7 +1181,7 @@ class ContextStore:
         if self._schema_meta_int(conn, RECORDS_FTS_GENERATION_KEY, default=-1) != generation:
             return False
         columns = self._table_columns(conn, "records_fts")
-        return {"record_id", "scope_type", "scope_id", "updated_at"} <= columns
+        return {"record_id", "scope_type", "scope_id", "updated_at", "record_role", "role_payload"} <= columns
 
     def _mark_records_fts_fresh(
         self, conn: sqlite3.Connection, *, generation: int | None = None
@@ -1589,6 +1628,7 @@ class ContextStore:
         filter_sql, params = self._build_record_filter_sql(
             project_ids=project_ids,
             kind_filters=None,
+            role_filters=None,
             source_profile=None,
             statuses=None,
             source_session_id=None,
@@ -1630,6 +1670,8 @@ class ContextStore:
         title: str,
         body: str,
         status: str = "active",
+        record_role: str | None = None,
+        role_payload: dict[str, Any] | str | None = None,
         record_id: str | None = None,
         created_at: str | None = None,
         updated_at: str | None = None,
@@ -1676,6 +1718,8 @@ class ContextStore:
             title=title,
             body=body,
             status=status,
+            record_role=record_role or DEFAULT_RECORD_ROLE,
+            role_payload=role_payload,
             source_session_id=session_id,
             created_at=effective_created_at,
             updated_at=effective_updated_at,
@@ -1719,12 +1763,12 @@ class ContextStore:
                 """
                 INSERT INTO records(
                     record_id, project_id, scope_type, scope_id, scope_label,
-                    source_name, source_profile, kind, title, body, status, source_session_id,
+                    source_name, source_profile, kind, record_role, role_payload, title, body, status, source_session_id,
                     source_event_refs, evidence_refs, index_text, created_at, updated_at,
                     valid_from, valid_until, superseded_by_record_id,
                     decision, why, alternatives, consequences, user_intent, what_happened, outcomes
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record_id,
@@ -1735,6 +1779,8 @@ class ContextStore:
                     payload["source_name"],
                     payload["source_profile"],
                     payload["kind"],
+                    payload["record_role"],
+                    payload["role_payload"],
                     payload["title"],
                     payload["body"],
                     payload["status"],
@@ -1834,6 +1880,8 @@ class ContextStore:
             title=changes.get("title", merged["title"]),
             body=changes.get("body", merged["body"]),
             status=changes.get("status", merged["status"]),
+            record_role=changes.get("record_role", merged["record_role"]),
+            role_payload=changes.get("role_payload", merged["role_payload"]),
             source_session_id=merged["source_session_id"],
             created_at=merged["created_at"],
             updated_at=effective_updated_at,
@@ -1868,6 +1916,8 @@ class ContextStore:
         )
         meaningful_fields = (
             "kind",
+            "record_role",
+            "role_payload",
             "title",
             "body",
             "status",
@@ -1900,7 +1950,7 @@ class ContextStore:
         conn.execute(
             """
             UPDATE records
-            SET kind=?, title=?, body=?, status=?, updated_at=?, valid_from=?,
+            SET kind=?, record_role=?, role_payload=?, title=?, body=?, status=?, updated_at=?, valid_from=?,
                 valid_until=?, superseded_by_record_id=?, decision=?, why=?,
                 alternatives=?, consequences=?, user_intent=?, what_happened=?, outcomes=?,
                 source_event_refs=?, evidence_refs=?, index_text=?
@@ -1908,6 +1958,8 @@ class ContextStore:
             """,
             (
                 payload["kind"],
+                payload["record_role"],
+                payload["role_payload"],
                 payload["title"],
                 payload["body"],
                 payload["status"],
@@ -2032,6 +2084,7 @@ class ContextStore:
         project_ids: list[str] | None,
         query: str,
         kind_filters: list[str] | None = None,
+        role_filters: list[str] | None = None,
         statuses: list[str] | None = None,
         valid_at: str | None = None,
         include_archived: bool = False,
@@ -2044,6 +2097,7 @@ class ContextStore:
             project_ids=project_ids,
             query=query,
             kind_filters=kind_filters,
+            role_filters=role_filters,
             statuses=statuses,
             valid_at=valid_at,
             include_archived=include_archived,
@@ -2093,6 +2147,8 @@ class ContextStore:
                             OR f.updated_at != r.updated_at
                             OR COALESCE(f.title, '') != COALESCE(r.title, '')
                             OR COALESCE(f.body, '') != COALESCE(r.body, '')
+                            OR COALESCE(f.record_role, '') != COALESCE(r.record_role, 'general')
+                            OR COALESCE(f.role_payload, '') != COALESCE(r.role_payload, '')
                             OR COALESCE(f.decision, '') != COALESCE(r.decision, '')
 	                       OR COALESCE(f.why, '') != COALESCE(r.why, '')
 	                       OR COALESCE(f.user_intent, '') != COALESCE(r.user_intent, '')
@@ -2187,6 +2243,7 @@ class ContextStore:
         mode: str,
         project_ids: list[str] | None = None,
         kind: str | None = None,
+        record_role: str | None = None,
         source_profile: str | None = None,
         status: str | None = None,
         source_session_id: str | None = None,
@@ -2216,6 +2273,7 @@ class ContextStore:
         unsupported_filters = self._unsupported_query_filters(
             entity_name=entity_name,
             kind=kind,
+            record_role=record_role,
             source_profile=source_profile,
             status=status,
             updated_since=updated_since,
@@ -2233,6 +2291,7 @@ class ContextStore:
                 mode=mode_name,
                 project_ids=project_ids,
                 kind=kind,
+                record_role=record_role,
                 source_profile=source_profile,
                 status=status,
                 source_session_id=source_session_id,
@@ -2252,6 +2311,7 @@ class ContextStore:
                 mode=mode_name,
                 project_ids=project_ids,
                 kind=kind,
+                record_role=record_role,
                 source_profile=source_profile,
                 status=status,
                 source_session_id=source_session_id,
@@ -2282,6 +2342,7 @@ class ContextStore:
         *,
         entity_name: str,
         kind: str | None,
+        record_role: str | None,
         source_profile: str | None = None,
         status: str | None,
         updated_since: str | None,
@@ -2296,6 +2357,7 @@ class ContextStore:
                 name
                 for name, value in (
                     ("kind", kind),
+                    ("record_role", record_role),
                     ("status", status),
                     ("source_profile", source_profile),
                     ("updated_since", updated_since),
@@ -2314,6 +2376,7 @@ class ContextStore:
         mode: str,
         project_ids: list[str] | None,
         kind: str | None,
+        record_role: str | None,
         source_profile: str | None,
         status: str | None,
         source_session_id: str | None,
@@ -2331,6 +2394,7 @@ class ContextStore:
         filter_sql, params = self._build_record_filter_sql(
             project_ids=project_ids,
             kind_filters=[kind] if kind else None,
+            role_filters=[record_role] if record_role else None,
             source_profile=source_profile,
             statuses=[status] if status else None,
             source_session_id=source_session_id,
@@ -2374,6 +2438,7 @@ class ContextStore:
         mode: str,
         project_ids: list[str] | None,
         kind: str | None,
+        record_role: str | None,
         source_profile: str | None,
         status: str | None,
         source_session_id: str | None,
@@ -2390,6 +2455,7 @@ class ContextStore:
         filter_sql, params = self._build_version_filter_sql(
             project_ids=project_ids,
             kind=kind,
+            record_role=record_role,
             source_profile=source_profile,
             status=status,
             source_session_id=source_session_id,
@@ -2502,6 +2568,8 @@ class ContextStore:
             "source_name": _row_value(row, "source_name"),
             "source_profile": _row_value(row, "source_profile"),
             "kind": str(row["kind"]),
+            "record_role": str(_row_value(row, "record_role", DEFAULT_RECORD_ROLE) or DEFAULT_RECORD_ROLE),
+            "role_payload": _row_value(row, "role_payload"),
             "title": str(row["title"]),
             "body": str(row["body"]),
             "status": str(row["status"]),
@@ -2560,6 +2628,8 @@ class ContextStore:
         outcomes: Any,
         source_event_refs: Any = None,
         evidence_refs: Any = None,
+        record_role: Any = DEFAULT_RECORD_ROLE,
+        role_payload: Any = None,
     ) -> dict[str, Any]:
         """Normalize and validate one record payload."""
         payload = normalize_record_payload(
@@ -2567,6 +2637,8 @@ class ContextStore:
             title=title,
             body=body,
             status=status,
+            record_role=record_role,
+            role_payload=role_payload,
             source_session_id=source_session_id,
             created_at=created_at,
             updated_at=updated_at,
@@ -2634,13 +2706,13 @@ class ContextStore:
             INSERT INTO record_versions(
                 version_id, project_id, scope_type, scope_id, scope_label,
                 source_name, source_profile, record_id, version_no, kind, title,
-                body, status, source_session_id, created_at, updated_at,
+                record_role, role_payload, body, status, source_session_id, created_at, updated_at,
                 source_event_refs, evidence_refs, index_text, valid_from, valid_until,
                 superseded_by_record_id, decision, why,
                 alternatives, consequences, user_intent, what_happened, outcomes,
                 change_kind, change_reason, changed_at, changed_by_session_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 _new_id("ver"),
@@ -2654,6 +2726,8 @@ class ContextStore:
                 version_no,
                 payload["kind"],
                 payload["title"],
+                payload["record_role"],
+                payload["role_payload"],
                 payload["body"],
                 payload["status"],
                 payload["source_session_id"],
@@ -2776,9 +2850,10 @@ class ContextStore:
             """
             INSERT INTO records_fts(
                 record_id, project_id, scope_type, scope_id, updated_at, title,
-                body, decision, why, user_intent, what_happened, index_text
+                body, record_role, role_payload, decision, why, user_intent,
+                what_happened, index_text
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record_id,
@@ -2788,6 +2863,8 @@ class ContextStore:
                 payload["updated_at"],
                 payload["title"],
                 payload["body"],
+                payload.get("record_role") or DEFAULT_RECORD_ROLE,
+                payload.get("role_payload") or "",
                 payload["decision"] or "",
                 payload["why"] or "",
                 payload["user_intent"] or "",
@@ -2871,6 +2948,8 @@ class ContextStore:
                        OR f.updated_at != r.updated_at
                        OR COALESCE(f.title, '') != COALESCE(r.title, '')
                        OR COALESCE(f.body, '') != COALESCE(r.body, '')
+                       OR COALESCE(f.record_role, '') != COALESCE(r.record_role, 'general')
+                       OR COALESCE(f.role_payload, '') != COALESCE(r.role_payload, '')
                        OR COALESCE(f.decision, '') != COALESCE(r.decision, '')
                        OR COALESCE(f.why, '') != COALESCE(r.why, '')
                        OR COALESCE(f.user_intent, '') != COALESCE(r.user_intent, '')
@@ -3020,6 +3099,7 @@ class ContextStore:
         updated_until: str | None,
         valid_at: str | None,
         include_archived: bool,
+        role_filters: list[str] | None = None,
         table_alias: str = "",
     ) -> tuple[str, list[Any]]:
         """Build reusable record filter fragments."""
@@ -3041,6 +3121,10 @@ class ContextStore:
             placeholders = ", ".join("?" for _ in kind_filters)
             clauses.append(f"{prefix}kind IN ({placeholders})")
             params.extend(kind_filters)
+        if role_filters:
+            placeholders = ", ".join("?" for _ in role_filters)
+            clauses.append(f"{prefix}record_role IN ({placeholders})")
+            params.extend(role_filters)
         if statuses:
             placeholders = ", ".join("?" for _ in statuses)
             clauses.append(f"{prefix}status IN ({placeholders})")
@@ -3078,6 +3162,7 @@ class ContextStore:
         *,
         project_ids: list[str] | None,
         kind: str | None,
+        record_role: str | None,
         source_profile: str | None,
         status: str | None,
         source_session_id: str | None,
@@ -3100,6 +3185,9 @@ class ContextStore:
         if kind:
             clauses.append("kind = ?")
             params.append(kind)
+        if record_role:
+            clauses.append("record_role = ?")
+            params.append(record_role)
         if source_profile:
             clauses.append(
                 "LOWER(COALESCE(NULLIF(TRIM(source_profile), ''), 'coding')) = ?"

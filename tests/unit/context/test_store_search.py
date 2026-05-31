@@ -480,6 +480,57 @@ class TestSearchIntegration:
         assert len(hits) == 1
         assert hits[0][0] == target["record_id"]
 
+    def test_semantic_candidates_oversample_before_role_filtering(self, tmp_path, monkeypatch):
+        class _ScopedProvider:
+            model_id = "test-embed-v2"
+            embedding_dims = 4
+
+            def embed_query(self, text: str) -> list[float]:
+                return [1.0, 0.0, 0.0, 0.0] if "needle" in text.lower() else [0.0, 0.0, 0.0, 1.0]
+
+            def embed_document(self, text: str) -> list[float]:
+                lowered = text.lower()
+                if "closer distractor" in lowered:
+                    return [1.0, 0.0, 0.0, 0.0]
+                if "target procedure" in lowered:
+                    return [0.8, 0.2, 0.0, 0.0]
+                return [0.0, 0.0, 0.0, 1.0]
+
+        monkeypatch.setattr("lerim.context.store.get_embedding_provider", lambda: _ScopedProvider())
+        store, pid = _build_store_with_project(tmp_path, monkeypatch)
+        for index in range(30):
+            store.create_record(
+                project_id=pid,
+                session_id="sess_search",
+                kind="fact",
+                title=f"Closer distractor {index}",
+                body="This is the closer distractor for semantic search.",
+                record_role="general",
+            )
+        target = store.create_record(
+            project_id=pid,
+            session_id="sess_search",
+            kind="fact",
+            title="Target procedure",
+            body="This target procedure should survive semantic shortlist filtering.",
+            record_role="procedure",
+        )
+
+        hits = semantic_candidates(
+            store,
+            project_ids=[pid],
+            query="needle query",
+            kind_filters=None,
+            role_filters=["procedure"],
+            statuses=None,
+            valid_at=None,
+            include_archived=False,
+            limit=1,
+        )
+
+        assert len(hits) == 1
+        assert hits[0][0] == target["record_id"]
+
     def test_status_filter_active_only(self, tmp_path, monkeypatch):
         store, pid = _build_store_with_project(tmp_path, monkeypatch)
         store.create_record(

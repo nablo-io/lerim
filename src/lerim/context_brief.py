@@ -25,6 +25,7 @@ SECTION_LINE_LIMITS = {
     "current_handoff": 4,
     "decisions": 8,
     "constraints_preferences": 8,
+    "operational_context": 6,
     "project_facts": 6,
     "open_risks": 4,
     "follow_up_queries": 3,
@@ -92,6 +93,7 @@ class ContextBriefDraft:
     current_handoff: tuple[MemoryLine, ...] = ()
     decisions: tuple[MemoryLine, ...] = ()
     constraints_preferences: tuple[MemoryLine, ...] = ()
+    operational_context: tuple[MemoryLine, ...] = ()
     project_facts: tuple[MemoryLine, ...] = ()
     open_risks: tuple[MemoryLine, ...] = ()
     follow_up_queries: tuple[MemoryLine, ...] = ()
@@ -409,6 +411,7 @@ def sanitize_draft_section_kinds(
             "constraints_preferences",
             draft.constraints_preferences,
         ),
+        operational_context=draft.operational_context,
         project_facts=keep_matching("project_facts", draft.project_facts),
         open_risks=draft.open_risks,
         follow_up_queries=draft.follow_up_queries,
@@ -434,6 +437,9 @@ def trim_context_brief_draft(draft: ContextBriefDraft) -> ContextBriefDraft:
         constraints_preferences=draft.constraints_preferences[
             : SECTION_LINE_LIMITS["constraints_preferences"]
         ],
+        operational_context=draft.operational_context[
+            : SECTION_LINE_LIMITS["operational_context"]
+        ],
         project_facts=draft.project_facts[: SECTION_LINE_LIMITS["project_facts"]],
         open_risks=draft.open_risks[: SECTION_LINE_LIMITS["open_risks"]],
         follow_up_queries=draft.follow_up_queries[
@@ -457,6 +463,7 @@ def iter_named_draft_lines(draft: ContextBriefDraft) -> tuple[tuple[str, MemoryL
         ("current_handoff", draft.current_handoff),
         ("decisions", draft.decisions),
         ("constraints_preferences", draft.constraints_preferences),
+        ("operational_context", draft.operational_context),
         ("project_facts", draft.project_facts),
         ("open_risks", draft.open_risks),
         ("follow_up_queries", draft.follow_up_queries),
@@ -578,6 +585,12 @@ def render_context_brief_markdown(
     )
     append_memory_section(
         lines,
+        title="Reusable Workflows & Gotchas",
+        items=draft.operational_context[:10],
+        seen_lines=seen_lines,
+    )
+    append_memory_section(
+        lines,
         title="Project Facts",
         items=draft.project_facts[:12],
         seen_lines=seen_lines,
@@ -683,11 +696,13 @@ def format_source_reference_lines(
             continue
         title = str(record.get("title") or "Untitled").strip()
         kind = str(record.get("kind") or "record").strip()
+        role = str(record.get("record_role") or "general").strip()
+        role_text = f", role {role}" if role and role != "general" else ""
         updated_at = str(record.get("updated_at") or "").strip()
         source_session = str(record.get("source_session_id") or "").strip()
         source_text = f"; source_session: `{source_session}`" if source_session else ""
         lines.append(
-            f"- `{record_id}` ({kind}, updated `{updated_at}`): {title}{source_text}"
+            f"- `{record_id}` ({kind}{role_text}, updated `{updated_at}`): {title}{source_text}"
         )
     if len(cited_record_ids) > REFERENCE_LINE_LIMIT:
         remaining = len(cited_record_ids) - REFERENCE_LINE_LIMIT

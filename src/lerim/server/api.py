@@ -57,6 +57,19 @@ from lerim.config.settings import (
 )
 from lerim.profiles import list_signal_packs
 from lerim.server.runtime import LerimRuntime
+from lerim.server.skill_api import (
+    api_skill_proposal_apply as api_skill_proposal_apply,
+    api_skill_proposal_reject as api_skill_proposal_reject,
+    api_skill_proposal_show as api_skill_proposal_show,
+    api_skill_proposal_update as api_skill_proposal_update,
+    api_skill_proposals as api_skill_proposals,
+    api_skill_refresh as api_skill_refresh,
+    api_skill_runs as api_skill_runs,
+    api_skill_target_add as api_skill_target_add,
+    api_skill_target_mode as api_skill_target_mode,
+    api_skill_target_show as api_skill_target_show,
+    api_skill_targets as api_skill_targets,
+)
 from lerim.sessions.catalog import (
     count_all_session_state,
     count_fts_indexed,
@@ -302,6 +315,16 @@ def _count_project_records(config: Config, project_path: Path) -> int:
     return int(row["total"]) if row else 0
 
 
+def _registered_project_ids(config: Config, store: ContextStore) -> list[str]:
+    """Return registered project ids and make sure they exist in the store."""
+    project_ids = []
+    for _name, path in _registered_projects(config):
+        identity = resolve_project_identity(path)
+        store.register_project(identity)
+        project_ids.append(identity.project_id)
+    return project_ids
+
+
 def _session_stats_for_repo(
     *,
     sessions_db_path: Path,
@@ -455,6 +478,7 @@ def api_query(
     scope: str = "all",
     project: str | None = None,
     kind: str | None = None,
+    record_role: str | None = None,
     source_profile: str | None = None,
     status: str | None = None,
     source_session_id: str | None = None,
@@ -497,6 +521,7 @@ def api_query(
             mode=mode,
             project_ids=project_ids,
             kind=kind,
+            record_role=record_role,
             source_profile=source_profile,
             status=status,
             source_session_id=source_session_id,
@@ -529,6 +554,58 @@ def api_query(
         "error": False,
         "projects_used": [name for name, _ in selected_projects],
         "scope": normalized_scope,
+    }
+
+
+def api_record_filters() -> dict[str, Any]:
+    """Return complete distinct record filter options for the dashboard."""
+    config = get_config()
+    store = _context_store(config)
+    project_ids = _registered_project_ids(config, store)
+    if not project_ids:
+        return {"types": [], "roles": [], "projects": [], "error": False}
+    placeholders = ", ".join("?" for _ in project_ids)
+    with store.connect() as conn:
+        kind_rows = conn.execute(
+            f"""
+            SELECT DISTINCT kind AS value
+            FROM records
+            WHERE status = 'active'
+              AND project_id IN ({placeholders})
+              AND COALESCE(TRIM(kind), '') != ''
+            ORDER BY kind ASC
+            """,
+            tuple(project_ids),
+        ).fetchall()
+        role_rows = conn.execute(
+            f"""
+            SELECT DISTINCT COALESCE(record_role, 'general') AS value
+            FROM records
+            WHERE status = 'active'
+              AND project_id IN ({placeholders})
+              AND COALESCE(TRIM(record_role), '') != ''
+            ORDER BY value ASC
+            """,
+            tuple(project_ids),
+        ).fetchall()
+        project_rows = conn.execute(
+            f"""
+            SELECT DISTINCT project_id AS value
+            FROM records
+            WHERE status = 'active'
+              AND project_id IN ({placeholders})
+            ORDER BY value ASC
+            """,
+            tuple(project_ids),
+        ).fetchall()
+    project_names_by_id = {
+        resolve_project_identity(path).project_id: name for name, path in _registered_projects(config)
+    }
+    return {
+        "types": [str(row["value"]) for row in kind_rows],
+        "roles": [str(row["value"]) for row in role_rows],
+        "projects": sorted(project_names_by_id.get(str(row["value"]), str(row["value"])) for row in project_rows),
+        "error": False,
     }
 
 

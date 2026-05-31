@@ -68,6 +68,8 @@ def candidate_for_prompt(record: dict[str, Any]) -> dict[str, Any]:
     return {
         "record_id": record.get("record_id"),
         "kind": record.get("kind"),
+        "record_role": record.get("record_role"),
+        "role_payload": record.get("role_payload"),
         "title": record.get("title"),
         "body": record.get("body"),
         "decision": record.get("decision"),
@@ -82,15 +84,20 @@ def candidate_for_prompt(record: dict[str, Any]) -> dict[str, Any]:
 def candidate_profile(records: list[dict[str, Any]]) -> dict[str, Any]:
     """Return compact metadata that frames what the records can support."""
     kind_counts: dict[str, int] = {}
+    role_counts: dict[str, int] = {}
     record_ids_by_kind: dict[str, list[str]] = {}
+    record_ids_by_role: dict[str, list[str]] = {}
     newest_updated_at = ""
     newest_episode_updated_at = ""
     for record in records:
         kind = str(record.get("kind") or "unknown")
+        role = str(record.get("record_role") or "general")
         kind_counts[kind] = kind_counts.get(kind, 0) + 1
+        role_counts[role] = role_counts.get(role, 0) + 1
         record_id = str(record.get("record_id") or "")
         if record_id:
             record_ids_by_kind.setdefault(kind, []).append(record_id)
+            record_ids_by_role.setdefault(role, []).append(record_id)
         updated_at = str(record.get("updated_at") or "")
         newest_updated_at = max(newest_updated_at, updated_at)
         if kind == "episode":
@@ -99,7 +106,9 @@ def candidate_profile(records: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "candidate_count": len(records),
         "kind_counts": kind_counts,
+        "role_counts": role_counts,
         "record_ids_by_kind": record_ids_by_kind,
+        "record_ids_by_role": record_ids_by_role,
         "newest_updated_at": newest_updated_at or None,
         "newest_episode_updated_at": newest_episode_updated_at or None,
         "has_recent_flow_evidence": bool(episode_record_ids),
@@ -140,6 +149,7 @@ def draft_from_output(output: Any) -> ContextBriefDraft:
         constraints_preferences=memory_lines(
             payload.get("constraints_preferences") or []
         ),
+        operational_context=memory_lines(payload.get("operational_context") or []),
         project_facts=memory_lines(payload.get("project_facts") or []),
         open_risks=memory_lines(payload.get("open_risks") or []),
         follow_up_queries=memory_lines(payload.get("follow_up_queries") or []),

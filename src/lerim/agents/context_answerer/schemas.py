@@ -9,6 +9,15 @@ from pydantic import BaseModel, Field
 
 ContextRetrievalActionType = Literal["count", "list", "search"]
 ContextRecordKind = Literal["decision", "preference", "constraint", "fact", "episode"]
+ContextRecordRole = Literal[
+    "general",
+    "procedure",
+    "gotcha",
+    "failure_mode",
+    "artifact",
+    "state_change",
+    "eval_asset",
+]
 
 
 class ContextRetrievalAction(BaseModel):
@@ -17,6 +26,7 @@ class ContextRetrievalAction(BaseModel):
     action_type: ContextRetrievalActionType
     query: str | None = None
     kind: ContextRecordKind | None = None
+    record_role: ContextRecordRole | None = None
     status: str | None = None
     source_session_id: str | None = None
     created_since: str | None = None

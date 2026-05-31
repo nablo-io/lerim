@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { api } from "@/lib/api";
-import { formatRecordKind, formatScopeLabel } from "@/lib/labels";
+import { formatRecordKind, formatRecordRole, formatScopeLabel } from "@/lib/labels";
 import type { ContextRecord, IntelligenceResponse } from "@/lib/types";
 import RecordEditor from "@/components/RecordEditor";
 
@@ -12,10 +12,12 @@ export default function ContextPage() {
 	const [debouncedQuery, setDebouncedQuery] = useState("");
 	const [project, setProject] = useState("");
 	const [selectedType, setSelectedType] = useState("");
+	const [selectedRole, setSelectedRole] = useState("");
 	const [statusFilter, setStatusFilter] = useState("active");
 
 	/* ---- filter options from server ---- */
 	const [filterTypes, setFilterTypes] = useState<string[]>([]);
+	const [filterRoles, setFilterRoles] = useState<string[]>([]);
 	const [filterProjects, setFilterProjects] = useState<string[]>([]);
 
 	/* ---- data state ---- */
@@ -53,6 +55,7 @@ export default function ContextPage() {
 			.getRecordFilters()
 			.then((f) => {
 				setFilterTypes(f.types);
+				setFilterRoles(f.roles);
 				setFilterProjects(f.projects);
 			})
 			.catch(() => {
@@ -69,6 +72,7 @@ export default function ContextPage() {
 			if (debouncedQuery) params.q = debouncedQuery;
 			if (project) params.project = project;
 			if (selectedType) params.record_kind = selectedType;
+			if (selectedRole) params.record_role = selectedRole;
 			if (statusFilter) params.status = statusFilter;
 			const data = await api.getRecords(params);
 			setRecords(data.records);
@@ -78,7 +82,7 @@ export default function ContextPage() {
 		} finally {
 			setLoading(false);
 		}
-	}, [debouncedQuery, project, selectedType, statusFilter]);
+	}, [debouncedQuery, project, selectedRole, selectedType, statusFilter]);
 
 	useEffect(() => {
 		load();
@@ -99,6 +103,8 @@ export default function ContextPage() {
 	const handleSelect = (record: ContextRecord) => {
 		setSelected(record);
 	};
+
+	const operationalFilterRoles = filterRoles.filter((role) => role !== "general");
 
 	const scrollToIntel = () => {
 		setIntelCollapsed(false);
@@ -199,6 +205,34 @@ export default function ContextPage() {
 						))}
 					</div>
 
+					{operationalFilterRoles.length > 0 && (
+						<div className="mt-2 flex flex-wrap gap-1.5">
+							<button
+								onClick={() => setSelectedRole("")}
+								className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+									selectedRole === ""
+										? "bg-teal-400 text-slate-950"
+										: "bg-white/[0.04] text-[var(--text-muted)] hover:bg-white/[0.08] hover:text-[var(--text-secondary)]"
+								}`}
+							>
+								All roles
+							</button>
+							{operationalFilterRoles.map((role) => (
+								<button
+									key={role}
+									onClick={() => setSelectedRole(selectedRole === role ? "" : role)}
+									className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+										selectedRole === role
+											? "bg-teal-400 text-slate-950"
+											: "bg-white/[0.04] text-[var(--text-muted)] hover:bg-white/[0.08] hover:text-[var(--text-secondary)]"
+									}`}
+								>
+									{formatRecordRole(role)}
+								</button>
+							))}
+						</div>
+					)}
+
 					{/* ---- Error ---- */}
 					{error && (
 						<div className="mt-4 rounded-lg border border-red-500/20 bg-red-500/5 px-4 py-3 text-sm text-red-400">
@@ -246,6 +280,11 @@ export default function ContextPage() {
 														<span className="rounded bg-white/[0.06] px-1.5 py-0.5">
 															{formatRecordKind(record.record_kind)}
 														</span>
+														{record.record_role && record.record_role !== "general" && (
+															<span className="rounded bg-teal-400/10 px-1.5 py-0.5 text-teal-200">
+																{formatRecordRole(record.record_role)}
+															</span>
+														)}
 														{record.project && (
 															<span className="rounded bg-white/[0.06] px-1.5 py-0.5">
 																{formatScopeLabel(record.project)}

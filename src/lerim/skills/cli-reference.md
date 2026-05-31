@@ -669,12 +669,53 @@ lerim auth logout
 
 ### `lerim skill` (host-only)
 
-Install Lerim skill files into supported agent directories.
+Install Lerim's own skill files, register watched instruction artifacts, and
+review evidence-backed skill update proposals.
 
-Installs to two locations:
+`install` copies Lerim's agent skill into two locations:
 - `~/.agents/skills/lerim/` — shared by Cursor, Codex, OpenCode, and others
 - `~/.claude/skills/lerim/` — Claude Code (reads only from its own directory)
 
 ```bash
 lerim skill install
+```
+
+`target` registers any skill or instruction artifact Lerim should monitor. Pass
+a skill directory, `SKILL.md`, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, or related
+instruction file. New targets default to review mode; re-registering an existing
+target refreshes its manifest without resetting mode or auto-apply policy unless
+`--mode` is provided. Targets inside a registered project are scoped to that
+project; targets outside registered projects are global. Proposals can patch
+only files scanned as part of the registered target, with new skill-bundle files
+limited to `references/`, `reference/`, or `examples/`.
+
+```bash
+lerim skill target add ~/.agents/skills/clean-code --description "Keep simplification guidance current"
+lerim skill target list
+lerim skill target show it_abc123
+lerim skill target auto-apply it_abc123 --enable --risk low
+lerim skill target auto-apply it_abc123 --disable
+```
+
+`refresh` runs the LLM-backed stewardship pipeline for one target, scans relevant
+context records, and creates guarded proposals. Project-scoped targets only read
+records from their project. Global targets read records from registered projects.
+
+```bash
+lerim skill refresh it_abc123
+lerim skill refresh clean-code --record-limit 120 --json
+```
+
+`proposal` lists, inspects, applies, or rejects generated updates. Applying is
+allowed only for pending, guard-accepted, validation-passing proposals whose file
+baselines still match the current target files. Auto-apply is opt-in and also
+enforces changed-file, added-line, removed-line, risk, evidence, and surface
+policy limits.
+
+```bash
+lerim skill proposal list
+lerim skill proposal list --target-id it_abc123 --status pending_review
+lerim skill proposal show ip_abc123
+lerim skill proposal apply ip_abc123
+lerim skill proposal reject ip_abc123
 ```

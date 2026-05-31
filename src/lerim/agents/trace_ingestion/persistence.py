@@ -12,6 +12,7 @@ from lerim.agents.model_helpers import prediction_payload
 from lerim.context import ContextStore, ProjectIdentity, ScopeIdentity
 from lerim.context.spec import (
     DURABLE_RECORD_KINDS,
+    DEFAULT_RECORD_ROLE,
     MAX_DURABLE_BODY_CHARS,
     MAX_EPISODE_BODY_CHARS,
     MAX_EPISODE_OUTCOMES_CHARS,
@@ -375,6 +376,8 @@ def _prepare_durable_record(value: Any) -> dict[str, Any] | None:
     evidence_refs = _reference_list(record.get("evidence_refs"))
     return {
         "kind": kind,
+        "record_role": _enum_text(record.get("record_role")) or DEFAULT_RECORD_ROLE,
+        "role_payload": record.get("role_payload"),
         "title": title,
         "body": body,
         "status": _status_value(record.get("status")) or "active",

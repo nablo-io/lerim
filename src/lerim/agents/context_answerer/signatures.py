@@ -25,6 +25,10 @@ class PlanContextRetrieval(dspy.Signature):
     Use null when the question does not explicitly ask for one of those exact record kinds.
     Provider, setting, mechanism, requirement, state, source-of-truth, policy, and workflow words are topical words, not record-kind filters. Use kind null for them unless the user explicitly asks for a decision, preference, constraint, fact, or episode record.
 
+    Valid operational role filters:
+    - general, procedure, gotcha, failure_mode, artifact, state_change, eval_asset.
+    Use record_role only when the question explicitly asks for reusable procedures, gotchas, failure modes, artifacts, state changes, or eval assets.
+
     Planning rules:
     - Use count for "how many" questions.
     - Count questions should count current active records by default. Include archived records only when the user explicitly asks for archived, historical, previous, before, superseded, inactive, or all records.

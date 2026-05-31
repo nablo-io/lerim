@@ -20,6 +20,7 @@ class CompileWorkingMemory(dspy.Signature):
     - Every non-empty line must include at least one exact record_id copied from the supplied records.
     - Put record IDs only in record_ids, never in text.
     - Prefer current active records over superseded or archived records.
+    - When recent records have operational roles such as procedure, gotcha, failure_mode, artifact, state_change, or eval_asset, include the role's practical implication in recent_changes or current_context when it affects continuation.
     - When a record was superseded, explain the current replacement rather than repeating the old record as truth.
     - Put the most useful resume point in start_here. If there is no clear resume point, leave start_here empty.
     - Include open_questions only when a recent record explicitly supports an unresolved question.

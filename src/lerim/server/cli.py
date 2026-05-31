@@ -49,6 +49,7 @@ from lerim.server.api import (
     parse_duration_to_seconds,
     write_init_config,
 )
+from lerim.server.cli_skill import _cmd_skill as _cmd_skill, add_skill_parser
 from lerim.server.docker_runtime import (
     api_down,
     api_up,
@@ -1334,6 +1335,7 @@ def _cmd_query(args: argparse.Namespace) -> int:
         scope=scope,
         project=getattr(args, "project", None),
         kind=getattr(args, "kind", None),
+        record_role=getattr(args, "role", None),
         status=getattr(args, "status", None),
         source_profile=getattr(args, "source_profile", None),
         source_session_id=getattr(args, "source_session_id", None),
@@ -1369,6 +1371,7 @@ def _cmd_context_records(args: argparse.Namespace) -> int:
         scope=_normalize_scope(getattr(args, "scope", None)),
         project=getattr(args, "project", None),
         kind=requested_kind,
+        record_role=getattr(args, "role", None),
         status=getattr(args, "status", None),
         source_profile=getattr(args, "profile", None)
         or getattr(args, "source_profile", None),
@@ -1398,6 +1401,9 @@ def _cmd_context_records(args: argparse.Namespace) -> int:
     _emit(f"{len(rows)} records shown")
     if requested_kind:
         _emit(f"Kind: {requested_kind}")
+    requested_role = str(getattr(args, "role", "") or "").strip()
+    if requested_role:
+        _emit(f"Role: {requested_role}")
     if not rows:
         return 0
     for kind, group_rows in _group_record_rows_by_kind(rows).items():
@@ -1410,7 +1416,8 @@ def _cmd_context_records(args: argparse.Namespace) -> int:
             _emit(f"- {title_text}")
             _emit(
                 "  "
-                f"{row.get('record_id', '')} | {row.get('kind', '')} | {status} | "
+                f"{row.get('record_id', '')} | {row.get('kind', '')} | "
+                f"{row.get('record_role', 'general')} | {status} | "
                 f"{scope} | {row.get('source_profile', 'coding')}"
             )
             evidence = _evidence_summary(row)
@@ -2740,45 +2747,6 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
-_SKILL_TARGETS: dict[str, Path] = {
-    "agents": Path.home() / ".agents" / "skills" / "lerim",
-    "claude": Path.home() / ".claude" / "skills" / "lerim",
-}
-"""Skill install targets: ~/.agents/skills (shared by most agents) + ~/.claude/skills (Claude-specific)."""
-
-
-def _cmd_skill(args: argparse.Namespace) -> int:
-    """Install Lerim skill files into coding agent directories."""
-    action = getattr(args, "skill_action", None)
-    if action != "install":
-        _emit("Usage: lerim skill install")
-        return 2
-
-    from lerim.skills import SKILLS_DIR
-
-    skill_files = [SKILLS_DIR / "SKILL.md", SKILLS_DIR / "cli-reference.md"]
-    missing = [f for f in skill_files if not f.exists()]
-    if missing:
-        _emit(f"Skill files not found in package: {missing}", file=sys.stderr)
-        return 1
-
-    installed = []
-    for label, dest in _SKILL_TARGETS.items():
-        dest.mkdir(parents=True, exist_ok=True)
-        for src in skill_files:
-            (dest / src.name).write_text(src.read_text())
-        installed.append(
-            f"~/.{label}/skills/lerim"
-            if label != "agents"
-            else "~/.agents/skills/lerim"
-        )
-
-    _emit(f"Installed lerim skill to: {', '.join(installed)}")
-    _emit("  ~/.agents/skills/lerim  → Cursor, Codex, OpenCode, and others")
-    _emit("  ~/.claude/skills/lerim  → Claude Code")
-    return 0
-
-
 def _cmd_auth_dispatch(args: argparse.Namespace) -> int:
     """Dispatch auth subcommands to the appropriate handler."""
     auth_command = getattr(args, "auth_command", None)
@@ -3230,6 +3198,7 @@ def build_parser() -> argparse.ArgumentParser:
     query.add_argument("--scope", choices=["all", "project"], default="all")
     query.add_argument("--project", help="Project name/path when --scope=project.")
     query.add_argument("--kind")
+    query.add_argument("--role", help="Filter records by operational role.")
     query.add_argument("--status")
     query.add_argument(
         "--source-profile",
@@ -3277,6 +3246,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--type",
         dest="kind",
         help="Filter by durable record kind, for example fact or constraint.",
+    )
+    context_records.add_argument(
+        "--role",
+        help="Filter by operational role, for example procedure or gotcha.",
     )
     context_records.add_argument(
         "--status",
@@ -3632,20 +3605,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--port", type=int, help="Bind port (default: 8765).")
     serve.set_defaults(func=_cmd_serve)
 
-    # ── skill ─────────────────────────────────────────────────────────
-    skill = sub.add_parser(
-        "skill",
-        formatter_class=_F,
-        help="Install Lerim skill files into coding agent directories",
-        description="Install Lerim skill files into agent directories.",
-    )
-    skill_sub = skill.add_subparsers(dest="skill_action")
-    skill_sub.add_parser(
-        "install",
-        formatter_class=_F,
-        help="Copy skill files into agent directories",
-    )
-    skill.set_defaults(func=_cmd_skill)
+    add_skill_parser(sub, _F)
 
     # ── auth ──────────────────────────────────────────────────────────
     auth = sub.add_parser(

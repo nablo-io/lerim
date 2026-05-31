@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 
 RecordKind = Literal["decision", "preference", "constraint", "fact"]
 RecordStatus = Literal["active", "archived"]
+RecordRole = Literal[
+    "general",
+    "procedure",
+    "gotcha",
+    "failure_mode",
+    "artifact",
+    "state_change",
+    "eval_asset",
+]
 
 
 class DurableFinding(BaseModel):
@@ -19,6 +28,7 @@ class DurableFinding(BaseModel):
     line: int | None = None
     quote: str | None = None
     note: str
+    record_role: RecordRole | None = None
 
 
 class ImplementationFinding(BaseModel):
@@ -71,6 +81,8 @@ class DurableRecordDraft(BaseModel):
     why: str | None = None
     alternatives: str | None = None
     consequences: str | None = None
+    record_role: RecordRole | None = None
+    role_payload: dict[str, Any] | None = None
     source_event_refs: list[str]
     evidence_refs: list[str]
 
@@ -85,8 +97,25 @@ class FixedKindRecordDraft(BaseModel):
     why: str | None = None
     alternatives: str | None = None
     consequences: str | None = None
+    record_role: RecordRole | None = None
+    role_payload: dict[str, Any] | None = None
     source_event_refs: list[str]
     evidence_refs: list[str]
+
+
+class RecordRoleAnnotation(BaseModel):
+    """Operational role annotation for one accepted durable record."""
+
+    record_index: int
+    record_role: RecordRole
+    role_payload: dict[str, Any] | None = None
+    rationale: str | None = None
+
+
+class RecordRoleAnnotationResult(BaseModel):
+    """Operational role annotations for accepted durable records."""
+
+    annotations: list[RecordRoleAnnotation] = Field(default_factory=list)
 
 
 class SynthesizedContextRecords(BaseModel):

@@ -7,6 +7,16 @@ const RECORD_KIND_LABELS: Record<string, string> = {
   episode: "Episode",
 };
 
+const RECORD_ROLE_LABELS: Record<string, string> = {
+  general: "General",
+  procedure: "Procedure",
+  gotcha: "Gotcha",
+  failure_mode: "Failure Mode",
+  artifact: "Artifact",
+  state_change: "State Change",
+  eval_asset: "Eval Asset",
+};
+
 const STATUS_LABELS: Record<string, string> = {
   active: "Active",
   archived: "Archived",
@@ -37,6 +47,12 @@ export function formatRecordKind(kind?: string | null): string {
   const trimmed = kind?.trim();
   if (!trimmed) return "Unknown kind";
   return RECORD_KIND_LABELS[trimmed] ?? humanizeToken(trimmed);
+}
+
+export function formatRecordRole(role?: string | null): string {
+  const trimmed = role?.trim();
+  if (!trimmed) return "General";
+  return RECORD_ROLE_LABELS[trimmed] ?? humanizeToken(trimmed);
 }
 
 export function formatScopeLabel(scope?: string | null): string {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CanvasEvent,
   ComboEvent,
@@ -15,7 +15,7 @@ import {
   type NodeData,
 } from "@antv/g6";
 import { api } from "@/lib/api";
-import { formatRecordKind, formatScopeLabel, humanizeToken } from "@/lib/labels";
+import { formatRecordKind, formatRecordRole, formatScopeLabel, humanizeToken } from "@/lib/labels";
 import type { GraphEdge, GraphNode } from "@/lib/types";
 
 interface GraphExplorerProps {
@@ -23,6 +23,7 @@ interface GraphExplorerProps {
 }
 
 type ClusterBy = "semantic" | "off";
+type ColorBy = "type" | "role";
 type Selection =
   | { kind: "node"; node: GraphNode }
   | { kind: "edge"; edge: GraphEdge }
@@ -43,6 +44,7 @@ type ClusterSummary = {
   description: string;
   representativeTitles: string[];
   topKinds: string[];
+  topRoles: string[];
   topProjects: string[];
   color: string;
   nodes: GraphNode[];
@@ -81,6 +83,16 @@ const KIND_COLORS: Record<string, string> = {
   reference: "#fbbf24",
   episode: "#94a3b8",
   context_record: "#64748b",
+};
+
+const ROLE_COLORS: Record<string, string> = {
+  general: "#64748b",
+  procedure: "#22c55e",
+  gotcha: "#f59e0b",
+  failure_mode: "#fb7185",
+  artifact: "#38bdf8",
+  state_change: "#a78bfa",
+  eval_asset: "#2dd4bf",
 };
 
 const RELATION_COLORS: Record<GraphEdge["kind"], string> = {
@@ -123,6 +135,11 @@ const CLUSTER_OPTIONS: Array<{ value: ClusterBy; label: string; hint: string }> 
   { value: "off", label: "Off", hint: "Show records without cluster bubbles" },
 ];
 
+const COLOR_OPTIONS: Array<{ value: ColorBy; label: string; hint: string }> = [
+  { value: "type", label: "Kind", hint: "Color nodes by record kind" },
+  { value: "role", label: "Role", hint: "Color nodes by operational role" },
+];
+
 function edgeKey(edge: GraphEdge, index: number) {
   return edge.id || `${edge.source}:${edge.kind}:${edge.target}:${index}`;
 }
@@ -142,7 +159,10 @@ function shortLabel(value?: string | null, max = 34) {
   return label.length > max ? `${label.slice(0, max - 1)}...` : label;
 }
 
-function nodeColor(node: GraphNode) {
+function nodeColor(node: GraphNode, colorBy: ColorBy) {
+  if (colorBy === "role") {
+    return ROLE_COLORS[(node.record_role || "general").toLowerCase()] || "#64748b";
+  }
   return KIND_COLORS[(node.record_kind || "").toLowerCase()] || "#64748b";
 }
 
@@ -218,10 +238,12 @@ function clusterId(value: string) {
 function clusterDescription(nodes: GraphNode[]) {
   const titles = representativeTitles(nodes);
   const kinds = rankedValues(nodes.map((node) => node.record_kind), 2).map(formatRecordKind);
+  const roles = rankedValues(nodes.map((node) => node.record_role || "general"), 2).map(formatRecordRole);
   const projects = rankedValues(nodes.map((node) => node.project), 2).map(formatScopeLabel);
 
   const parts = [];
   if (kinds.length) parts.push(kinds.join(" / "));
+  if (roles.length && roles.some((role) => role !== "General")) parts.push(roles.join(" + "));
   if (projects.length) parts.push(projects.join(" + "));
   if (titles.length) parts.push(titles.slice(0, 2).join(" - "));
   return parts.join(" - ") || "No summary available";
@@ -277,6 +299,7 @@ function buildClusters(nodes: GraphNode[], edges: GraphEdge[], clusterBy: Cluste
       description: "",
       representativeTitles: [],
       topKinds: [],
+      topRoles: [],
       topProjects: [],
       color: CLUSTER_COLORS[clusters.size % CLUSTER_COLORS.length],
       nodes: [],
@@ -304,6 +327,7 @@ function buildClusters(nodes: GraphNode[], edges: GraphEdge[], clusterBy: Cluste
       description: clusterDescription(cluster.nodes),
       representativeTitles: representativeTitles(cluster.nodes),
       topKinds: rankedValues(cluster.nodes.map((node) => node.record_kind), 3).map(formatRecordKind),
+      topRoles: rankedValues(cluster.nodes.map((node) => node.record_role || "general"), 3).map(formatRecordRole),
       topProjects: rankedValues(cluster.nodes.map((node) => node.project), 3).map(formatScopeLabel),
     };
     return {
@@ -458,6 +482,7 @@ function buildGraphData(
   clusters: ClusterSummary[],
   nodeCluster: Map<string, string>,
   edgeLength: number,
+  colorBy: ColorBy,
 ): GraphData {
   const nodeIds = new Set(nodes.map((node) => node.id));
   const placements = clusterPlacements(clusters, edgeLength);
@@ -503,7 +528,7 @@ function buildGraphData(
         },
         data: {
           record: node,
-          color: nodeColor(node),
+          color: nodeColor(node, colorBy),
           label: shortLabel(node.label || formatRecordKind(node.record_kind), clusters.length ? 30 : 42),
           size: nodeSize(node, clusters.length === 0),
         } satisfies NodeDatumData,
@@ -677,6 +702,7 @@ export default function GraphExplorer({ onRecordClick }: GraphExplorerProps) {
     truncated: false,
   });
   const [clusterBy, setClusterBy] = useState<ClusterBy>("semantic");
+  const [colorBy, setColorBy] = useState<ColorBy>("type");
   const [maxNodes, setMaxNodes] = useState(DEFAULT_MAX_NODES);
   const [edgeLength, setEdgeLength] = useState(DEFAULT_EDGE_LENGTH);
   const [selected, setSelected] = useState<Selection>(null);
@@ -705,8 +731,8 @@ export default function GraphExplorer({ onRecordClick }: GraphExplorerProps) {
   );
 
   const graphData = useMemo(
-    () => buildGraphData(graph.nodes, graph.edges, clusters, nodeCluster, edgeLength),
-    [clusters, edgeLength, graph.edges, graph.nodes, nodeCluster],
+    () => buildGraphData(graph.nodes, graph.edges, clusters, nodeCluster, edgeLength, colorBy),
+    [clusters, colorBy, edgeLength, graph.edges, graph.nodes, nodeCluster],
   );
   const relationCounts = useMemo(() => {
     const counts = new Map<GraphEdge["kind"], number>();
@@ -721,6 +747,19 @@ export default function GraphExplorer({ onRecordClick }: GraphExplorerProps) {
     });
     return counts;
   }, [graph.nodes]);
+  const recordRoleCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    graph.nodes.forEach((node) => {
+      const role = (node.record_role || "general").toLowerCase();
+      counts.set(role, (counts.get(role) || 0) + 1);
+    });
+    return counts;
+  }, [graph.nodes]);
+  const hasOperationalRoles = useMemo(
+    () => Array.from(recordRoleCounts.keys()).some((role) => role !== "general"),
+    [recordRoleCounts],
+  );
+  const legendCounts = colorBy === "role" ? recordRoleCounts : recordKindCounts;
 
   useEffect(() => {
     nodeByIdRef.current = nodeById;
@@ -728,7 +767,7 @@ export default function GraphExplorer({ onRecordClick }: GraphExplorerProps) {
     clusterByIdRef.current = clusterById;
   }, [clusterById, edgeByKey, nodeById]);
 
-  async function loadGraph() {
+  const loadGraph = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -750,13 +789,18 @@ export default function GraphExplorer({ onRecordClick }: GraphExplorerProps) {
     } finally {
       setLoading(false);
     }
-  }
+  }, [maxNodes]);
 
   useEffect(() => {
-    loadGraph();
-    // Initial load only. Refresh button applies max-node changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    const reloadId = window.setTimeout(() => {
+      void loadGraph();
+    }, 180);
+    return () => window.clearTimeout(reloadId);
+  }, [loadGraph]);
+
+  useEffect(() => {
+    if (colorBy === "role" && !hasOperationalRoles) setColorBy("type");
+  }, [colorBy, hasOperationalRoles]);
 
   useEffect(() => {
     if (!containerRef.current || graphRef.current) return;
@@ -869,14 +913,41 @@ export default function GraphExplorer({ onRecordClick }: GraphExplorerProps) {
               </button>
             ))}
           </div>
+          <div className="flex h-9 items-center gap-1 rounded-full border border-white/10 bg-white/[0.045] p-1 shadow-sm">
+            {COLOR_OPTIONS.map((option) => {
+              const disabled = option.value === "role" && !hasOperationalRoles;
+              return (
+              <button
+                key={option.value}
+                type="button"
+                title={disabled ? "No operational role records in this graph yet." : option.hint}
+                disabled={disabled}
+                onClick={() => {
+                  if (!disabled) setColorBy(option.value);
+                }}
+                className={`h-7 rounded-full px-3 text-xs font-medium transition ${
+                  colorBy === option.value
+                    ? "bg-teal-300 text-slate-950 shadow-[0_0_18px_rgba(45,212,191,0.24)]"
+                    : disabled
+                      ? "cursor-not-allowed text-slate-600"
+                      : "text-slate-300 hover:bg-white/8 hover:text-white"
+                }`}
+              >
+                {option.label}
+              </button>
+            );})}
+          </div>
           <label className="flex h-9 items-center gap-2 rounded-full border border-white/10 bg-white/[0.045] px-3 text-xs text-slate-300 shadow-sm">
-            Nodes
+            Limit
             <input
               type="number"
               min={40}
               max={400}
               value={maxNodes}
-              onChange={(event) => setMaxNodes(Number(event.target.value))}
+              onChange={(event) => {
+                const value = Number(event.target.value);
+                setMaxNodes(Number.isFinite(value) ? Math.max(40, Math.min(400, value)) : 40);
+              }}
               className="w-16 bg-transparent text-sm text-white outline-none"
             />
           </label>
@@ -909,20 +980,25 @@ export default function GraphExplorer({ onRecordClick }: GraphExplorerProps) {
           <div className="pointer-events-none absolute inset-0 z-[1] bg-[radial-gradient(circle_at_center,transparent,rgba(2,6,23,0.62))]" />
           <div ref={containerRef} className="absolute inset-0 z-[2]" />
 
-          {!loading && !error && graph.nodes.length > 0 && recordKindCounts.size > 0 && (
+          {!loading && !error && graph.nodes.length > 0 && legendCounts.size > 0 && (
             <div className="pointer-events-none absolute bottom-4 left-4 z-10 max-w-[calc(100%-2rem)] rounded-2xl border border-white/10 bg-slate-950/72 p-3 shadow-2xl shadow-black/30 backdrop-blur-md">
-              <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Node types</div>
+              <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                {colorBy === "role" ? "Node roles" : "Node kinds"}
+              </div>
               <div className="flex flex-wrap gap-2">
-                {Array.from(recordKindCounts.entries()).sort((a, b) => b[1] - a[1]).map(([kind, count]) => (
-                  <div key={kind} className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.045] px-2.5 py-1.5 text-xs text-slate-200">
+                {Array.from(legendCounts.entries()).sort((a, b) => b[1] - a[1]).map(([value, count]) => {
+                  const color = colorBy === "role" ? ROLE_COLORS[value] || "#64748b" : KIND_COLORS[value] || "#64748b";
+                  const label = colorBy === "role" ? formatRecordRole(value) : formatRecordKind(value);
+                  return (
+                  <div key={value} className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.045] px-2.5 py-1.5 text-xs text-slate-200">
                     <span
                       className="h-2.5 w-2.5 rounded-full shadow-[0_0_14px_currentColor]"
-                      style={{ backgroundColor: KIND_COLORS[kind] || "#64748b", color: KIND_COLORS[kind] || "#64748b" }}
+                      style={{ backgroundColor: color, color }}
                     />
-                    <span className="font-medium">{formatRecordKind(kind)}</span>
+                    <span className="font-medium">{label}</span>
                     <span className="text-slate-500">{count}</span>
                   </div>
-                ))}
+                );})}
               </div>
             </div>
           )}
@@ -953,7 +1029,7 @@ export default function GraphExplorer({ onRecordClick }: GraphExplorerProps) {
           <DetailsPanel
             selection={selected}
             nodeById={nodeById}
-            recordKindCounts={recordKindCounts}
+            colorBy={colorBy}
             relationCounts={relationCounts}
             onOpenRecord={onRecordClick}
           />
@@ -974,13 +1050,13 @@ function Metric({ label, value }: { label: string; value: number }) {
 function DetailsPanel({
   selection,
   nodeById,
-  recordKindCounts,
+  colorBy,
   relationCounts,
   onOpenRecord,
 }: {
   selection: Selection;
   nodeById: Map<string, GraphNode>;
-  recordKindCounts: Map<string, number>;
+  colorBy: ColorBy;
   relationCounts: Map<GraphEdge["kind"], number>;
   onOpenRecord?: (recordId: string) => void;
 }) {
@@ -998,25 +1074,6 @@ function DetailsPanel({
           <span className="rounded-lg border border-white/10 bg-white/[0.035] px-2 py-2">records</span>
           <span className="rounded-lg border border-white/10 bg-white/[0.035] px-2 py-2">links</span>
         </div>
-        {recordKindCounts.size > 0 && (
-          <div className="mt-5">
-            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">Record types</div>
-            <div className="grid grid-cols-2 gap-2">
-              {Array.from(recordKindCounts.entries()).sort((a, b) => b[1] - a[1]).map(([kind, count]) => (
-                <div key={kind} className="rounded-xl border border-white/10 bg-white/[0.035] px-3 py-2">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="h-2.5 w-2.5 rounded-full shadow-[0_0_14px_currentColor]"
-                      style={{ backgroundColor: KIND_COLORS[kind] || "#64748b", color: KIND_COLORS[kind] || "#64748b" }}
-                    />
-                    <span className="text-xs font-semibold text-slate-100">{formatRecordKind(kind)}</span>
-                  </div>
-                  <div className="mt-1 text-[11px] text-slate-500">{count} records</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
         {relationCounts.size > 0 && (
           <div className="mt-5">
             <div className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">Relationship catalog</div>
@@ -1064,7 +1121,10 @@ function DetailsPanel({
         </div>
 
         <div className="grid grid-cols-2 gap-3 text-xs">
-          <Detail label="Main types" value={selection.cluster.topKinds.join(", ") || "Unknown"} />
+          <Detail label="Main kinds" value={selection.cluster.topKinds.join(", ") || "Unknown"} />
+          {selection.cluster.topRoles.some((role) => role !== "General") && (
+            <Detail label="Roles" value={selection.cluster.topRoles.join(", ")} />
+          )}
           <Detail label="Projects" value={selection.cluster.topProjects.join(", ") || "Unscoped"} />
         </div>
 
@@ -1108,13 +1168,17 @@ function DetailsPanel({
     );
   }
 
+  const nodeRole = selection.node.record_role && selection.node.record_role !== "general"
+    ? formatRecordRole(selection.node.record_role)
+    : "";
+
   return (
     <div className="space-y-4">
       <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
-        <div className="mb-3 h-2 w-16 rounded-full shadow-[0_0_22px_currentColor]" style={{ backgroundColor: nodeColor(selection.node) }} />
+        <div className="mb-3 h-2 w-16 rounded-full shadow-[0_0_22px_currentColor]" style={{ backgroundColor: nodeColor(selection.node, colorBy) }} />
         <h2 className="text-base font-semibold leading-6 text-white">{selection.node.label || "Untitled record"}</h2>
         <p className="mt-1 text-xs text-slate-400">
-          {formatRecordKind(selection.node.record_kind)} - {formatScopeLabel(selection.node.project)} - {compactDate(selection.node.updated_at)}
+          {formatRecordKind(selection.node.record_kind)}{nodeRole ? ` - ${nodeRole}` : ""} - {formatScopeLabel(selection.node.project)} - {compactDate(selection.node.updated_at)}
         </p>
       </div>
 
@@ -1128,11 +1192,21 @@ function DetailsPanel({
       )}
 
       <div className="grid grid-cols-2 gap-3 text-xs">
-        <Detail label="Type" value={formatRecordKind(selection.node.record_kind)} />
+        <Detail label="Kind" value={formatRecordKind(selection.node.record_kind)} />
+        {nodeRole && <Detail label="Role" value={nodeRole} />}
         <Detail label="Confidence" value={`${Math.round((selection.node.confidence || 0) * 100)}%`} />
         <Detail label="Status" value={selection.node.status || "active"} />
         <Detail label="Project" value={formatScopeLabel(selection.node.project)} />
       </div>
+
+      {selection.node.role_payload && (
+        <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
+          <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Role payload</div>
+          <pre className="mt-2 whitespace-pre-wrap break-words text-xs leading-5 text-slate-300">
+            {formatRolePayload(selection.node.role_payload)}
+          </pre>
+        </div>
+      )}
 
       {selection.node.tags && selection.node.tags.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
@@ -1162,4 +1236,12 @@ function Detail({ label, value }: { label: string; value: string }) {
       <div className="mt-1 break-words text-sm font-medium text-slate-200">{value}</div>
     </div>
   );
+}
+
+function formatRolePayload(payload: string) {
+  try {
+    return JSON.stringify(JSON.parse(payload), null, 2);
+  } catch {
+    return payload;
+  }
 }

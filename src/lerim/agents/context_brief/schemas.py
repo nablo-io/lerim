@@ -28,6 +28,10 @@ class ContextBriefDraftOutput(BaseModel):
         default_factory=list,
         description="Only cite candidate records whose kind is preference or constraint.",
     )
+    operational_context: list[ContextBriefLineDraft] = Field(
+        default_factory=list,
+        description="Reusable procedures, gotchas, failure modes, artifacts, state changes, and eval assets.",
+    )
     project_facts: list[ContextBriefLineDraft] = Field(
         default_factory=list,
         description="Only cite candidate records whose kind is fact.",

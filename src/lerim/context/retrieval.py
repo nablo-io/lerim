@@ -9,6 +9,7 @@ from typing import Any
 import sqlite_vec
 
 from lerim.config.settings import get_config
+from lerim.context.roles import DEFAULT_RECORD_ROLE
 
 RRF_K = 2
 DEFAULT_SEMANTIC_RRF_WEIGHT = 0.7
@@ -38,6 +39,8 @@ class SearchHit:
     user_intent: str | None = None
     what_happened: str | None = None
     outcomes: str | None = None
+    record_role: str = DEFAULT_RECORD_ROLE
+    role_payload: str | None = None
 
 
 def search_records(
@@ -46,6 +49,7 @@ def search_records(
     project_ids: list[str] | None,
     query: str,
     kind_filters: list[str] | None = None,
+    role_filters: list[str] | None = None,
     statuses: list[str] | None = None,
     valid_at: str | None = None,
     include_archived: bool = False,
@@ -68,6 +72,7 @@ def search_records(
             project_ids=project_ids,
             query=query,
             kind_filters=kind_filters,
+            role_filters=role_filters,
             statuses=statuses,
             valid_at=valid_at,
             include_archived=include_archived,
@@ -82,6 +87,7 @@ def search_records(
                     project_ids=project_ids,
                     query=query,
                     kind_filters=kind_filters,
+                    role_filters=role_filters,
                     statuses=statuses,
                     valid_at=valid_at,
                     include_archived=include_archived,
@@ -115,8 +121,10 @@ def search_records(
                 record_id=record_id,
                 project_id=str(row["project_id"]),
                 kind=str(row["kind"]),
+                record_role=str(row["record_role"]),
                 title=str(row["title"]),
                 body=str(row["body"]),
+                role_payload=row["role_payload"],
                 decision=row["decision"],
                 why=row["why"],
                 alternatives=row["alternatives"],
@@ -148,6 +156,7 @@ def semantic_candidates(
     valid_at: str | None,
     include_archived: bool,
     limit: int,
+    role_filters: list[str] | None = None,
     conn: sqlite3.Connection | None = None,
 ) -> list[tuple[str, float]]:
     """Return ranked semantic candidates from sqlite-vec nearest neighbors."""
@@ -156,6 +165,7 @@ def semantic_candidates(
     filter_sql, params = store._build_record_filter_sql(
         project_ids=project_ids,
         kind_filters=kind_filters,
+        role_filters=role_filters,
         statuses=statuses,
         source_session_id=None,
         created_since=None,
@@ -181,7 +191,7 @@ def semantic_candidates(
             ).fetchone()[0]
         )
         candidate_limit = min(max_candidates, max(int(limit), 25))
-        if project_ids or kind_filters or statuses or valid_at or include_archived:
+        if project_ids or kind_filters or role_filters or statuses or valid_at or include_archived:
             candidate_limit = min(max_candidates, max(candidate_limit, int(limit) * 4))
         rows: list[sqlite3.Row] = []
         while candidate_limit > 0:
@@ -223,6 +233,7 @@ def lexical_candidates(
     valid_at: str | None,
     include_archived: bool,
     limit: int,
+    role_filters: list[str] | None = None,
     conn: sqlite3.Connection | None = None,
 ) -> list[tuple[str, float]]:
     """Return ranked lexical candidates from SQLite FTS."""
@@ -232,6 +243,7 @@ def lexical_candidates(
     filter_sql, params = store._build_record_filter_sql(
         project_ids=project_ids,
         kind_filters=kind_filters,
+        role_filters=role_filters,
         statuses=statuses,
         source_session_id=None,
         created_since=None,

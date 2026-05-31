@@ -8,6 +8,7 @@ import lerim.context.spec as spec
 from lerim.context.spec import (
     ALLOWED_CHANGE_KINDS,
     ALLOWED_KINDS,
+    ALLOWED_ROLES,
     ALLOWED_STATUSES,
     DURABLE_RECORD_KINDS,
     MAX_RECORD_TITLE_CHARS,
@@ -54,6 +55,7 @@ def test_allowed_value_tuples_follow_domain_enums():
     assert ALLOWED_KINDS == tuple(kind.value for kind in RecordKind)
     assert ALLOWED_STATUSES == tuple(status.value for status in RecordStatus)
     assert ALLOWED_CHANGE_KINDS == tuple(kind.value for kind in RecordChangeKind)
+    assert "procedure" in ALLOWED_ROLES
 
 
 def test_format_durable_record_kinds_is_human_readable():
@@ -141,3 +143,24 @@ def test_record_search_text_includes_typed_fields():
     assert "kind: decision" in text
     assert "decision: Use SQLite." in text
     assert "why: It keeps local context simple." in text
+
+
+def test_operational_role_payload_is_normalized_and_searchable():
+    payload = normalize_record_payload(
+        **_payload(
+            record_role="failure-mode",
+            role_payload={
+                "failure_step": "Trace replay",
+                "wrong_assumption": "Every replay can create a new episode.",
+                "correction": "Treat duplicate episodes as idempotent.",
+                "extra": "ignored",
+            },
+        )
+    )
+
+    text = record_search_text(payload)
+
+    assert payload["record_role"] == "failure_mode"
+    assert "extra" not in payload["role_payload"]
+    assert "role: failure_mode" in text
+    assert "wrong_assumption: Every replay can create a new episode." in text

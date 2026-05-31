@@ -40,6 +40,7 @@ from lerim.server.api import (
     api_project_add,
     api_project_list,
     api_query,
+    api_record_filters,
     api_project_remove,
     api_queue_jobs,
     api_retry_all_dead_letter,
@@ -49,6 +50,7 @@ from lerim.server.api import (
     api_status,
     api_unscoped,
 )
+from lerim.server.http_skill_routes import handle_skill_get, handle_skill_post
 from lerim.config.settings import (
     Config,
     get_config,
@@ -534,6 +536,8 @@ def _graph_node_payload(row: sqlite3.Row) -> dict[str, Any]:
         "label": row["label"],
         "kind": "record",
         "record_kind": row["record_kind"] if "record_kind" in keys and row["record_kind"] else row["node_type"],
+        "record_role": row["record_role"] if "record_role" in keys and row["record_role"] else "general",
+        "role_payload": row["role_payload"] if "role_payload" in keys else None,
         "summary": row["summary"],
         "project": row["scope_label"],
         "status": row["status"],
@@ -1049,6 +1053,7 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
                 return
             node_rows = conn.execute(
                 f"""SELECT cn.node_id, cn.node_type, COALESCE(r.kind, cn.node_type) AS record_kind,
+                          COALESCE(r.record_role, 'general') AS record_role, r.role_payload,
                           cn.label, cn.summary, cn.status, cn.semantic_cluster,
                           cn.scope_label, cn.created_at, cn.updated_at
                    FROM context_nodes cn
@@ -1114,6 +1119,11 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
                 self._error(HTTPStatus.BAD_REQUEST, "limit must be an integer")
                 return
             self._json(api_unscoped(limit=limit))
+            return
+        if path == "/api/records/filters":
+            self._json(api_record_filters())
+            return
+        if handle_skill_get(self, path, query):
             return
         no_query_handlers = {
             "/api/health": lambda: self._json(api_health()),
@@ -1247,6 +1257,7 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
                 "scope",
                 "project",
                 "kind",
+                "record_role",
                 "source_profile",
                 "status",
                 "source_session_id",
@@ -1279,6 +1290,7 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
                 scope=str(body.get("scope") or "all"),
                 project=str(body.get("project") or "").strip() or None,
                 kind=str(body.get("kind") or "").strip() or None,
+                record_role=str(body.get("record_role") or "").strip() or None,
                 source_profile=str(body.get("source_profile") or "").strip() or None,
                 status=str(body.get("status") or "").strip() or None,
                 source_session_id=str(body.get("source_session_id") or "").strip() or None,
@@ -1297,6 +1309,8 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
                 self._error(HTTPStatus(status), str(result.get("message") or "query failed"))
                 return
             self._json(result)
+            return
+        if handle_skill_post(self, path, read_body):
             return
         if path == "/api/ingest":
             body = read_body()

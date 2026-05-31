@@ -101,6 +101,8 @@ export interface ContextRecord {
   title: string | null;
   body: string | null;
   record_kind: string | null;
+  record_role: string | null;
+  role_payload: string | null;
   project: string | null;
   tags: string[];
   confidence: number | null;
@@ -146,7 +148,108 @@ export interface RecordVersionsResponse {
 
 export interface RecordFiltersResponse {
   types: string[];
+  roles: string[];
   projects: string[];
+}
+
+/* ----- Skill Stewardship --------------------------------------------- */
+
+export interface SkillTargetFile {
+  relative_path: string;
+  file_role: string;
+  size_bytes: number;
+  sha256: string;
+  text_preview?: string | null;
+  risk_surface: "low" | "medium" | "high";
+}
+
+export interface SkillAutoApplyPolicy {
+  enabled: boolean;
+  max_risk: "low" | "medium" | "high";
+  allow_entry_file_body: boolean;
+  allow_frontmatter: boolean;
+  allow_new_reference_files: boolean;
+  allow_scripts: boolean;
+  allow_assets: boolean;
+  allow_config_files: boolean;
+  max_changed_files: number;
+  max_added_lines: number;
+  max_removed_lines: number;
+  require_validation: boolean;
+}
+
+export interface SkillManifest {
+  target_type: string;
+  entry_file: string;
+  instruction_files: string[];
+  supporting_files: string[];
+  required_frontmatter: string[];
+  known_frontmatter: string[];
+  allowed_update_surfaces: string[];
+  high_risk_surfaces: string[];
+  notes: string[];
+}
+
+export interface SkillTarget {
+  target_id: string;
+  name: string;
+  description: string | null;
+  path: string;
+  target_type: string;
+  entry_file: string;
+  scope_type: string;
+  scope_id: string | null;
+  update_mode: "review" | "auto_apply" | "paused";
+  auto_apply_policy: SkillAutoApplyPolicy;
+  status: string;
+  manifest: SkillManifest | null;
+  created_at: string | null;
+  updated_at: string | null;
+  file_count?: number;
+  files?: SkillTargetFile[];
+}
+
+export interface SkillPatch {
+  relative_path: string;
+  change_type: "modify" | "create";
+  risk: "low" | "medium" | "high";
+  rationale: string;
+  evidence_record_ids: string[];
+  before_text?: string | null;
+  after_text: string;
+  diff_text: string;
+}
+
+export interface SkillProposalPatchJson {
+  title: string;
+  summary: string;
+  risk_level: "low" | "medium" | "high";
+  signals: Array<Record<string, unknown>>;
+  patches: SkillPatch[];
+  auto_apply_eligible: boolean;
+}
+
+export interface SkillProposal {
+  proposal_id: string;
+  target_id: string;
+  title: string;
+  summary: string;
+  risk_level: "low" | "medium" | "high";
+  status: string;
+  patch_json: SkillProposalPatchJson;
+  validation_json: { ok?: boolean; checks?: string[]; errors?: string[] };
+  guard_json: { accepted?: boolean; reasons?: string[]; auto_apply_eligible?: boolean; risk_level?: string };
+  auto_apply_eligible: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SkillTargetsResponse {
+  targets: SkillTarget[];
+}
+
+export interface SkillProposalsResponse {
+  proposals: SkillProposal[];
 }
 
 /* ----- Logs --------------------------------------------------------- */
@@ -293,6 +396,8 @@ export interface GraphNode {
   confidence?: number | null;
   status?: string;
   record_kind?: string;
+  record_role?: string;
+  role_payload?: string | null;
   project?: string;
   tags?: string[];
   body?: string;

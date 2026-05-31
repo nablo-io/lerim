@@ -174,3 +174,35 @@ def test_model_completion_summary_is_not_persisted(tmp_path) -> None:
     assert summary == "Trace ingestion completed: 1 durable record created."
     assert observations[-1]["content"] == summary
     assert "CSS" not in summary
+
+
+def test_persists_operational_role_metadata(tmp_path) -> None:
+    """Durable record role annotations are saved with the canonical record."""
+    ctx = _context(tmp_path)
+    prepare_context_store(ctx)
+    payload = _synthesized_payload()
+    payload["durable_records"][0]["record_role"] = "gotcha"
+    payload["durable_records"][0]["role_payload"] = {
+        "condition": "Replaying an already-ingested trace.",
+        "symptom": "The episode already exists.",
+        "avoid": "Do not create duplicate episode records.",
+        "recover": "Treat duplicate episodes as idempotent replays.",
+    }
+
+    observations, done, _summary = persist_synthesized_extraction(payload, ctx)
+
+    store = ContextStore(ctx.context_db_path)
+    rows = store.query(
+        entity="records",
+        mode="list",
+        project_ids=[ctx.project_identity.project_id],
+        record_role="gotcha",
+        limit=10,
+        include_archived=True,
+    )["rows"]
+
+    assert done is True
+    assert observations[1]["ok"] is True
+    assert len(rows) == 1
+    assert rows[0]["record_role"] == "gotcha"
+    assert "duplicate episode records" in rows[0]["role_payload"]

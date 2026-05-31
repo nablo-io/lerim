@@ -46,6 +46,8 @@ rationale  # noqa
 retrieval_json  # noqa
 brief  # noqa
 records_json  # noqa
+target_json  # noqa
+files_json  # noqa
 batch_id  # noqa
 source_record_id  # noqa
 target_record_id  # noqa
@@ -100,6 +102,9 @@ record_index  # noqa
 keep  # noqa
 save_any  # noqa
 session_reason  # noqa
+allowed_update_surfaces  # noqa
+high_risk_surfaces  # noqa
+diff_text  # noqa
 
 # Pydantic validators registered by decorators
 validate_level  # noqa

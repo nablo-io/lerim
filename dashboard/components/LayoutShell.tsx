@@ -21,10 +21,10 @@ export default function LayoutShell({ children }: { children: React.ReactNode })
   }, [sidebarCollapsed, sidebarPreferenceLoaded]);
 
   const contentClassName = pathname === "/context-graph"
-      ? "w-full px-4 py-5 pb-24 sm:px-6 md:p-0"
+      ? "w-full px-4 py-5 pb-36 min-[520px]:pb-24 sm:px-6 md:p-0"
       : pathname === "/memory"
-        ? "mx-auto max-w-7xl px-4 py-5 pb-24 sm:px-6 md:py-8 md:pb-8"
-        : "mx-auto max-w-6xl px-4 py-5 pb-24 sm:px-6 md:py-8 md:pb-8";
+        ? "mx-auto max-w-7xl px-4 py-5 pb-36 min-[520px]:pb-24 sm:px-6 md:py-8 md:pb-8"
+        : "mx-auto max-w-6xl px-4 py-5 pb-36 min-[520px]:pb-24 sm:px-6 md:py-8 md:pb-8";
 
   return (
     <ToastProvider>

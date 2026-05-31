@@ -16,6 +16,7 @@ from lerim.agents.model_helpers import call_model_step, prediction_payload
 from lerim.agents.model_runtime import ModelRuntime, build_model_runtime
 from lerim.config.settings import Config
 from lerim.context import ContextStore, ProjectIdentity
+from lerim.context.roles import ALLOWED_RECORD_ROLES, normalize_record_role
 from lerim.context.spec import (
     ALLOWED_KINDS,
     ALLOWED_STATUSES,
@@ -253,6 +254,7 @@ def execute_count(
         mode="count",
         project_ids=project_ids,
         kind=record_kind(action),
+        record_role=record_role(action),
         status=record_status(action),
         source_session_id=text(action.get("source_session_id")),
         created_since=text(action.get("created_since")),
@@ -277,6 +279,7 @@ def execute_list(
         mode="list",
         project_ids=project_ids,
         kind=record_kind(action),
+        record_role=record_role(action),
         status=record_status(action),
         source_session_id=text(action.get("source_session_id")),
         created_since=text(action.get("created_since")),
@@ -310,6 +313,7 @@ def execute_search(
         project_ids=project_ids,
         query=query,
         kind_filters=[kind] if (kind := record_kind(action)) else None,
+        role_filters=[role] if (role := record_role(action)) else None,
         statuses=[status] if (status := record_status(action)) else None,
         valid_at=text(action.get("valid_at")),
         include_archived=bool(action.get("include_archived") or action.get("valid_at")),
@@ -324,6 +328,8 @@ def execute_search(
                 "record_id": hit.record_id,
                 "project_id": hit.project_id,
                 "kind": hit.kind,
+                "record_role": hit.record_role,
+                "role_payload": hit.role_payload,
                 "title": hit.title,
                 "body": hit.body,
                 "decision": hit.decision,
@@ -354,6 +360,8 @@ def record_for_answer(row: dict[str, Any]) -> dict[str, Any]:
         "scope_type": row.get("scope_type"),
         "scope_id": row.get("scope_id"),
         "kind": row.get("kind"),
+        "record_role": row.get("record_role"),
+        "role_payload": row.get("role_payload"),
         "title": row.get("title"),
         "body": row.get("body"),
         "decision": row.get("decision"),
@@ -377,6 +385,17 @@ def record_kind(action: dict[str, Any]) -> str | None:
     if raw not in ALLOWED_KINDS:
         raise ValueError(f"invalid_answer_kind:{raw}")
     return raw
+
+
+def record_role(action: dict[str, Any]) -> str | None:
+    """Return a canonical operational role filter."""
+    raw = str(action.get("record_role") or "").strip()
+    if not raw:
+        return None
+    role = normalize_record_role(raw)
+    if role not in ALLOWED_RECORD_ROLES:
+        raise ValueError(f"invalid_answer_record_role:{role}")
+    return role
 
 
 def record_status(action: dict[str, Any]) -> str | None:

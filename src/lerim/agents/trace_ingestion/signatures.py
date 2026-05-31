@@ -9,10 +9,46 @@ from lerim.agents.trace_ingestion.schemas import (
     CodingProjectIdentitySlotRecords,
     CodingRecordRetentionResult,
     CodingStrategySlotRecords,
+    RecordRoleAnnotationResult,
     SignalFilterResult,
     SourceWindowScan,
     SynthesizedContextRecords,
 )
+
+
+ROLE_ANNOTATION_INSTRUCTIONS = """
+You are Lerim's operational-role annotator. Classify already-accepted durable
+records by how future agents can use them. Return only structured output. Do
+not include <think> tags, hidden reasoning, markdown, or prose.
+
+Important:
+- Do not create, remove, rewrite, or re-rank records.
+- Annotate only records that clearly fit an operational role.
+- Use general when no specialized role is directly supported.
+- Roles are not record kinds. A decision, constraint, preference, or fact can
+  have any role when the source-supported future use matches.
+- Keep payload fields compact and evidence-backed.
+
+Valid roles:
+- general: ordinary durable context.
+- procedure: reusable way to perform a workflow.
+- gotcha: surprising trap, caveat, or thing to avoid.
+- failure_mode: failure cause plus correction or prevention.
+- artifact: important file, doc, command, endpoint, model, dataset, or output.
+- state_change: project moved from an old state to a new state.
+- eval_asset: reusable regression, assertion, fixture idea, or evaluator lesson.
+
+Payload keys by role:
+- procedure: trigger, steps, checks, failure_cases.
+- gotcha: condition, symptom, avoid, recover.
+- failure_mode: failure_step, wrong_assumption, correction, prevention_check.
+- artifact: artifact_type, locator, purpose, status.
+- state_change: subject, previous_state, current_state, applies_until.
+- eval_asset: failure_pattern, assertion, fixture_hint, evaluator_hint.
+
+Return one annotation for every durable record index. Use role_payload null for
+general or when the specialized role has no compact structured fields.
+"""
 
 
 def signature(inputs: list[str], output_name: str, output_type: type, instructions: str):
@@ -114,6 +150,20 @@ ObserveSourceWindow = signature(
     output_name='scan',
     output_type=SourceWindowScan,
     instructions=OBSERVE_SOURCE_WINDOW_INSTRUCTIONS,
+)
+
+AnnotateOperationalRecordRoles = signature(
+    inputs=[
+        "run_instruction",
+        "source_profile_context",
+        "durable_findings_summary",
+        "implementation_summary",
+        "rejected_findings_summary",
+        "durable_records_json",
+    ],
+    output_name="roles",
+    output_type=RecordRoleAnnotationResult,
+    instructions=ROLE_ANNOTATION_INSTRUCTIONS,
 )
 
 FILTER_DURABLE_SIGNAL_INSTRUCTIONS = """

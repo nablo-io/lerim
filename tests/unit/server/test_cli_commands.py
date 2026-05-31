@@ -22,6 +22,7 @@ from typing import Any
 import pytest
 
 from lerim.server import cli
+from lerim.server import cli_skill
 from tests.helpers import make_config
 
 
@@ -2265,7 +2266,7 @@ class TestCmdSkill:
             "agents": tmp_path / ".agents" / "skills" / "lerim",
             "claude": tmp_path / ".claude" / "skills" / "lerim",
         }
-        monkeypatch.setattr(cli, "_SKILL_TARGETS", targets)
+        monkeypatch.setattr(cli_skill, "_SKILL_TARGETS", targets)
 
         args = _ns(command="skill", skill_action="install")
         buf = io.StringIO()

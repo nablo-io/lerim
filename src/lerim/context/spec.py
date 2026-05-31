@@ -8,6 +8,14 @@ from enum import StrEnum
 import json
 from typing import Any
 
+from lerim.context.roles import (
+    ALLOWED_RECORD_ROLES,
+    DEFAULT_RECORD_ROLE,
+    normalize_record_role,
+    normalize_role_payload,
+    role_payload_search_text,
+)
+
 
 class RecordKind(StrEnum):
     """Canonical durable-context record kinds."""
@@ -38,6 +46,7 @@ class RecordChangeKind(StrEnum):
 ALLOWED_KINDS = tuple(kind.value for kind in RecordKind)
 ALLOWED_STATUSES = tuple(status.value for status in RecordStatus)
 ALLOWED_CHANGE_KINDS = tuple(change_kind.value for change_kind in RecordChangeKind)
+ALLOWED_ROLES = ALLOWED_RECORD_ROLES
 MAX_RECORD_TITLE_CHARS = 120
 MAX_EPISODE_BODY_CHARS = 1200
 MAX_DURABLE_BODY_CHARS = 850
@@ -243,6 +252,10 @@ def record_validation_message(code: str) -> str | None:
             "Durable record body is too long. Keep only the reusable "
             "rule/decision/fact and why it matters."
         ),
+        "invalid_record_role": "Record role must be one of the canonical operational roles.",
+        "invalid_role_payload_json": "Record role payload must be valid JSON.",
+        "invalid_role_payload_type": "Record role payload must be a JSON object.",
+        "role_payload_too_long": "Record role payload is too long. Keep only reusable structured fields.",
     }
     return messages.get(str(code or "").strip())
 
@@ -268,6 +281,8 @@ def normalize_record_payload(
     outcomes: Any,
     source_event_refs: Any = None,
     evidence_refs: Any = None,
+    record_role: Any = DEFAULT_RECORD_ROLE,
+    role_payload: Any = None,
 ) -> dict[str, Any]:
     """Normalize and validate one record payload against the shared spec."""
     kind_text = normalize_record_kind(kind)
@@ -276,6 +291,11 @@ def normalize_record_payload(
     status_text = normalize_record_status(status)
     if status_text not in ALLOWED_STATUSES:
         raise ValueError(f"invalid_status:{status}")
+    role_text = normalize_record_role(record_role)
+    normalized_role_payload = normalize_role_payload(
+        role=role_text,
+        value=role_payload,
+    )
     title_text = str(title or "").strip()
     body_text = str(body or "").strip()
     if not title_text:
@@ -308,6 +328,8 @@ def normalize_record_payload(
         "outcomes": _normalize_optional_text(outcomes),
         "source_event_refs": _normalize_reference_list(source_event_refs),
         "evidence_refs": _normalize_reference_list(evidence_refs),
+        "record_role": role_text,
+        "role_payload": normalized_role_payload,
     }
     if payload["status"] == "archived" and not payload["valid_until"]:
         payload["valid_until"] = payload["updated_at"]
@@ -342,10 +364,16 @@ def normalize_record_payload(
 def record_search_text(payload: dict[str, Any], *, index_text: str | None = None) -> str:
     """Build canonical search text from one normalized record payload."""
     parts: list[str] = [f"kind: {payload['kind']}"]
+    role = str(payload.get("record_role") or DEFAULT_RECORD_ROLE).strip()
+    if role:
+        parts.append(f"role: {role}")
     for field_name in SEARCH_TEXT_FIELDS:
         text = str(payload.get(field_name) or "").strip()
         if text:
             parts.append(f"{field_name}: {text}")
+    role_text = role_payload_search_text(payload.get("role_payload"))
+    if role_text:
+        parts.append(f"role_payload:\n{role_text}")
     extra = str(index_text or "").strip()
     if extra:
         parts.append(f"index_text: {extra}")
