@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, cast, get_args
 
 from pydantic import BaseModel, Field
 
@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 TargetType = Literal[
     "codex_skill",
     "claude_skill",
+    "claude_context",
     "agent_skill",
     "agents_md",
     "gemini_context",
@@ -20,6 +21,7 @@ TargetType = Literal[
 ]
 TargetStatus = Literal["active", "paused", "archived"]
 UpdateMode = Literal["review", "auto_apply", "paused"]
+UPDATE_MODES = tuple(str(value) for value in get_args(UpdateMode))
 ProposalStatus = Literal[
     "draft",
     "pending_review",
@@ -57,6 +59,7 @@ class AutoApplyPolicy(BaseModel):
     allow_config_files: bool = False
     max_changed_files: int = 2
     max_added_lines: int = 40
+    max_removed_lines: int = 20
     require_validation: bool = True
 
 
@@ -171,3 +174,11 @@ class SkillProposal(BaseModel):
     auto_apply_eligible: bool
     created_at: str
     updated_at: str
+
+
+def normalize_update_mode(value: str | None) -> UpdateMode:
+    """Validate and normalize one target update mode before persistence."""
+    mode = str(value or "review").strip()
+    if mode not in UPDATE_MODES:
+        raise ValueError(f"invalid_update_mode:{mode}")
+    return cast(UpdateMode, mode)

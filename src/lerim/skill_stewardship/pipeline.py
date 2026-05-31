@@ -11,7 +11,7 @@ from lerim.agents.dspy_compat import dspy
 from lerim.agents.model_helpers import call_model_step, prediction_payload
 from lerim.agents.model_runtime import ModelRuntime, build_model_runtime
 from lerim.config.settings import Config, get_config
-from lerim.context import ContextStore
+from lerim.context import ContextStore, resolve_project_identity
 from lerim.skill_stewardship.artifacts import manifest_json, read_target_text, scan_instruction_artifact
 from lerim.skill_stewardship.patching import apply_proposal
 from lerim.skill_stewardship.repository import SkillStewardshipRepository
@@ -21,9 +21,10 @@ from lerim.skill_stewardship.schemas import (
     SkillPatch,
     SkillProposal,
     SkillProposalDraft,
+    ArtifactManifest,
 )
 from lerim.skill_stewardship.signatures import CompileSkillUpdateProposal
-from lerim.skill_stewardship.validation import validate_proposal
+from lerim.skill_stewardship.validation import frontmatter_block, path_belongs_to_manifest, validate_proposal
 
 DEFAULT_RECORD_LIMIT = 80
 PREFERRED_RECORD_ROLES = [
@@ -73,11 +74,17 @@ class SkillStewardshipPipeline(dspy.Module):
                 files=files,
                 update_mode=target.update_mode,
                 auto_apply_policy=target.auto_apply_policy,
+                scope_type=target.scope_type,
+                scope_id=target.scope_id,
             )
-            records = _candidate_records(self.repository.context_store, limit=record_limit)
+            records = _candidate_records(
+                self.repository.context_store,
+                limit=record_limit,
+                project_ids=_target_project_ids(self.config, refreshed),
+            )
             draft = self._compile(target=refreshed, base=base, manifest=manifest, files=files, records=records)
             draft = hydrate_patch_text(base=base, draft=draft)
-            guard = guard_proposal(draft=draft, policy=refreshed.auto_apply_policy)
+            guard = guard_proposal(draft=draft, policy=refreshed.auto_apply_policy, manifest=manifest)
             validation = validate_proposal(base_path=base, manifest=manifest, proposal=draft)
             signals = self.repository.save_signals(run_id=run_id, target_id=refreshed.target_id, draft=draft)
             if draft.patches and guard.accepted:
@@ -96,6 +103,7 @@ class SkillStewardshipPipeline(dspy.Module):
                         repository=self.repository,
                         proposal=proposal,
                         applied_by="auto_apply",
+                        workspace_root=self.config.global_data_dir / "workspace",
                     )
                     applied += 1
             self.repository.finish_run(
@@ -179,25 +187,43 @@ def run_skill_stewardship_refresh(
     return pipeline(target_id_or_name, record_limit=record_limit)
 
 
-def guard_proposal(*, draft: SkillProposalDraft, policy: AutoApplyPolicy) -> ProposalGuardResult:
+def guard_proposal(
+    *,
+    draft: SkillProposalDraft,
+    policy: AutoApplyPolicy,
+    manifest: ArtifactManifest | None = None,
+) -> ProposalGuardResult:
     """Apply deterministic safety gates to a model-authored proposal."""
     reasons: list[str] = []
     if not draft.patches:
         return ProposalGuardResult(accepted=False, risk_level="low", auto_apply_eligible=False, reasons=["no_patch"])
     risk = _highest_risk([draft.risk_level, *(patch.risk for patch in draft.patches)])
+    added_lines = sum(
+        max(0, len((patch.after_text or "").splitlines()) - len((patch.before_text or "").splitlines()))
+        for patch in draft.patches
+    )
+    removed_lines = sum(
+        max(0, len((patch.before_text or "").splitlines()) - len((patch.after_text or "").splitlines()))
+        for patch in draft.patches
+    )
+    if not _risk_allowed(risk, policy.max_risk):
+        reasons.append(f"risk {risk} exceeds auto-apply max_risk={policy.max_risk}")
+    if len(draft.patches) > policy.max_changed_files:
+        reasons.append(f"changed files exceed auto-apply max_changed_files={policy.max_changed_files}")
+    if added_lines > policy.max_added_lines:
+        reasons.append(f"added lines exceed auto-apply max_added_lines={policy.max_added_lines}")
+    if removed_lines > policy.max_removed_lines:
+        reasons.append(f"removed lines exceed auto-apply max_removed_lines={policy.max_removed_lines}")
     for patch in draft.patches:
-        if patch.risk == "high":
-            reasons.append(f"{patch.relative_path}: high-risk changes require manual review")
         if not patch.evidence_record_ids:
             reasons.append(f"{patch.relative_path}: missing evidence")
-        if patch.relative_path.split("/", 1)[0] in {"scripts", "assets"}:
-            reasons.append(f"{patch.relative_path}: scripts/assets are blocked from auto-apply")
+        reasons.extend(_patch_policy_reasons(patch=patch, policy=policy, manifest=manifest))
     auto_apply = (
         policy.enabled
-        and risk == "low"
+        and _risk_allowed(risk, policy.max_risk)
         and len(draft.patches) <= policy.max_changed_files
-        and sum(max(0, len((patch.after_text or "").splitlines()) - len((patch.before_text or "").splitlines())) for patch in draft.patches)
-        <= policy.max_added_lines
+        and added_lines <= policy.max_added_lines
+        and removed_lines <= policy.max_removed_lines
         and not reasons
     )
     return ProposalGuardResult(
@@ -208,7 +234,36 @@ def guard_proposal(*, draft: SkillProposalDraft, policy: AutoApplyPolicy) -> Pro
     )
 
 
-def _candidate_records(store: ContextStore, *, limit: int) -> list[dict[str, Any]]:
+def _patch_policy_reasons(
+    *,
+    patch: SkillPatch,
+    policy: AutoApplyPolicy,
+    manifest: ArtifactManifest | None,
+) -> list[str]:
+    """Return policy reasons that keep one patch out of automatic application."""
+    reasons: list[str] = []
+    path = Path(patch.relative_path)
+    first = path.parts[0] if path.parts else ""
+    if patch.risk == "high":
+        reasons.append(f"{patch.relative_path}: high-risk changes require manual review")
+    if manifest and not path_belongs_to_manifest(manifest, patch.relative_path, change_type=patch.change_type):
+        reasons.append(f"{patch.relative_path}: outside registered instruction artifact")
+    if manifest and patch.relative_path == manifest.entry_file and not policy.allow_entry_file_body:
+        reasons.append(f"{patch.relative_path}: entry-file body changes are blocked from auto-apply")
+    if frontmatter_block(str(patch.before_text or "")) != frontmatter_block(patch.after_text) and not policy.allow_frontmatter:
+        reasons.append(f"{patch.relative_path}: frontmatter changes are blocked from auto-apply")
+    if patch.change_type == "create" and first in {"references", "reference", "examples"} and not policy.allow_new_reference_files:
+        reasons.append(f"{patch.relative_path}: new reference/example files are blocked from auto-apply")
+    if first == "scripts" and not policy.allow_scripts:
+        reasons.append(f"{patch.relative_path}: scripts are blocked from auto-apply")
+    if first == "assets" and not policy.allow_assets:
+        reasons.append(f"{patch.relative_path}: assets are blocked from auto-apply")
+    if _is_config_path(path) and not policy.allow_config_files:
+        reasons.append(f"{patch.relative_path}: config files are blocked from auto-apply")
+    return reasons
+
+
+def _candidate_records(store: ContextStore, *, limit: int, project_ids: list[str] | None = None) -> list[dict[str, Any]]:
     """Load high-value operational records for proposal generation."""
     store.initialize()
     role_rows: list[dict[str, Any]] = []
@@ -216,7 +271,7 @@ def _candidate_records(store: ContextStore, *, limit: int) -> list[dict[str, Any
         result = store.query(
             entity="records",
             mode="list",
-            project_ids=None,
+            project_ids=project_ids,
             record_role=role,
             status="active",
             order_by="updated_at",
@@ -229,7 +284,7 @@ def _candidate_records(store: ContextStore, *, limit: int) -> list[dict[str, Any
     result = store.query(
         entity="records",
         mode="list",
-        project_ids=None,
+        project_ids=project_ids,
         status="active",
         order_by="updated_at",
         limit=limit - len(role_rows),
@@ -237,6 +292,16 @@ def _candidate_records(store: ContextStore, *, limit: int) -> list[dict[str, Any
     )
     seen = {row.get("record_id") for row in role_rows}
     return role_rows + [row for row in result.get("rows") or [] if row.get("record_id") not in seen]
+
+
+def _target_project_ids(config: Config, target: Any) -> list[str] | None:
+    """Return the project ids a target may learn from."""
+    if target.scope_type == "project" and target.scope_id:
+        return [str(target.scope_id)]
+    registered = []
+    for path in config.projects.values():
+        registered.append(resolve_project_identity(Path(path).expanduser().resolve()).project_id)
+    return registered or None
 
 
 def hydrate_patch_text(*, base: Path, draft: SkillProposalDraft) -> SkillProposalDraft:
@@ -289,6 +354,23 @@ def _highest_risk(values: list[str]) -> str:
     """Return the highest risk level from a list."""
     order = {"low": 0, "medium": 1, "high": 2}
     return max(values, key=lambda value: order.get(str(value), 0))
+
+
+def _risk_allowed(risk: str, max_risk: str) -> bool:
+    """Return whether a patch risk is within an auto-apply policy ceiling."""
+    order = {"low": 0, "medium": 1, "high": 2}
+    return order.get(str(risk), 2) <= order.get(str(max_risk), 0)
+
+
+def _is_config_path(path: Path) -> bool:
+    """Return whether a relative target path is a high-risk config surface."""
+    first = path.parts[0] if path.parts else ""
+    return first in {"agents", ".cursor", ".roo", ".clinerules"} or path.suffix in {
+        ".json",
+        ".toml",
+        ".yaml",
+        ".yml",
+    }
 
 
 def _should_auto_apply(update_mode: str, policy: AutoApplyPolicy, proposal: SkillProposal) -> bool:

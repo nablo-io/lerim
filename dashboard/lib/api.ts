@@ -523,12 +523,7 @@ export const api = {
   },
 
   getRecordFilters: async (): Promise<RecordFiltersResponse> => {
-    const data = await queryRecords({ limit: "500" });
-    return {
-      types: Array.from(new Set(data.records.map((record) => record.record_kind).filter((kind): kind is string => Boolean(kind)))).sort(),
-      roles: Array.from(new Set(data.records.map((record) => record.record_role).filter((role): role is string => Boolean(role)))).sort(),
-      projects: Array.from(new Set(data.records.map((record) => record.project).filter((project): project is string => Boolean(project)))).sort(),
-    };
+    return apiFetch<RecordFiltersResponse>("/api/records/filters");
   },
 
   getRecords: queryRecords,

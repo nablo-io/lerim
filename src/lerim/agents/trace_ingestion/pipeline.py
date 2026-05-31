@@ -664,7 +664,20 @@ class TraceIngestionPipeline(dspy.Module):
         records = list(payload.get("durable_records") or [])
         if not records:
             return
-        self.require_budget(state)
+        if int(state.get("llm_calls") or 0) >= self.max_model_steps:
+            role_counts: dict[str, int] = {}
+            for record in records:
+                role = str(record.get("record_role") or "general")
+                role_counts[role] = role_counts.get(role, 0) + 1
+            state["observations"].append(
+                observation(
+                    "annotate_record_roles",
+                    True,
+                    f"skipped_for_budget {role_count_summary(role_counts)}",
+                    {"role_counts": role_counts, "skipped_for_budget": True},
+                )
+            )
+            return
         if self.progress:
             print(
                 f"  trace-ingestion role_annotation {int(state['llm_calls']) + 1}/{self.max_model_steps}",

@@ -191,7 +191,7 @@ def semantic_candidates(
             ).fetchone()[0]
         )
         candidate_limit = min(max_candidates, max(int(limit), 25))
-        if project_ids or kind_filters or statuses or valid_at or include_archived:
+        if project_ids or kind_filters or role_filters or statuses or valid_at or include_archived:
             candidate_limit = min(max_candidates, max(candidate_limit, int(limit) * 4))
         rows: list[sqlite3.Row] = []
         while candidate_limit > 0:

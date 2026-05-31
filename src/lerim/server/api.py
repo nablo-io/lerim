@@ -57,12 +57,19 @@ from lerim.config.settings import (
 )
 from lerim.profiles import list_signal_packs
 from lerim.server.runtime import LerimRuntime
-from lerim.skill_stewardship.artifacts import artifact_name, scan_instruction_artifact
-from lerim.skill_stewardship.patching import apply_proposal
-from lerim.skill_stewardship.pipeline import guard_proposal, hydrate_patch_text, run_skill_stewardship_refresh
-from lerim.skill_stewardship.repository import SkillStewardshipRepository
-from lerim.skill_stewardship.schemas import AutoApplyPolicy, SkillProposalDraft
-from lerim.skill_stewardship.validation import validate_proposal
+from lerim.server.skill_api import (
+    api_skill_proposal_apply as api_skill_proposal_apply,
+    api_skill_proposal_reject as api_skill_proposal_reject,
+    api_skill_proposal_show as api_skill_proposal_show,
+    api_skill_proposal_update as api_skill_proposal_update,
+    api_skill_proposals as api_skill_proposals,
+    api_skill_refresh as api_skill_refresh,
+    api_skill_runs as api_skill_runs,
+    api_skill_target_add as api_skill_target_add,
+    api_skill_target_mode as api_skill_target_mode,
+    api_skill_target_show as api_skill_target_show,
+    api_skill_targets as api_skill_targets,
+)
 from lerim.sessions.catalog import (
     count_all_session_state,
     count_fts_indexed,
@@ -308,6 +315,16 @@ def _count_project_records(config: Config, project_path: Path) -> int:
     return int(row["total"]) if row else 0
 
 
+def _registered_project_ids(config: Config, store: ContextStore) -> list[str]:
+    """Return registered project ids and make sure they exist in the store."""
+    project_ids = []
+    for _name, path in _registered_projects(config):
+        identity = resolve_project_identity(path)
+        store.register_project(identity)
+        project_ids.append(identity.project_id)
+    return project_ids
+
+
 def _session_stats_for_repo(
     *,
     sessions_db_path: Path,
@@ -540,161 +557,56 @@ def api_query(
     }
 
 
-def api_skill_target_add(
-    *,
-    path: str,
-    name: str | None = None,
-    description: str | None = None,
-    update_mode: str = "review",
-) -> dict[str, Any]:
-    """Register or refresh one instruction target from a filesystem path."""
+def api_record_filters() -> dict[str, Any]:
+    """Return complete distinct record filter options for the dashboard."""
     config = get_config()
-    repository = SkillStewardshipRepository(_context_store(config))
-    base, manifest, files = scan_instruction_artifact(path)
-    target = repository.upsert_target(
-        name=name or artifact_name(path, manifest),
-        path=Path(path).expanduser().resolve(),
-        description=description,
-        manifest=manifest,
-        files=files,
-        update_mode=update_mode,
-    )
+    store = _context_store(config)
+    project_ids = _registered_project_ids(config, store)
+    if not project_ids:
+        return {"types": [], "roles": [], "projects": [], "error": False}
+    placeholders = ", ".join("?" for _ in project_ids)
+    with store.connect() as conn:
+        kind_rows = conn.execute(
+            f"""
+            SELECT DISTINCT kind AS value
+            FROM records
+            WHERE status = 'active'
+              AND project_id IN ({placeholders})
+              AND COALESCE(TRIM(kind), '') != ''
+            ORDER BY kind ASC
+            """,
+            tuple(project_ids),
+        ).fetchall()
+        role_rows = conn.execute(
+            f"""
+            SELECT DISTINCT COALESCE(record_role, 'general') AS value
+            FROM records
+            WHERE status = 'active'
+              AND project_id IN ({placeholders})
+              AND COALESCE(TRIM(record_role), '') != ''
+            ORDER BY value ASC
+            """,
+            tuple(project_ids),
+        ).fetchall()
+        project_rows = conn.execute(
+            f"""
+            SELECT DISTINCT project_id AS value
+            FROM records
+            WHERE status = 'active'
+              AND project_id IN ({placeholders})
+            ORDER BY value ASC
+            """,
+            tuple(project_ids),
+        ).fetchall()
+    project_names_by_id = {
+        resolve_project_identity(path).project_id: name for name, path in _registered_projects(config)
+    }
     return {
-        "target": target.model_dump(),
-        "base_path": str(base),
-        "files": [item.model_dump(exclude={"text_preview"}) for item in files],
+        "types": [str(row["value"]) for row in kind_rows],
+        "roles": [str(row["value"]) for row in role_rows],
+        "projects": sorted(project_names_by_id.get(str(row["value"]), str(row["value"])) for row in project_rows),
         "error": False,
     }
-
-
-def api_skill_targets() -> dict[str, Any]:
-    """List registered instruction targets with latest scanned files."""
-    config = get_config()
-    repository = SkillStewardshipRepository(_context_store(config))
-    targets = []
-    for target in repository.list_targets():
-        files = repository.target_files(target.target_id)
-        targets.append(
-            {
-                **target.model_dump(),
-                "file_count": len(files),
-                "files": [item.model_dump(exclude={"text_preview"}) for item in files],
-            }
-        )
-    return {"targets": targets, "error": False}
-
-
-def api_skill_target_show(target_id_or_name: str) -> dict[str, Any]:
-    """Return one instruction target, files, and related proposals."""
-    config = get_config()
-    repository = SkillStewardshipRepository(_context_store(config))
-    target = repository.get_target(target_id_or_name)
-    return {
-        "target": target.model_dump(),
-        "files": [item.model_dump() for item in repository.target_files(target.target_id)],
-        "proposals": [item.model_dump() for item in repository.list_proposals(target_id=target.target_id)],
-        "error": False,
-    }
-
-
-def api_skill_target_mode(
-    *,
-    target_id_or_name: str,
-    update_mode: str,
-    auto_apply_policy: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Update target review mode and auto-apply policy."""
-    config = get_config()
-    repository = SkillStewardshipRepository(_context_store(config))
-    existing = repository.get_target(target_id_or_name)
-    policy = existing.auto_apply_policy
-    if auto_apply_policy is not None:
-        policy = AutoApplyPolicy.model_validate({**policy.model_dump(), **auto_apply_policy})
-    target = repository.update_target_mode(target_id_or_name, update_mode, policy)
-    return {"target": target.model_dump(), "error": False}
-
-
-def api_skill_refresh(target_id_or_name: str, *, record_limit: int = 80) -> dict[str, Any]:
-    """Run the LLM-backed skill stewardship proposal pipeline."""
-    result = run_skill_stewardship_refresh(
-        target_id_or_name,
-        record_limit=record_limit,
-        progress=False,
-    )
-    return {**result, "error": False}
-
-
-def api_skill_proposals(
-    *,
-    target_id: str | None = None,
-    status: str | None = None,
-) -> dict[str, Any]:
-    """List skill update proposals."""
-    config = get_config()
-    repository = SkillStewardshipRepository(_context_store(config))
-    proposals = repository.list_proposals(target_id=target_id, status=status)
-    return {"proposals": [proposal.model_dump() for proposal in proposals], "error": False}
-
-
-def api_skill_proposal_show(proposal_id: str) -> dict[str, Any]:
-    """Return one proposal with its target and files."""
-    config = get_config()
-    repository = SkillStewardshipRepository(_context_store(config))
-    proposal = repository.get_proposal(proposal_id)
-    target = repository.get_target(proposal.target_id)
-    return {
-        "proposal": proposal.model_dump(),
-        "target": target.model_dump(),
-        "files": [item.model_dump() for item in repository.target_files(target.target_id)],
-        "error": False,
-    }
-
-
-def api_skill_proposal_apply(proposal_id: str) -> dict[str, Any]:
-    """Apply a proposal after user confirmation."""
-    config = get_config()
-    repository = SkillStewardshipRepository(_context_store(config))
-    proposal = repository.get_proposal(proposal_id)
-    applied = apply_proposal(repository=repository, proposal=proposal, applied_by="user")
-    return {"proposal": applied.model_dump(), "error": False}
-
-
-def api_skill_proposal_reject(proposal_id: str) -> dict[str, Any]:
-    """Reject a proposal from CLI or dashboard review."""
-    config = get_config()
-    repository = SkillStewardshipRepository(_context_store(config))
-    proposal = repository.set_proposal_status(proposal_id, "rejected")
-    return {"proposal": proposal.model_dump(), "error": False}
-
-
-def api_skill_proposal_update(proposal_id: str, patch_json: dict[str, Any]) -> dict[str, Any]:
-    """Replace proposal patch JSON after dashboard editing."""
-    config = get_config()
-    repository = SkillStewardshipRepository(_context_store(config))
-    proposal = repository.get_proposal(proposal_id)
-    target = repository.get_target(proposal.target_id)
-    if target.manifest is None:
-        raise ValueError("target manifest is missing")
-    base = Path(target.path).expanduser().resolve()
-    if base.is_file():
-        base = base.parent
-    draft = hydrate_patch_text(base=base, draft=SkillProposalDraft.model_validate(patch_json))
-    guard = guard_proposal(draft=draft, policy=target.auto_apply_policy)
-    validation = validate_proposal(base_path=base, manifest=target.manifest, proposal=draft)
-    updated = repository.update_proposal_patch(
-        proposal_id=proposal_id,
-        draft=draft,
-        validation=validation,
-        guard=guard,
-    )
-    return {"proposal": updated.model_dump(), "error": False}
-
-
-def api_skill_runs(limit: int = 20) -> dict[str, Any]:
-    """List recent skill stewardship runs."""
-    config = get_config()
-    repository = SkillStewardshipRepository(_context_store(config))
-    return {"runs": repository.recent_runs(limit=limit), "error": False}
 
 
 def api_memory_reset(

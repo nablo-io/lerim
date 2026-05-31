@@ -19,7 +19,12 @@ from lerim.skill_stewardship.schemas import (
     SkillProposalDraft,
     TargetFile,
     ValidationResult,
+    normalize_update_mode,
 )
+
+TERMINAL_PROPOSAL_STATUSES = {"applied", "rejected", "superseded"}
+EDITABLE_PROPOSAL_STATUSES = {"pending_review", "failed_validation"}
+APPLICABLE_PROPOSAL_STATUSES = {"pending_review", "approved"}
 
 
 def utc_now() -> str:
@@ -160,20 +165,40 @@ class SkillStewardshipRepository:
         description: str | None,
         manifest: ArtifactManifest,
         files: list[TargetFile],
-        update_mode: str = "review",
+        update_mode: str | None = None,
         auto_apply_policy: AutoApplyPolicy | None = None,
+        scope_type: str | None = None,
+        scope_id: str | None = None,
     ) -> InstructionTarget:
         """Create or update a registered instruction target from a fresh scan."""
         self.initialize()
         now = utc_now()
-        policy = auto_apply_policy or AutoApplyPolicy()
         with self.context_store.connect() as conn:
             existing = conn.execute(
-                "SELECT target_id, created_at FROM instruction_targets WHERE path = ?",
+                """
+                SELECT target_id, created_at, update_mode, auto_apply_policy_json, scope_type, scope_id
+                FROM instruction_targets
+                WHERE path = ?
+                """,
                 (str(path),),
             ).fetchone()
             target_id = str(existing["target_id"]) if existing else new_id("it")
             created_at = str(existing["created_at"]) if existing else now
+            if existing and auto_apply_policy is None:
+                policy = AutoApplyPolicy.model_validate(json.loads(str(existing["auto_apply_policy_json"] or "{}")))
+            else:
+                policy = auto_apply_policy or AutoApplyPolicy()
+            effective_update_mode = (
+                normalize_update_mode(update_mode)
+                if update_mode is not None
+                else normalize_update_mode(str(existing["update_mode"]) if existing else None)
+            )
+            effective_scope_type = str(scope_type or (existing["scope_type"] if existing else "global") or "global")
+            effective_scope_id = scope_id if scope_type else (existing["scope_id"] if existing else None)
+            if effective_scope_type == "project" and not effective_scope_id:
+                raise ValueError("project-scoped instruction targets require scope_id")
+            if effective_scope_type != "project":
+                effective_scope_id = None
             conn.execute(
                 """
                 INSERT INTO instruction_targets(
@@ -181,12 +206,14 @@ class SkillStewardshipRepository:
                     scope_type, scope_id, update_mode, auto_apply_policy_json,
                     manifest_json, status, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, 'global', NULL, ?, ?, ?, 'active', ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
                 ON CONFLICT(path) DO UPDATE SET
                     name=excluded.name,
                     description=excluded.description,
                     target_type=excluded.target_type,
                     entry_file=excluded.entry_file,
+                    scope_type=excluded.scope_type,
+                    scope_id=excluded.scope_id,
                     update_mode=excluded.update_mode,
                     auto_apply_policy_json=excluded.auto_apply_policy_json,
                     manifest_json=excluded.manifest_json,
@@ -200,7 +227,9 @@ class SkillStewardshipRepository:
                     str(path),
                     manifest.target_type,
                     manifest.entry_file,
-                    update_mode,
+                    effective_scope_type,
+                    effective_scope_id,
+                    effective_update_mode,
                     policy.model_dump_json(),
                     manifest.model_dump_json(),
                     created_at,
@@ -253,6 +282,7 @@ class SkillStewardshipRepository:
 
     def update_target_mode(self, target_id_or_name: str, update_mode: str, policy: AutoApplyPolicy | None = None) -> InstructionTarget:
         """Update review or auto-apply behavior for a target."""
+        effective_update_mode = normalize_update_mode(update_mode)
         target = self.get_target(target_id_or_name)
         effective_policy = policy or target.auto_apply_policy
         now = utc_now()
@@ -263,7 +293,7 @@ class SkillStewardshipRepository:
                 SET update_mode = ?, auto_apply_policy_json = ?, updated_at = ?
                 WHERE target_id = ?
                 """,
-                (update_mode, effective_policy.model_dump_json(), now, target.target_id),
+                (effective_update_mode, effective_policy.model_dump_json(), now, target.target_id),
             )
         return self.get_target(target.target_id)
 
@@ -436,6 +466,8 @@ class SkillStewardshipRepository:
         """Move a proposal through the review lifecycle."""
         self.initialize()
         with self.context_store.connect() as conn:
+            current = self._proposal_row(conn, proposal_id)
+            self._ensure_status_transition(current_status=str(current["status"]), next_status=status)
             conn.execute(
                 """
                 UPDATE instruction_update_proposals
@@ -457,15 +489,20 @@ class SkillStewardshipRepository:
         """Replace a proposal patch after user editing and validation."""
         self.initialize()
         with self.context_store.connect() as conn:
+            current = self._proposal_row(conn, proposal_id)
+            if str(current["status"]) not in EDITABLE_PROPOSAL_STATUSES:
+                raise ValueError(f"proposal status cannot be edited: {current['status']}")
             conn.execute(
                 """
                 UPDATE instruction_update_proposals
-                SET patch_json = ?, validation_json = ?, guard_json = ?,
+                SET title = ?, summary = ?, patch_json = ?, validation_json = ?, guard_json = ?,
                     risk_level = ?, auto_apply_eligible = ?, status = 'pending_review',
                     updated_at = ?
                 WHERE proposal_id = ?
                 """,
                 (
+                    draft.title,
+                    draft.summary,
                     draft.model_dump_json(),
                     validation.model_dump_json(),
                     guard.model_dump_json(),
@@ -476,41 +513,6 @@ class SkillStewardshipRepository:
                 ),
             )
         return self.get_proposal(proposal_id)
-
-    def save_applied_version(
-        self,
-        *,
-        target_id: str,
-        proposal_id: str,
-        relative_path: str,
-        before_hash: str | None,
-        after_hash: str | None,
-        snapshot_path: str | None,
-        applied_by: str,
-    ) -> None:
-        """Record an applied file version."""
-        self.initialize()
-        with self.context_store.connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO instruction_versions(
-                    version_id, target_id, proposal_id, relative_path, before_hash,
-                    after_hash, snapshot_path, applied_at, applied_by
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    new_id("iv"),
-                    target_id,
-                    proposal_id,
-                    relative_path,
-                    before_hash,
-                    after_hash,
-                    snapshot_path,
-                    utc_now(),
-                    applied_by,
-                ),
-            )
 
     def recent_runs(self, *, limit: int = 20) -> list[dict[str, Any]]:
         """Return recent stewardship runs as dictionaries."""
@@ -537,6 +539,18 @@ class SkillStewardshipRepository:
         seen_at: str,
     ) -> None:
         """Refresh target file rows after a scan."""
+        relative_paths = [file_info.relative_path for file_info in files]
+        if relative_paths:
+            placeholders = ", ".join("?" for _ in relative_paths)
+            conn.execute(
+                f"""
+                DELETE FROM instruction_target_files
+                WHERE target_id = ? AND relative_path NOT IN ({placeholders})
+                """,
+                (target_id, *relative_paths),
+            )
+        else:
+            conn.execute("DELETE FROM instruction_target_files WHERE target_id = ?", (target_id,))
         for file_info in files:
             conn.execute(
                 """
@@ -565,6 +579,25 @@ class SkillStewardshipRepository:
                     seen_at,
                 ),
             )
+
+    def _proposal_row(self, conn: sqlite3.Connection, proposal_id: str) -> sqlite3.Row:
+        """Return one proposal row or raise a stable not-found error."""
+        row = conn.execute(
+            "SELECT * FROM instruction_update_proposals WHERE proposal_id = ?",
+            (proposal_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"instruction proposal not found: {proposal_id}")
+        return row
+
+    def _ensure_status_transition(self, *, current_status: str, next_status: str) -> None:
+        """Reject lifecycle transitions that would resurrect terminal proposals."""
+        if current_status == next_status:
+            return
+        if current_status in TERMINAL_PROPOSAL_STATUSES:
+            raise ValueError(f"proposal status is terminal: {current_status}")
+        if next_status == "applied" and current_status not in APPLICABLE_PROPOSAL_STATUSES:
+            raise ValueError(f"proposal status cannot be applied: {current_status}")
 
     def _target_from_row(self, row: sqlite3.Row) -> InstructionTarget:
         """Convert one target row into a typed model."""

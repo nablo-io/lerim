@@ -25,6 +25,18 @@ KNOWN_SUPPORT_DIRS = {
     ".cursor",
     ".roo",
 }
+IGNORED_SCAN_DIRS = {
+    ".git",
+    ".hg",
+    ".svn",
+    ".next",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+    "node_modules",
+    "venv",
+}
 
 
 def scan_instruction_artifact(path: Path | str) -> tuple[Path, ArtifactManifest, list[TargetFile]]:
@@ -76,9 +88,10 @@ def _target_files(*, root: Path, base: Path, entry: Path) -> list[TargetFile]:
     """Collect bounded artifact files for review and proposal generation."""
     candidates = [entry]
     if root.is_dir():
-        for child in sorted(root.rglob("*")):
-            if child.is_file() and _belongs_to_artifact(root, child):
-                candidates.append(child)
+        for child in _artifact_children(root):
+            candidates.append(child)
+            if len(candidates) >= MAX_SCAN_FILES:
+                break
     seen: set[Path] = set()
     files: list[TargetFile] = []
     for candidate in candidates:
@@ -90,9 +103,11 @@ def _target_files(*, root: Path, base: Path, entry: Path) -> list[TargetFile]:
             break
         try:
             stat = resolved.stat()
+            relative_path = resolved.relative_to(base).as_posix()
         except OSError:
             continue
-        relative_path = resolved.relative_to(base).as_posix()
+        except ValueError:
+            continue
         preview = None
         if _is_textish(resolved) and stat.st_size <= MAX_FILE_BYTES:
             preview = resolved.read_text(encoding="utf-8", errors="replace")
@@ -106,6 +121,42 @@ def _target_files(*, root: Path, base: Path, entry: Path) -> list[TargetFile]:
                 risk_surface=_risk_surface(root=root, path=resolved),
             )
         )
+    return files
+
+
+def _artifact_children(root: Path) -> list[Path]:
+    """Return bounded candidate files without walking unrelated repo trees."""
+    children: list[Path] = []
+    for child in sorted(root.iterdir()):
+        if len(children) >= MAX_SCAN_FILES:
+            break
+        if child.is_file() and _belongs_to_artifact(root, child):
+            children.append(child)
+        elif not child.is_symlink() and child.is_dir() and child.name in KNOWN_SUPPORT_DIRS:
+            children.extend(_support_files(root, child, remaining=MAX_SCAN_FILES - len(children)))
+    return children
+
+
+def _support_files(root: Path, support_dir: Path, *, remaining: int) -> list[Path]:
+    """Walk one known support directory with pruning and a hard file cap."""
+    files: list[Path] = []
+    stack = [support_dir]
+    while stack and len(files) < remaining:
+        current = stack.pop()
+        try:
+            entries = sorted(current.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            if len(files) >= remaining:
+                break
+            if entry.is_symlink():
+                continue
+            if entry.is_dir():
+                if entry.name not in IGNORED_SCAN_DIRS:
+                    stack.append(entry)
+            elif entry.is_file() and _belongs_to_artifact(root, entry):
+                files.append(entry)
     return files
 
 
@@ -154,16 +205,22 @@ def _target_type(*, root: Path, entry: Path) -> TargetType:
     if root.name == ".clinerules" or ".clinerules" in entry.parts:
         return "cline_rules"
     if entry.name == "CLAUDE.md":
-        return "opencode_rules"
+        return "claude_context"
     return "generic_markdown_bundle"
 
 
 def _belongs_to_artifact(root: Path, path: Path) -> bool:
     """Return whether a child file should be considered part of an artifact."""
-    rel = path.resolve().relative_to(root.resolve())
+    try:
+        rel = path.resolve().relative_to(root.resolve())
+    except ValueError:
+        return False
     if len(rel.parts) == 1:
         return path.name in ENTRY_NAMES or path.suffix in {".md", ".txt", ".yaml", ".yml", ".json", ".toml"}
-    return rel.parts[0] in KNOWN_SUPPORT_DIRS and path.stat().st_size <= MAX_FILE_BYTES
+    try:
+        return rel.parts[0] in KNOWN_SUPPORT_DIRS and path.stat().st_size <= MAX_FILE_BYTES
+    except OSError:
+        return False
 
 
 def _file_role(*, root: Path, entry: Path, path: Path) -> str:
@@ -217,7 +274,7 @@ def _allowed_surfaces(target_type: TargetType) -> list[str]:
         return ["entry_file_body", "references", "examples"]
     if target_type == "cline_rules":
         return ["markdown_rule_files"]
-    if target_type == "gemini_context":
+    if target_type in {"claude_context", "gemini_context"}:
         return ["context_body", "explicit_imports"]
     return ["markdown_body"]
 
@@ -227,7 +284,7 @@ def _high_risk_surfaces(target_type: TargetType) -> list[str]:
     surfaces = ["scripts", "assets", "config_files", "frontmatter"]
     if target_type == "codex_skill":
         surfaces.append("agents/openai.yaml")
-    if target_type == "claude_skill":
+    if target_type in {"claude_skill", "claude_context"}:
         surfaces.extend(["allowed-tools", "disable-model-invocation", "hooks", "mcp_config"])
     return surfaces
 

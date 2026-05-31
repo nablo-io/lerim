@@ -10,6 +10,7 @@ from lerim.agents.trace_ingestion.coding_records import (
     apply_coding_retention_decisions,
     coding_eval_polish_to_synthesized,
 )
+from lerim.agents.trace_ingestion.pipeline import TraceIngestionPipeline
 from lerim.agents.trace_ingestion.summaries import (
     _episode_summary,
     _implementation_summary,
@@ -443,6 +444,33 @@ def test_trace_pipeline_filters_candidates_before_synthesis(tmp_path):
     decision = next(row for row in rows if row["kind"] == "decision")
     assert decision["record_role"] == "procedure"
     assert "Filter durable signal" in decision["role_payload"]
+
+
+def test_role_annotation_skips_when_model_budget_is_exhausted():
+    """The optional role pass should not fail ingestion when earlier steps use the budget."""
+    pipeline = object.__new__(TraceIngestionPipeline)
+    pipeline.max_model_steps = 1
+    pipeline.progress = False
+    state = {
+        "llm_calls": 1,
+        "observations": [],
+        "synthesized": {
+            "durable_records": [
+                {
+                    "kind": "decision",
+                    "title": "Keep extraction stable",
+                    "body": "Earlier steps used the model budget.",
+                    "status": "active",
+                }
+            ]
+        },
+    }
+
+    pipeline.annotate_record_roles(state)
+
+    assert state["synthesized"]["durable_records"][0]["title"] == "Keep extraction stable"
+    assert state["observations"][-1]["action"] == "annotate_record_roles"
+    assert state["observations"][-1]["args"]["skipped_for_budget"] is True
 
 
 def test_coding_fixture_slot_preserves_source_backed_body(tmp_path):

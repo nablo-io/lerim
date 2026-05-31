@@ -174,6 +174,7 @@ export interface SkillAutoApplyPolicy {
   allow_config_files: boolean;
   max_changed_files: number;
   max_added_lines: number;
+  max_removed_lines: number;
   require_validation: boolean;
 }
 

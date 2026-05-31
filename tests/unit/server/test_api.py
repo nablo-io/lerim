@@ -27,6 +27,7 @@ import pytest
 
 import lerim.server.api as api_mod
 import lerim.server.docker_runtime as docker_mod
+import lerim.server.skill_api as skill_api_mod
 import lerim.sessions.catalog as catalog_mod
 from lerim.adapters.registry import KNOWN_PLATFORMS
 from lerim.context import ContextStore, resolve_project_identity
@@ -39,6 +40,7 @@ from lerim.server.api import (
     api_project_add,
     api_project_list,
     api_project_remove,
+    api_record_filters,
     api_retry_all_dead_letter,
     api_skip_all_dead_letter,
     api_status,
@@ -377,6 +379,106 @@ def test_api_query_storage_error_returns_structured_failure(
     assert payload["error"] is True
     assert payload["status_code"] == 503
     assert payload["message"] == "Context query storage is unavailable."
+
+
+def test_api_record_filters_reads_distinct_values_without_limit_sampling(
+    monkeypatch,
+    tmp_path,
+    mock_embeddings,
+) -> None:
+    """Record filters come from distinct DB values instead of a sampled records page."""
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    cfg = replace(make_config(tmp_path), projects={"project": str(project_root)})
+    identity = resolve_project_identity(project_root)
+    store = ContextStore(cfg.context_db_path)
+    store.initialize()
+    store.register_project(identity)
+    for index in range(505):
+        store.create_record(
+            project_id=identity.project_id,
+            session_id=None,
+            kind="fact" if index < 504 else "constraint",
+            title=f"Record {index}",
+            body="Body.",
+            record_role="general" if index < 504 else "procedure",
+            scope_label="project",
+        )
+    monkeypatch.setattr(api_mod, "get_config", lambda: cfg)
+
+    payload = api_record_filters()
+
+    assert payload["types"] == ["constraint", "fact"]
+    assert payload["roles"] == ["general", "procedure"]
+    assert payload["projects"] == ["project"]
+    assert payload["error"] is False
+
+
+def test_api_record_filters_use_registered_project_scope(
+    monkeypatch,
+    tmp_path,
+    mock_embeddings,
+) -> None:
+    """Filter options exclude stale records from unregistered projects."""
+    registered_root = tmp_path / "registered"
+    stale_root = tmp_path / "stale"
+    registered_root.mkdir()
+    stale_root.mkdir()
+    cfg = replace(make_config(tmp_path), projects={"registered": str(registered_root)})
+    registered_identity = resolve_project_identity(registered_root)
+    stale_identity = resolve_project_identity(stale_root)
+    store = ContextStore(cfg.context_db_path)
+    store.initialize()
+    store.register_project(registered_identity)
+    store.register_project(stale_identity)
+    store.create_record(
+        project_id=registered_identity.project_id,
+        session_id=None,
+        kind="fact",
+        title="Registered",
+        body="Registered body.",
+        record_role="procedure",
+        scope_label="registered",
+    )
+    store.create_record(
+        project_id=stale_identity.project_id,
+        session_id=None,
+        kind="constraint",
+        title="Stale",
+        body="Stale body.",
+        record_role="gotcha",
+        scope_label="stale",
+    )
+    monkeypatch.setattr(api_mod, "get_config", lambda: cfg)
+
+    payload = api_record_filters()
+
+    assert payload["types"] == ["fact"]
+    assert payload["roles"] == ["procedure"]
+    assert payload["projects"] == ["registered"]
+
+
+def test_api_skill_target_add_scopes_registered_project_paths(
+    monkeypatch,
+    tmp_path,
+    mock_embeddings,
+) -> None:
+    """Targets inside a registered project are saved with that project scope."""
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    skill = project_root / "skill"
+    skill.mkdir()
+    (skill / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: Demo.\n---\n\nUse evidence.\n",
+        encoding="utf-8",
+    )
+    cfg = replace(make_config(tmp_path), projects={"project": str(project_root)})
+    monkeypatch.setattr(skill_api_mod, "get_config", lambda: cfg)
+
+    payload = skill_api_mod.api_skill_target_add(path=str(skill), name="demo")
+
+    assert payload["target"]["scope_type"] == "project"
+    assert payload["target"]["scope_id"] == resolve_project_identity(project_root).project_id
 
 
 def test_api_ingest_includes_queue_health_warning(monkeypatch, tmp_path) -> None:

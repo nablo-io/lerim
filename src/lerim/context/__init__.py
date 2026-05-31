@@ -81,6 +81,7 @@ __all__ = [
     "ALLOWED_STATUSES",
     "ALLOWED_SCOPE_TYPES",
     "ContextStore",
+    "DEFAULT_RECORD_ROLE",
     "DURABLE_RECORD_KINDS",
     "EMBEDDING_DIMS",
     "EMBEDDING_MODEL_NAME",
