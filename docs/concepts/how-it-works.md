@@ -25,6 +25,11 @@ For operational targets and scale boundaries, see
 
 ## Overall Architecture
 
+![Lerim turns completed agent sessions into reusable context through ingestion, signal extraction, curation, working memory, context briefs, and skill updates](../assets/lerim-context-loop-sketchnote.png)
+
+The sketchnote shows the product loop. The runtime architecture below maps the
+same loop onto Lerim's service components and derived artifacts.
+
 ```mermaid
 flowchart TD
     A["Agent activity sources"] --> B["Supported adapters or custom clean folders"]

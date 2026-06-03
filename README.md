@@ -153,16 +153,13 @@ Lerim is intentionally selective:
 Most routine traces should produce no durable record. Lerim's value is compact,
 cited context, not more logs.
 
-```mermaid
-flowchart LR
-    source[Completed source session] --> adapter[Native adapter or trace submit]
-    adapter --> normalized[Canonical trace]
-    normalized --> extractor[DSPy extraction pipeline]
-    extractor --> records[Evidence-backed context records]
-    records --> curate[Curate and link]
-    curate --> tools[CLI and MCP tools]
-    tools --> agent[Future agent]
-```
+<p align="center">
+  <img src="docs/assets/lerim-context-loop-sketchnote.png" alt="Lerim turns completed agent sessions into reusable context through ingestion, signal extraction, curation, working memory, context briefs, and skill updates" width="860">
+</p>
+
+<p align="center">
+  <em>Completed sessions become cited context, startup memory, and reviewable instruction updates for future agents.</em>
+</p>
 
 ## Agent Support
 
