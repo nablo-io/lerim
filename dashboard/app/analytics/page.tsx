@@ -55,6 +55,9 @@ function AnalyticsContent() {
 				setMemoryVersions(versionsData.versions);
 			} catch (err) {
 				if (seq === loadSeqRef.current) {
+					setStats(null);
+					setReport(null);
+					setMemoryVersions([]);
 					setError(err instanceof Error ? err.message : "Failed to load stats");
 				}
 			} finally {

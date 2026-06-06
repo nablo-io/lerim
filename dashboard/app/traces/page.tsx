@@ -132,6 +132,8 @@ function SourcesContent() {
       setTotal(data.total);
     } catch (err) {
       if (seq === loadSeqRef.current) {
+        setSessions([]);
+        setTotal(0);
         setError(
           err instanceof Error ? err.message : "Failed to load sessions"
         );

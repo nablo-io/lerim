@@ -25,12 +25,13 @@ export default function ProjectScope({
 
   useEffect(() => {
     let cancelled = false;
+    setError(false);
     api
       .getProjects()
       .then((items) => {
         if (cancelled) return;
         setProjects(items);
-        if (!includeAll && !value && items[0]) onChange(items[0].name);
+        setError(false);
       })
       .catch(() => {
         if (!cancelled) setError(true);
@@ -41,7 +42,7 @@ export default function ProjectScope({
     return () => {
       cancelled = true;
     };
-  }, [includeAll, onChange, value]);
+  }, []);
 
   if (error || (!includeAll && projects.length === 0 && !loading)) {
     return null;
@@ -60,6 +61,7 @@ export default function ProjectScope({
         className={`min-h-10 max-w-full rounded-md border border-[var(--border)] bg-[var(--bg-card)] px-3 text-xs text-[var(--text-secondary)] outline-none focus:border-[var(--accent-blue)] disabled:cursor-wait disabled:opacity-60 ${className}`}
       >
         {includeAll && <option value="">All projects</option>}
+        {!includeAll && !value && <option value="">Select project</option>}
         {loading ? (
           <option value={value}>Loading projects...</option>
         ) : (

@@ -218,6 +218,34 @@ def _empty_stats_payload(exc: sqlite3.Error) -> dict[str, Any]:
     return payload
 
 
+def _empty_extract_report(error: str) -> dict[str, Any]:
+    """Return a stable extraction report shape when report data is unavailable."""
+    return {
+        "window_start": None,
+        "window_end": None,
+        "agent_filter": "all",
+        "catalog_available": False,
+        "error": error,
+        "aggregates": {
+            "totals": {
+                "sessions": 0,
+                "messages": 0,
+                "tool_calls": 0,
+                "errors": 0,
+                "tokens": 0,
+            }
+        },
+        "narratives": {
+            "at_a_glance": {
+                "working": "",
+                "hindering": "",
+                "quick_wins": "",
+                "horizon": "",
+            }
+        },
+    }
+
+
 def _serialize_run(row: dict[str, Any], projects: dict[str, str] | None = None) -> dict[str, Any]:
     """Normalize a DB row to dashboard run JSON payload shape."""
     started = row.get("start_time")
@@ -1003,6 +1031,31 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
         messages = _load_messages_for_run(run_doc)
         self._json({"messages": messages})
 
+    def _api_record_detail(self, path: str, query: dict[str, list[str]]) -> None:
+        """Return one context record by id, constrained to the selected project."""
+        record_id = unquote(path.removeprefix("/api/records/")).strip("/")
+        if not record_id:
+            self._error(HTTPStatus.BAD_REQUEST, "Missing record id")
+            return
+        config = get_config()
+        project = _query_param(query, "project") or None
+        project_ids: list[str] | None = None
+        if project:
+            _project_name, _repo_path, project_id = _dashboard_project_scope(
+                config, project
+            )
+            project_ids = [project_id]
+        store = ContextStore(config.context_db_path)
+        record = store.fetch_record(
+            record_id,
+            project_ids=project_ids,
+            include_versions=True,
+        )
+        if record is None:
+            self._error(HTTPStatus.NOT_FOUND, "Record not found")
+            return
+        self._json(record)
+
     def _api_refine_status(self) -> None:
         """Return queue and recent run status for refine panel."""
         try:
@@ -1128,7 +1181,8 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
         try:
             report = build_extract_report(repo_path=repo_path)
         except Exception as exc:
-            self._error(HTTPStatus.INTERNAL_SERVER_ERROR, f"Report unavailable: {exc}")
+            report = _empty_extract_report(f"Report unavailable: {exc}")
+            self._json(report)
             return
         _REPORT_CACHE[cache_key] = {"at": now, "value": report}
         self._json(report)
@@ -1160,6 +1214,9 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
                 requested_project,
             )
         except ValueError as exc:
+            if requested_project:
+                self._error(HTTPStatus.BAD_REQUEST, str(exc))
+                return
             project_name, project_path, project_id = None, None, None
             error = str(exc)
         else:
@@ -1237,6 +1294,9 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
                 requested_project,
             )
         except ValueError as exc:
+            if requested_project:
+                self._error(HTTPStatus.BAD_REQUEST, str(exc))
+                return
             project_name, project_path, project_id = None, None, None
             error = str(exc)
         else:
@@ -1310,7 +1370,7 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
         except ValueError as exc:
             self._error(HTTPStatus.BAD_REQUEST, str(exc))
             return
-        project_params = [project_id] if project_id else []
+        graph_project_ids = [project_id] if project_id else []
         if not config.context_db_path.exists():
             self._json({
                 "nodes": [],
@@ -1332,21 +1392,28 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
         if project_id and repo_path:
             total_records = project_record_counts(config, Path(repo_path))["active"]
         else:
-            project_ids: list[str] = []
             for path in (config.projects or {}).values():
                 identity = resolve_project_identity(Path(path).expanduser().resolve())
                 store.register_project(identity)
-                project_ids.append(identity.project_id)
-            total_payload = store.query(
-                entity="records",
-                mode="count",
-                project_ids=project_ids,
-                status="active",
-            )
-            total_records = int(total_payload.get("count") or 0)
+                graph_project_ids.append(identity.project_id)
+            if graph_project_ids:
+                total_payload = store.query(
+                    entity="records",
+                    mode="count",
+                    project_ids=graph_project_ids,
+                    status="active",
+                )
+                total_records = int(total_payload.get("count") or 0)
+            else:
+                total_records = 0
         now = datetime.now(timezone.utc).isoformat()
-        node_project_sql = " AND cn.project_id = ?" if project_id else ""
-        edge_project_sql = " AND ce.project_id = ?" if project_id else ""
+        if graph_project_ids:
+            project_placeholder_sql = _placeholders(graph_project_ids)
+            node_project_sql = f" AND cn.project_id IN ({project_placeholder_sql})"
+            edge_project_sql = f" AND ce.project_id IN ({project_placeholder_sql})"
+        else:
+            node_project_sql = " AND 1 = 0"
+            edge_project_sql = " AND 1 = 0"
         current_node_sql = """cn.status = 'active'
                   AND r.status = 'active'
                   AND r.valid_from <= ?
@@ -1368,7 +1435,7 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
                         FROM context_nodes cn
                         JOIN records r ON r.record_id = cn.node_id
                         WHERE {current_node_sql}{node_project_sql}""",
-                    [*node_current_params, *project_params],
+                    [*node_current_params, *graph_project_ids],
                 ).fetchone()[0]
                 or 0
             )
@@ -1379,7 +1446,7 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
                         JOIN records sr ON sr.record_id = ce.source_node_id
                         JOIN records tr ON tr.record_id = ce.target_node_id
                         WHERE {current_edge_sql}{edge_project_sql}""",
-                    [*edge_current_params, *project_params],
+                    [*edge_current_params, *graph_project_ids],
                 ).fetchone()[0]
                 or 0
             )
@@ -1400,9 +1467,9 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
                     )""",
                     [
                         *edge_current_params,
-                        *project_params,
+                        *graph_project_ids,
                         *edge_current_params,
-                        *project_params,
+                        *graph_project_ids,
                     ],
                 ).fetchone()[0]
                 or 0
@@ -1433,7 +1500,7 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
                    WHERE {current_edge_sql}{edge_project_sql}
                    ORDER BY ce.confidence DESC, ce.updated_at DESC
                    LIMIT ?""",
-                (*edge_current_params, *project_params, max_edges),
+                (*edge_current_params, *graph_project_ids, max_edges),
             ).fetchall()
             selected_ids: list[str] = []
             seen_ids: set[str] = set()
@@ -1456,7 +1523,7 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
                         WHERE {current_node_sql}{node_project_sql} {excluded_sql}
                         ORDER BY cn.updated_at DESC
                         LIMIT ?""",
-                    (*node_current_params, *project_params, *params, remaining),
+                    (*node_current_params, *graph_project_ids, *params, remaining),
                 ).fetchall()
                 for row in node_rows:
                     node_id = row["node_id"]
@@ -1489,7 +1556,7 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
                    JOIN records r ON r.record_id = cn.node_id
                    WHERE {current_node_sql}{node_project_sql}
                      AND cn.node_id IN ({_placeholders(selected_ids)})""",
-                [*node_current_params, *project_params, *selected_ids],
+                [*node_current_params, *graph_project_ids, *selected_ids],
             ).fetchall()
             selected_set = {row["node_id"] for row in node_rows}
             returned_edges = [
@@ -1539,7 +1606,9 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
                 if scope == "all" and not project:
                     self._json(api_status())
                 else:
-                    self._json(api_status(scope=scope, project=project))
+                    payload = api_status(scope=scope, project=project)
+                    status = HTTPStatus.BAD_REQUEST if payload.get("error") else HTTPStatus.OK
+                    self._json(payload, status=int(status))
             except ValueError as exc:
                 self._error(HTTPStatus.BAD_REQUEST, str(exc))
             return
@@ -1557,6 +1626,12 @@ SELECT COUNT(1) AS total FROM session_docs d WHERE 1=1{where_sql}"""
             payload = api_record_filters(project=project)
             status = int(payload.pop("status_code", HTTPStatus.OK))
             self._json(payload, status=status)
+            return
+        if path.startswith("/api/records/"):
+            try:
+                self._api_record_detail(path, query)
+            except ValueError as exc:
+                self._error(HTTPStatus.BAD_REQUEST, str(exc))
             return
         if handle_skill_get(self, path, query):
             return

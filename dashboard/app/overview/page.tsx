@@ -54,6 +54,11 @@ function OverviewContent() {
 			setActivity(activityData.items);
 		} catch (err) {
 			if (seq === loadSeqRef.current) {
+				setStatus(null);
+				setReport(null);
+				setStats(null);
+				setIntel(null);
+				setActivity([]);
 				setError(err instanceof Error ? err.message : "Failed to load overview");
 			}
 		} finally {

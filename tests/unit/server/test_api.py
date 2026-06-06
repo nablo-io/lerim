@@ -361,6 +361,98 @@ def test_api_query_empty_project_selection_returns_empty_scope(
     assert payload["count"] == 0
 
 
+def test_api_query_status_all_includes_active_and_archived_records(
+    monkeypatch,
+    tmp_path,
+    mock_embeddings,
+) -> None:
+    """api_query treats the all-status sentinel as no status filter."""
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    cfg = replace(make_config(tmp_path), projects={"project": str(project_root)})
+    identity = resolve_project_identity(project_root)
+    store = ContextStore(cfg.context_db_path)
+    store.initialize()
+    store.register_project(identity)
+    store.create_record(
+        project_id=identity.project_id,
+        session_id=None,
+        kind="fact",
+        title="Active record",
+        body="Active records should appear in all-status queries.",
+    )
+    store.create_record(
+        project_id=identity.project_id,
+        session_id=None,
+        kind="fact",
+        title="Archived record",
+        body="Archived records should appear in all-status queries.",
+        status="archived",
+    )
+    monkeypatch.setattr(api_mod, "get_config", lambda: cfg)
+
+    all_payload = api_mod.api_query(
+        entity="records",
+        mode="count",
+        scope="project",
+        project="project",
+        status="all",
+    )
+    active_payload = api_mod.api_query(
+        entity="records",
+        mode="count",
+        scope="project",
+        project="project",
+        status="active",
+    )
+    archived_payload = api_mod.api_query(
+        entity="records",
+        mode="count",
+        scope="project",
+        project="project",
+        status="archived",
+    )
+
+    assert all_payload["count"] == 2
+    assert active_payload["count"] == 1
+    assert archived_payload["count"] == 1
+
+
+def test_api_query_versions_does_not_receive_record_archival_filter(
+    monkeypatch,
+    tmp_path,
+    mock_embeddings,
+) -> None:
+    """api_query keeps record-only archival controls away from version queries."""
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    cfg = replace(make_config(tmp_path), projects={"project": str(project_root)})
+    identity = resolve_project_identity(project_root)
+    store = ContextStore(cfg.context_db_path)
+    store.initialize()
+    store.register_project(identity)
+    store.create_record(
+        project_id=identity.project_id,
+        session_id=None,
+        kind="fact",
+        title="Versioned record",
+        body="Version queries power dashboard charts.",
+    )
+    monkeypatch.setattr(api_mod, "get_config", lambda: cfg)
+
+    payload = api_mod.api_query(
+        entity="versions",
+        mode="list",
+        scope="project",
+        project="project",
+        include_total=True,
+    )
+
+    assert payload["error"] is False
+    assert payload["entity"] == "versions"
+    assert payload["total"] == 1
+
+
 def test_api_query_storage_error_returns_structured_failure(
     monkeypatch,
     tmp_path,

@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.29] - 2026-06-06
+
+### Fixed
+- Fixed dashboard graph project switching by enforcing selected-project scope on
+  graph responses and clearing stale graph data during project reloads.
+- Made dashboard record, graph, artifact, operations, and source views fail
+  closed instead of preserving stale rows after scoped load failures.
+- Fixed the Records tab "All statuses" filter so it returns active and archived
+  project records instead of falling back to the active-only default.
+- Hardened the dashboard launcher against mismatched backend versions so an old
+  local API cannot silently serve stale project data to a newer dashboard.
+- Made invalid project selections return clear errors for status, memory, and
+  Clinic endpoints, and kept refine reports degraded instead of crashing when
+  the session catalog is unavailable.
+
 ## [0.3.28] - 2026-06-06
 
 ### Fixed

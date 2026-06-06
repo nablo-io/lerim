@@ -60,6 +60,8 @@ function MemoryContent() {
 				setActiveVersions({});
 			} catch (err) {
 				if (seq === loadSeqRef.current) {
+					setData(null);
+					setActiveVersions({});
 					setError(err instanceof Error ? err.message : "Failed to load memory artifacts");
 				}
 			} finally {

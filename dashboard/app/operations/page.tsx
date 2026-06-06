@@ -70,6 +70,11 @@ function OperationsContent() {
       setLogs(logData.logs);
     } catch (err) {
       if (seq === loadSeqRef.current) {
+        setStatus(null);
+        setTimeline(null);
+        setReport(null);
+        setLogs([]);
+        setSelectedOperation(null);
         setError(err instanceof Error ? err.message : "Failed to load operations");
       }
     } finally {

@@ -189,18 +189,38 @@ def _api_request_failed(error: ApiClientError) -> int:
     return 1
 
 
-def _wait_for_ready(port: int, timeout: int = 30) -> bool:
-    """Poll /api/health until the server responds or *timeout* seconds elapse."""
+def _health_payload(port: int) -> dict[str, Any] | None:
+    """Return the backend health JSON when the local API responds cleanly."""
     url = f"http://localhost:{port}/api/health"
+    try:
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            if resp.status != 200:
+                return None
+            raw = resp.read().decode("utf-8")
+    except (urllib.error.URLError, OSError, TimeoutError):
+        return None
+    try:
+        payload = json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        return None
+    if isinstance(payload, dict):
+        return payload
+    return None
+
+
+def _wait_for_ready(
+    port: int, timeout: int = 30, *, expected_version: str | None = None
+) -> bool:
+    """Poll /api/health until the server responds with the expected version."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        try:
-            req = urllib.request.Request(url, method="GET")
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                if resp.status == 200:
-                    return True
-        except (urllib.error.URLError, OSError):
-            pass
+        payload = _health_payload(port)
+        if payload is not None:
+            if expected_version is None:
+                return True
+            if str(payload.get("version") or "") == expected_version:
+                return True
         time.sleep(1)
     return False
 
@@ -219,10 +239,21 @@ def _resolve_dashboard_dir() -> Path:
 
 def _ensure_dashboard_backend(port: int) -> bool:
     """Ensure the local Docker backend is reachable before starting the UI."""
-    if _wait_for_ready(port, timeout=2):
+    health = _health_payload(port)
+    running_version = str((health or {}).get("version") or "")
+    if running_version == __version__:
         return True
+    mismatch = bool(running_version and running_version != __version__)
     build_local = current_compose_uses_local_build()
     no_build = False
+    if mismatch and build_local:
+        _emit(
+            f"Backend is running Lerim {running_version}, but this dashboard expects {__version__}.\n"
+            "The active Docker runtime is local-build mode, so Lerim will not rebuild it silently.\n"
+            "Run `lerim up --build` to rebuild the local backend, then run `lerim dashboard` again.",
+            file=sys.stderr,
+        )
+        return False
     if build_local:
         if not local_image_exists():
             _emit(
@@ -234,15 +265,21 @@ def _ensure_dashboard_backend(port: int) -> bool:
         no_build = True
         _emit("Starting Lerim backend from the existing local image with `lerim up --no-build`...")
     else:
-        _emit("Starting Lerim backend with `lerim up`...")
+        if mismatch:
+            _emit(
+                f"Backend is running Lerim {running_version}; restarting Docker backend for {__version__}..."
+            )
+        else:
+            _emit("Starting Lerim backend with `lerim up`...")
     result = api_up(build_local=build_local, no_build=no_build)
     if result.get("error"):
         _emit(result["error"], file=sys.stderr)
         return False
-    if _wait_for_ready(port):
+    if _wait_for_ready(port, expected_version=__version__):
         return True
     _emit(
-        "Backend started but the API is not responding. Check logs with: lerim logs",
+        f"Backend started but the API did not report Lerim {__version__}. "
+        "Check logs with: lerim logs",
         file=sys.stderr,
     )
     return False

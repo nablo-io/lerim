@@ -127,8 +127,8 @@ Rules:
 - curate unit tests cover semantic clustering, action validation, and direct `ContextStore` mutation application
 - session catalog tests cover queue claim availability, content-hash refresh/change detection, and stable pagination ordering
 - session catalog tests cover retrying both failed and dead-letter queue jobs without display pagination limits, including project child paths
-- API/daemon tests cover degraded status reporting when the session catalog is unavailable, project-scoped status latest/schedule fields, current-active versus archived/total record counts, and project-scoped session/queue/reset counts under child paths
-- dashboard HTTP tests cover project-scoped sessions under root and child paths, scoped run detail/messages, stats, search, record filters, graph endpoints, and generated artifact history filtering
+- API/daemon tests cover degraded status reporting when the session catalog is unavailable, project-scoped status latest/schedule fields, current-active versus archived/total record counts, all-status query normalization, and project-scoped session/queue/reset counts under child paths
+- dashboard HTTP tests cover project-scoped sessions under root and child paths, scoped run detail/messages, scoped record detail, stats, search, record filters, graph project switching, registered-project graph bounds, invalid-project errors, degraded refine reports, and generated artifact history filtering
 - server CLI tests cover the dashboard launcher contract, including backend startup checks and the Next.js dev command
 - server Docker compose tests cover GHCR startup, local build source-root resolution, no-build local image reuse, and generated compose hardening
 - daemon tests cover transient session-job heartbeat write failures

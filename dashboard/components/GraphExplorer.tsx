@@ -776,6 +776,8 @@ export default function GraphExplorer({ onRecordClick }: GraphExplorerProps) {
     loadSeqRef.current = seq;
     setLoading(true);
     setError(null);
+    setGraph({ nodes: [], edges: [], totalRecords: 0, truncated: false });
+    setSelected(null);
     try {
       const response = await api.queryGraph({
         max_nodes: maxNodes,
@@ -791,9 +793,10 @@ export default function GraphExplorer({ onRecordClick }: GraphExplorerProps) {
         totalRecords: response.total_records,
         truncated: Boolean(response.truncated),
       });
-      setSelected(null);
     } catch (err) {
       if (seq === loadSeqRef.current) {
+        setGraph({ nodes: [], edges: [], totalRecords: 0, truncated: false });
+        setSelected(null);
         setError(err instanceof Error ? err.message : "Failed to load graph");
       }
     } finally {

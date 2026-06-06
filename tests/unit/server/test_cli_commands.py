@@ -614,15 +614,16 @@ class TestCmdDashboard:
     ) -> None:
         """Backend helper reuses a local-build image when health check is down."""
         cfg = make_config(tmp_path / ".lerim")
-        checks = iter([False, True])
+        checks = iter([True])
         calls: list[tuple[bool, bool]] = []
 
+        monkeypatch.setattr(cli, "_health_payload", lambda port: None)
         monkeypatch.setattr(cli, "current_compose_uses_local_build", lambda: True)
         monkeypatch.setattr(cli, "local_image_exists", lambda: True)
         monkeypatch.setattr(
             cli,
             "_wait_for_ready",
-            lambda port, timeout=30: next(checks),
+            lambda port, timeout=30, expected_version=None: next(checks),
         )
         monkeypatch.setattr(
             cli,
@@ -643,9 +644,14 @@ class TestCmdDashboard:
         cfg = make_config(tmp_path / ".lerim")
         calls: list[dict[str, bool]] = []
 
+        monkeypatch.setattr(cli, "_health_payload", lambda port: None)
         monkeypatch.setattr(cli, "current_compose_uses_local_build", lambda: True)
         monkeypatch.setattr(cli, "local_image_exists", lambda: False)
-        monkeypatch.setattr(cli, "_wait_for_ready", lambda port, timeout=30: False)
+        monkeypatch.setattr(
+            cli,
+            "_wait_for_ready",
+            lambda port, timeout=30, expected_version=None: False,
+        )
         monkeypatch.setattr(cli, "api_up", lambda **kw: calls.append(kw) or {})
 
         buf = io.StringIO()

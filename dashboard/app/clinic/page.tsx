@@ -44,6 +44,8 @@ function ClinicContent() {
 			setActiveVersionId("");
 		} catch (err) {
 			if (seq === loadSeqRef.current) {
+				setData(null);
+				setActiveVersionId("");
 				setError(err instanceof Error ? err.message : "Failed to load Run Clinic");
 			}
 		} finally {

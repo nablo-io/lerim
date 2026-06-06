@@ -438,6 +438,7 @@ async function queryRecords(params?: Record<string, string>): Promise<RecordsRes
     }),
   });
   const records = arrayValue(payload.rows).map((row) => normalizeRecord(objectValue(row)));
+  assertRecordsProjectScope(params?.project, records);
   return {
     records,
     total: asNumber(payload.total) || records.length,
@@ -463,6 +464,7 @@ async function queryRecordVersions(params?: Record<string, string>): Promise<Rec
     }),
   });
   const versions = arrayValue(payload.rows).map((row) => normalizeRecordVersion(objectValue(row)));
+  assertRecordsProjectScope(params?.project, versions);
   return {
     versions,
     total: asNumber(payload.total) || versions.length,
@@ -562,10 +564,12 @@ export const api = {
   getRecordVersions: queryRecordVersions,
 
   getRecord: async (recordId: string, project?: string) => {
-    const data = await queryRecords(project ? { limit: "500", project } : { limit: "500" });
-    const found = data.records.find((record) => record.record_id === recordId);
-    if (!found) throw new Error("Record not found.");
-    return found;
+    const qs = project ? toQuery({ project }) : "";
+    const record = normalizeRecord(
+      await apiFetch<Record<string, unknown>>(`/api/records/${encodeURIComponent(recordId)}${qs}`),
+    );
+    assertRecordsProjectScope(project, [record]);
+    return record;
   },
 
   getSkillTargets: async (): Promise<SkillTargetsResponse> => {
@@ -665,10 +669,12 @@ export const api = {
   },
 
   queryGraph: async (body: { max_nodes?: number; max_edges?: number; connected_only?: boolean; project?: string }): Promise<GraphQueryResponse> => {
-    return apiFetch<GraphQueryResponse>("/api/graph/query", {
+    const response = await apiFetch<GraphQueryResponse>("/api/graph/query", {
       method: "POST",
       body: JSON.stringify(body),
     });
+    assertGraphProjectScope(body.project, response);
+    return response;
   },
 
   getIntelligence: async (_limit?: number, project?: string) => {
@@ -712,6 +718,28 @@ function asNullableString(value: unknown): string | null {
   if (typeof value !== "string") return value == null ? null : String(value);
   const text = value.trim();
   return text ? text : null;
+}
+
+function assertRecordsProjectScope(project: string | undefined, records: Array<{ project: string | null }>) {
+  const requested = project?.trim();
+  if (!requested) return;
+  const mismatched = records.find((record) => record.project && record.project !== requested);
+  if (mismatched) {
+    throw new Error(
+      `Backend returned ${mismatched.project} data while ${requested} was selected. Restart the Lerim backend so the dashboard and API versions match.`,
+    );
+  }
+}
+
+function assertGraphProjectScope(project: string | undefined, response: GraphQueryResponse) {
+  const requested = project?.trim();
+  if (!requested) return;
+  const selected = response.selected_project?.trim();
+  if (selected !== requested) {
+    throw new Error(
+      `Graph backend did not apply project ${requested}. Restart the Lerim backend so the dashboard and API versions match.`,
+    );
+  }
 }
 
 function asNullableNumber(value: unknown): number | null {

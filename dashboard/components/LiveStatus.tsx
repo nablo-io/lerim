@@ -112,9 +112,9 @@ export default function LiveStatus({ shared = false }: { shared?: boolean }) {
           <>
             <Separator />
             <span className="text-amber-400 font-medium">
-              {queue.dead_letter} dead-letter job{queue.dead_letter !== 1 ? "s" : ""} blocking queue
+              {queue.dead_letter} dead-letter job{queue.dead_letter !== 1 ? "s" : ""}{shared ? " in shared runtime" : " blocking queue"}
             </span>
-            <DeadLetterActions onDone={poll} />
+            <DeadLetterActions shared={shared} onDone={poll} />
           </>
         )}
 
@@ -197,7 +197,7 @@ function lastRunStatusClass(status: string): string {
   return "text-[var(--text)]";
 }
 
-function DeadLetterActions({ onDone }: { onDone: () => void }) {
+function DeadLetterActions({ shared, onDone }: { shared: boolean; onDone: () => void }) {
   const [acting, setActing] = useState<"retry" | "skip" | null>(null);
   const [confirmSkip, setConfirmSkip] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -231,7 +231,7 @@ function DeadLetterActions({ onDone }: { onDone: () => void }) {
         disabled={acting !== null}
         className="px-2 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 disabled:opacity-50"
       >
-        {acting === "retry" ? "Retrying…" : "Retry all"}
+        {acting === "retry" ? "Retrying…" : shared ? "Retry shared" : "Retry all"}
       </button>
       <button
         type="button"
@@ -243,7 +243,7 @@ function DeadLetterActions({ onDone }: { onDone: () => void }) {
             : "bg-white/5 text-[var(--text-muted)] hover:bg-white/10"
         }`}
       >
-        {acting === "skip" ? "Skipping…" : confirmSkip ? "Confirm skip all" : "Skip all"}
+        {acting === "skip" ? "Skipping…" : confirmSkip ? "Confirm skip" : shared ? "Skip shared" : "Skip all"}
       </button>
       {actionError && <span className="text-[10px] text-red-300">{actionError}</span>}
     </span>

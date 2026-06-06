@@ -512,6 +512,11 @@ def api_query(
     """Run one deterministic context query against the canonical context store."""
     config = get_config()
     normalized_scope = "project" if str(scope).strip().lower() == "project" else "all"
+    normalized_status = str(status or "").strip().lower()
+    normalized_entity = str(entity or "").strip().lower()
+    include_archived = normalized_entity == "records" and normalized_status == "all"
+    if include_archived:
+        normalized_status = ""
     try:
         selected_projects = _resolve_selected_projects(
             config=config,
@@ -540,7 +545,7 @@ def api_query(
             kind=kind,
             record_role=record_role,
             source_profile=source_profile,
-            status=status,
+            status=normalized_status or None,
             source_session_id=source_session_id,
             created_since=created_since,
             created_until=created_until,
@@ -551,6 +556,7 @@ def api_query(
             limit=limit,
             offset=offset,
             include_total=include_total,
+            include_archived=include_archived if normalized_entity == "records" else None,
         )
     except ValueError as exc:
         return {

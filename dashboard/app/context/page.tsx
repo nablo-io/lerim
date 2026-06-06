@@ -75,7 +75,12 @@ function ContextContent() {
 				setSelectedRole((current) => (current && f.roles.includes(current) ? current : ""));
 			})
 			.catch(() => {
-				/* silent -- filters just won't populate */
+				if (seq === filtersSeqRef.current) {
+					setFilterTypes([]);
+					setFilterRoles([]);
+					setSelectedType("");
+					setSelectedRole("");
+				}
 			});
 	}, [project]);
 
@@ -91,7 +96,7 @@ function ContextContent() {
 			if (project) params.project = project;
 			if (selectedType) params.record_kind = selectedType;
 			if (selectedRole) params.record_role = selectedRole;
-			if (statusFilter) params.status = statusFilter;
+			params.status = statusFilter;
 			const data = await api.getRecords(params);
 			if (seq !== recordsSeqRef.current) return;
 			setRecords(data.records);
@@ -103,6 +108,9 @@ function ContextContent() {
 			);
 		} catch (err) {
 			if (seq === recordsSeqRef.current) {
+				setRecords([]);
+				setTotal(0);
+				setSelected(null);
 				setError(err instanceof Error ? err.message : "Failed to load records");
 			}
 		} finally {
@@ -125,7 +133,7 @@ function ContextContent() {
 				if (seq === intelSeqRef.current) setIntel(result);
 			})
 			.catch(() => {
-				/* silent -- banner just won't show */
+				if (seq === intelSeqRef.current) setIntel(null);
 			})
 			.finally(() => {
 				if (seq === intelSeqRef.current) setIntelLoading(false);
@@ -170,7 +178,7 @@ function ContextContent() {
 					>
 						<option value="active">Active</option>
 						<option value="archived">Archived</option>
-						<option value="">All statuses</option>
+						<option value="all">All statuses</option>
 					</select>
 
 					<ProjectScope value={project} onChange={setProject} />

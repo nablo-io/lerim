@@ -406,6 +406,82 @@ def _seed_context_graph(db_path: Path, project_path: Path) -> None:
         )
 
 
+def _seed_single_graph_record(
+    db_path: Path,
+    project_path: Path,
+    *,
+    project_name: str,
+    record_id: str,
+    title: str,
+) -> None:
+    """Insert one graph node for a registered test project."""
+    ContextStore(db_path).initialize()
+    now = "2026-03-20T10:00:00Z"
+    identity = resolve_project_identity(project_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """INSERT OR IGNORE INTO projects (project_id, project_slug, repo_path, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)""",
+            (identity.project_id, project_name, str(project_path), now, now),
+        )
+        conn.execute(
+            """INSERT OR IGNORE INTO scopes (
+                scope_type, scope_id, scope_label, scope_slug, repo_path, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                "project",
+                identity.project_id,
+                project_name,
+                project_name,
+                str(project_path),
+                now,
+                now,
+            ),
+        )
+        conn.execute(
+            """INSERT INTO records (
+                record_id, project_id, scope_type, scope_id, scope_label, source_name,
+                source_profile, kind, title, body, status, created_at, updated_at, valid_from
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                record_id,
+                identity.project_id,
+                "project",
+                identity.project_id,
+                project_name,
+                "codex",
+                "coding",
+                "fact",
+                title,
+                f"{title} body",
+                "active",
+                now,
+                now,
+                now,
+            ),
+        )
+        conn.execute(
+            """INSERT INTO context_nodes (
+                node_id, project_id, scope_type, scope_id, scope_label, node_type,
+                label, summary, status, semantic_cluster, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                record_id,
+                identity.project_id,
+                "project",
+                identity.project_id,
+                project_name,
+                "fact",
+                title,
+                f"{title} summary",
+                "active",
+                "semantic_dashboard",
+                now,
+                now,
+            ),
+        )
+
+
 def _write_dashboard_trace(path: Path) -> None:
     """Write a tiny trace with message, model, and tool metadata."""
     path.write_text(
@@ -526,9 +602,16 @@ def test_server(tmp_path, monkeypatch):
         "lerim.server.httpd.api_health",
         lambda: {"status": "ok", "version": "0.0.0-test"},
     )
-    monkeypatch.setattr(
-        "lerim.server.httpd.api_status",
-        lambda: {
+    def fake_api_status(*, scope="all", project=None):
+        """Return fixture status payloads for unscoped and scoped route tests."""
+        if scope == "project" and project not in {None, "myproject"}:
+            return {
+                "timestamp": "2026-03-20T10:00:00Z",
+                "error": f"Project not found: {project}",
+                "projects": [],
+                "scope": {"mode": "project"},
+            }
+        return {
             "timestamp": "2026-03-20T10:00:00Z",
             "connected_agents": ["claude"],
             "platforms": [{"name": "claude", "path": "~/.claude/projects"}],
@@ -537,8 +620,9 @@ def test_server(tmp_path, monkeypatch):
             "queue": {"pending": 1, "dead_letter": 1},
             "latest_ingest": {"status": "completed"},
             "latest_curate": {"status": "completed"},
-        },
-    )
+        }
+
+    monkeypatch.setattr("lerim.server.httpd.api_status", fake_api_status)
     monkeypatch.setattr(
         "lerim.server.httpd.api_connect_list",
         lambda: [
@@ -702,6 +786,19 @@ def test_get_health(test_server):
     assert "version" in body
 
 
+def test_get_record_detail_respects_project_scope(test_server):
+    """GET /api/records/<id> returns a record only inside the selected project."""
+    port, _, _ = test_server
+    status, body = _api_get(port, "/api/records/rec_a?project=myproject")
+    assert status == 200
+    assert body["record_id"] == "rec_a"
+    assert body["scope_label"] == "myproject"
+
+    status, body = _api_get_error(port, "/api/records/rec_a?project=missing")
+    assert status == 400
+    assert body["error"] == "Project not found: missing"
+
+
 def test_get_status(test_server):
     """GET /api/status returns 200 with runtime status fields."""
     port, _, _ = test_server
@@ -710,6 +807,14 @@ def test_get_status(test_server):
     assert "connected_agents" in body
     assert "record_count" in body
     assert "queue" in body
+
+
+def test_get_status_rejects_unknown_project(test_server):
+    """GET /api/status returns 400 for unknown project scope."""
+    port, _, _ = test_server
+    status, body = _api_get_error(port, "/api/status?scope=project&project=missing")
+    assert status == 400
+    assert body["error"] == "Project not found: missing"
 
 
 def test_get_unscoped(test_server):
@@ -944,6 +1049,24 @@ def test_get_refine_report_filters_registered_project(test_server):
     assert body["aggregates"]["totals"]["sessions"] == 4
 
 
+def test_get_refine_report_degrades_when_unavailable(test_server, monkeypatch):
+    """GET /api/refine/report returns a stable empty report on catalog failure."""
+    port, _, _ = test_server
+
+    def broken_report(**_kwargs):
+        """Simulate session catalog failure during report generation."""
+        raise sqlite3.DatabaseError("database disk image is malformed")
+
+    monkeypatch.setattr("lerim.server.httpd.build_extract_report", broken_report)
+
+    status, body = _api_get(port, "/api/refine/report?project=myproject")
+
+    assert status == 200
+    assert body["catalog_available"] is False
+    assert body["aggregates"]["totals"]["sessions"] == 0
+    assert "database disk image is malformed" in body["error"]
+
+
 def test_get_refine_report_rejects_unknown_project(test_server):
     """GET /api/refine/report rejects unknown project names."""
     port, _, _ = test_server
@@ -1007,6 +1130,14 @@ def test_get_memory_artifacts_filters_history_by_project(test_server):
     ]
 
 
+def test_get_memory_artifacts_rejects_unknown_project(test_server):
+    """GET /api/memory-artifacts rejects unknown project names."""
+    port, _, _ = test_server
+    status, body = _api_get_error(port, "/api/memory-artifacts?project=missing")
+    assert status == 400
+    assert body["error"] == "Project not found: missing"
+
+
 def test_get_clinic_filters_history_by_project(test_server):
     """GET /api/clinic returns only selected-project Run Clinic history."""
     port, config, tmp_path = test_server
@@ -1046,6 +1177,14 @@ def test_get_clinic_filters_history_by_project(test_server):
     ]
     assert body["active_record_count"] == 2
     assert body["total_record_count"] == 3
+
+
+def test_get_clinic_rejects_unknown_project(test_server):
+    """GET /api/clinic rejects unknown project names."""
+    port, _, _ = test_server
+    status, body = _api_get_error(port, "/api/clinic?project=missing")
+    assert status == 400
+    assert body["error"] == "Project not found: missing"
 
 
 def test_get_record_filters_route_scopes_project(test_server):
@@ -1337,6 +1476,30 @@ def test_post_graph_query_returns_learned_edges(test_server):
     assert body["edges"][0]["evidence_record_ids"] == ["rec_a", "rec_b"]
 
 
+def test_post_graph_query_all_scope_excludes_unregistered_projects(test_server):
+    """POST /api/graph/query without project stays inside registered projects."""
+    port, config, tmp_path = test_server
+    unregistered_path = tmp_path / "unregistered"
+    unregistered_path.mkdir()
+    _seed_single_graph_record(
+        config.context_db_path,
+        unregistered_path,
+        project_name="unregistered",
+        record_id="rec_unregistered",
+        title="Unregistered graph record",
+    )
+
+    status, body = _api_post(
+        port,
+        "/api/graph/query",
+        {"max_nodes": 20, "max_edges": 20},
+    )
+
+    assert status == 200
+    assert {node["id"] for node in body["nodes"]} == {"rec_a", "rec_b"}
+    assert {node["project"] for node in body["nodes"]} == {"myproject"}
+
+
 def test_post_graph_query_filters_registered_project(test_server):
     """POST /api/graph/query filters learned graph rows by project id."""
     port, _, tmp_path = test_server
@@ -1357,6 +1520,40 @@ def test_post_graph_query_filters_registered_project(test_server):
     assert body["returned_nodes"] == 2
     assert body["returned_edges"] == 1
     assert {node["project"] for node in body["nodes"]} == {"myproject"}
+
+
+def test_post_graph_query_switches_between_registered_projects(test_server):
+    """POST /api/graph/query returns different nodes for different projects."""
+    port, config, tmp_path = test_server
+    beta_path = tmp_path / "betaproject"
+    beta_path.mkdir()
+    config.projects["betaproject"] = str(beta_path)
+    _seed_single_graph_record(
+        config.context_db_path,
+        beta_path,
+        project_name="betaproject",
+        record_id="rec_beta",
+        title="Beta-only graph record",
+    )
+
+    alpha_status, alpha = _api_post(
+        port,
+        "/api/graph/query",
+        {"project": "myproject", "max_nodes": 20, "max_edges": 20},
+    )
+    beta_status, beta = _api_post(
+        port,
+        "/api/graph/query",
+        {"project": "betaproject", "max_nodes": 20, "max_edges": 20},
+    )
+
+    assert alpha_status == 200
+    assert beta_status == 200
+    assert alpha["selected_project"] == "myproject"
+    assert beta["selected_project"] == "betaproject"
+    assert {node["id"] for node in alpha["nodes"]} == {"rec_a", "rec_b"}
+    assert {node["id"] for node in beta["nodes"]} == {"rec_beta"}
+    assert {node["project"] for node in beta["nodes"]} == {"betaproject"}
 
 
 def test_post_graph_query_rejects_unknown_project(test_server):
