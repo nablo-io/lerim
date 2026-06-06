@@ -83,6 +83,7 @@ records_changed_since_generation  # noqa
 records_missing_since_generation  # noqa
 latest_run_folder  # noqa
 suggested_action  # noqa
+sessions_considered  # noqa
 records_changed_since_previous  # noqa
 recent_versions_considered  # noqa
 episode_update_refs  # noqa
@@ -105,6 +106,17 @@ session_reason  # noqa
 allowed_update_surfaces  # noqa
 high_risk_surfaces  # noqa
 diff_text  # noqa
+pattern_type  # noqa
+severity  # noqa
+why_it_matters  # noqa
+priority  # noqa
+headline  # noqa
+readiness_score  # noqa
+recommended_actions  # noqa
+questions  # noqa
+metrics_json  # noqa
+versions_json  # noqa
+sessions_json  # noqa
 
 # Pydantic validators registered by decorators
 validate_level  # noqa
