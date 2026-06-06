@@ -124,6 +124,10 @@ def test_custom_project_folder_indexes_and_queues_clean_traces(
             "type": "custom",
             "source_profile": None,
             "exists": True,
+            "record_count": 0,
+            "active_record_count": 0,
+            "archived_record_count": 0,
+            "total_record_count": 0,
             "path": str(trace_root.resolve()),
         }
     ]
