@@ -1,0 +1,22 @@
+id: compliance
+display_name: Compliance and Policy Review
+description: Compliance, legal, regulatory, and policy-review agent traces.
+focus_rules:
+  - durable policy boundaries, approval gates, and regulatory constraints that govern future work
+  - rejected interpretations or classifications only when the reasoning prevents likely repeated mistakes
+  - standing approval or escalation rules tied to a policy, regulation, or control
+  - source-of-truth references such as regulation citations, policy clauses, or control identifiers
+reject_as_noise:
+  - case-specific chatter and one-off reviewer notes without a reusable rule
+  - routine acknowledgements and progress updates
+  - raw excerpts quoted without a durable interpretation or decision
+  - unconfirmed draft opinions that were later superseded or withdrawn
+evidence_rules:
+  - keep the policy, regulation, or control citation that backs a boundary or gate
+  - preserve the reasoning behind a rejected interpretation, not just the rejection itself
+  - distinguish confirmed policy decisions from open review questions or pending approvals
+  - keep effective dates, jurisdiction, and version when the source states them
+  - fold related clauses into one governing constraint rather than one record per clause
+scope_rules:
+  - use domain scope for reusable compliance workflow context
+  - do not store private regulated personal data in reusable records

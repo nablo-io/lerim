@@ -111,6 +111,9 @@ lerim context records --profile support
 lerim answer "What refund approval constraints should the next support agent know?"
 ```
 
+See the [Support Ops Demo](../guides/support-ops-demo.md) for a realistic
+before/after with real extracted records.
+
 ## Incident-Agent Trace Import
 
 Incident traces should preserve root causes, mitigations, rejected hypotheses,
@@ -126,6 +129,47 @@ lerim trace import ./traces/incidents/*.jsonl \
 lerim context records --profile ops
 lerim answer "What did we learn from the last incident handoff?"
 ```
+
+See the [Incident Ops Demo](../guides/incident-ops-demo.md) for a realistic
+before/after with real extracted records.
+
+## Research-Agent Trace Import
+
+Research traces should preserve source-quality rules, cited conclusions, rejected
+leads, and analyst assumptions.
+
+```bash
+lerim trace import ./traces/research/*.jsonl \
+  --source-name research-agent \
+  --source-profile research \
+  --scope-type domain \
+  --scope research
+
+lerim context records --profile research
+lerim answer "What source-quality rules should the next research run follow?"
+```
+
+See the [Research Demo](../guides/research-demo.md) for a realistic before/after
+with real extracted records.
+
+## Compliance-Agent Trace Import
+
+Compliance traces should preserve policy boundaries, approval gates, rejected
+interpretations with reasoning, and regulatory citations.
+
+```bash
+lerim trace import ./traces/compliance/*.jsonl \
+  --source-name compliance-agent \
+  --source-profile compliance \
+  --scope-type domain \
+  --scope compliance
+
+lerim context records --profile compliance
+lerim answer "What approval gates apply to data-export feature changes?"
+```
+
+See the [Compliance Demo](../guides/compliance-demo.md) for a realistic
+before/after with real extracted records.
 
 ## What Not To Claim
 

@@ -76,3 +76,6 @@ evals/dataset/manifest.json
 evals/dataset/traces/
 .coverage
 .DS_Store
+
+# Local debug/test output
+output/

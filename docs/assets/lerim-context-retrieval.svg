@@ -60,14 +60,6 @@
       <path fill="#fff" fill-rule="evenodd" d="M384 416H128V96H384V416ZM320 160H192V352H320V160Z" clip-rule="evenodd"/>
     </symbol>
 
-    <!-- OpenClaw icon source: https://devicons.io/icons/openclaw/ -->
-    <symbol id="openclawIcon" viewBox="0 0 600 600">
-      <path fill="#d9232e" d="M300 64.2c-158.2 0-237.4 131.9-237.4 237.4s79.2 211 158.3 237.3v52.8h52.7v-52.8s26.4 10.6 52.8 0v52.8H379v-52.8c79.1-26.4 158.3-131.8 158.3-237.3S458.3 64.2 300 64.2"/>
-      <path fill="#ff4d4d" d="M89 248.8C9.9 222.4-16.5 275.2 9.9 328s79.1 26.4 105.5-26.3c15.8-37 0-52.8-26.4-52.8m422 0c79.1-26.4 105.5 26.4 79.1 79.1-26.4 52.8-79.1 26.4-105.5-26.3-15.8-37 0-52.8 26.4-52.8"/>
-      <path fill="#050810" d="M220.9 227.7a31.7 31.7 0 1 0 0-63.3 31.7 31.7 0 0 0 0 63.3m158.2 0a31.7 31.7 0 1 0 0-63.3 31.7 31.7 0 0 0 0 63.3"/>
-      <path fill="#00e5cc" d="M226.2 204a13.2 13.2 0 1 0 0-26.4 13.2 13.2 0 0 0 0 26.4m158.2 0a13.2 13.2 0 1 0 0-26.4 13.2 13.2 0 0 0 0 26.4"/>
-    </symbol>
-
     <style>
       .sans { font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
       .mono { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
@@ -230,8 +222,10 @@
 
     <g transform="translate(154 94)">
       <circle cx="22" cy="22" r="18" fill="rgba(127,216,255,0.12)" stroke="rgba(127,216,255,0.26)"/>
-      <use href="#openclawIcon" x="10" y="10" width="24" height="24"/>
-      <text x="52" y="20" class="item-label">OpenClaw</text>
+      <path d="M 13 25 a 7 7 0 0 1 14 0 M 11 25 v 2 a 3 3 0 0 0 3 3 M 29 25 v 2 a 3 3 0 0 1 -3 3" stroke="#7fd8ff" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="11" y="25" width="4" height="6" rx="1.5" stroke="#7fd8ff" stroke-width="1.6" fill="none"/>
+      <rect x="27" y="25" width="4" height="6" rx="1.5" stroke="#7fd8ff" stroke-width="1.6" fill="none"/>
+      <text x="52" y="20" class="item-label">Support agent</text>
       <text x="52" y="36" class="item-sub">MCP</text>
     </g>
 

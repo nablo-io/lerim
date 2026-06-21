@@ -3,10 +3,10 @@
 </p>
 
 
-<h1 align="center">The context layer for AI agents.</h1>
+<h1 align="center">Private improvement infrastructure for AI agents.</h1>
 
 <p align="center">
-  Lerim sits above agent traces, compiles the useful signal into cited context, and gives the next agent the operating memory it needs before work begins.
+  Lerim sits above agent traces, compiles useful signal into cited context and eval assets, and gives future agents the operating memory they need before work begins.
 </p>
 
 <p align="center">
@@ -50,11 +50,11 @@
 
 # Lerim
 
-Lerim is a context compiler for AI agent workflows.
+Lerim is a context compiler for repeated AI agent workflows.
 
 Agents leave traces everywhere: terminals, tools, tickets, code reviews, support cases, research runs. Most of that history is too noisy to reuse directly.
 
-Lerim filters those traces into evidence-backed context records: the decisions, constraints, facts, preferences, and handoffs future agents should not have to rediscover.
+Lerim filters those traces into evidence-backed context records and eval-ready workflow signal: the decisions, constraints, facts, preferences, corrections, and handoffs future agents should not have to rediscover.
 
 Instead of replaying raw traces or losing useful context between workflows, Lerim keeps:
 
@@ -62,6 +62,7 @@ Instead of replaying raw traces or losing useful context between workflows, Leri
 - constraints
 - preferences
 - facts
+- corrections
 - handoffs
 - evidence linked back to the source session
 
@@ -70,7 +71,7 @@ Instead of replaying raw traces or losing useful context between workflows, Leri
 | Moment | Lerim does | Future agents get |
 | --- | --- | --- |
 | A completed agent run lands | Imports a source session from an adapter, MCP submit, or clean custom JSONL | A stable source boundary instead of a transcript paste |
-| The trace is noisy | Compacts the run and filters for reusable decisions, constraints, facts, preferences, and handoffs | Durable context, not another log index |
+| The trace is noisy | Compacts the run and filters for reusable decisions, constraints, facts, preferences, corrections, and handoffs | Durable context and eval-ready signal, not another log index |
 | Someone asks later | Retrieves relevant records and answers with citations back to stored evidence | A shorter start with less re-explaining |
 
 ## Quick Install
@@ -101,7 +102,7 @@ lerim answer "What context should I know before working in this project?"
 
 ## Why Lerim
 
-AI agents now triage tickets, investigate incidents, research markets, prepare handoffs, review policies, and change software.
+AI agents now triage tickets, investigate incidents, research markets, prepare handoffs, review policies, analyze customers, and change software.
 
 Every run leaves a trace. Most traces are too long, too noisy, and too platform-specific for the next agent to reuse directly.
 
@@ -111,16 +112,19 @@ Without a durable context layer:
 - constraints get rediscovered
 - preferences get ignored
 - every new session starts too close to zero
+- useful corrections never become eval or training signal
 
-Lerim fixes that by turning raw traces into reusable context records and making them queryable from agent tools and product workflows.
+Lerim fixes that by turning raw traces into reusable context records, eval assets, and training-ready workflow signal that remain queryable from agent tools and product workflows.
 
 Lerim is meant for any trace-producing agent workflow. Today, native source
 adapters are strongest for coding agents, and documented custom-trace paths cover
-support and incident workflows:
+support and incident workflows. Coding is a proof-rich workflow pack, not the
+whole product category:
 
 - coding agents: repo conventions, architecture decisions, setup facts, failed paths, test lessons, release handoffs
 - support operations: customer constraints, known fixes, failed fixes, escalation reasons, policy evidence, handoffs
 - operations and incidents: root causes, mitigations, rejected hypotheses, runbook gaps, incident handoffs, follow-up risks
+- research, compliance, security, revenue, and other custom business agents: source trails, assumptions, approvals, rejected paths, policy facts, and workflow-specific handoffs when the source owner handles export, cleaning, and redaction
 
 ## Key Capabilities
 
@@ -263,7 +267,19 @@ hardware/runtime metadata, and failure count.
 - Operations and incidents: documented custom-trace path; preserve root causes, mitigations, rejected hypotheses, runbook gaps, owner decisions, and follow-up risks.
 - Coding agents: retain architecture decisions, failed paths, repo conventions, setup facts, release handoffs, and constraints.
 
-Research, revenue, security, and other verticals can use the same custom-trace path today when the user owns export, cleaning, and redaction. The first product wedge and strongest examples are coding plus support and incident operations.
+Research, revenue, security, compliance, and other verticals can use the same custom-trace path today when the user owns export, cleaning, and redaction. The product wedge is one repeated private workflow with trace access, a workflow owner, privacy constraints, and measurable quality failure. Coding remains a strong proof workflow because the native adapters are mature, but the commercial company should be positioned around private agent improvement for enterprise workflows.
+
+## Enterprise Readiness To-Do List
+
+Use this list to keep the repo, website, and pitch aligned without turning the
+open-source package into a closed enterprise product:
+
+- Keep open core useful: CLI, local runtime, MCP server, native adapters, custom trace import, context DB, docs, and benchmarks.
+- Sell the production layer: Context Audits, private deployment, workflow evals, governance controls, managed integrations, retention, and enterprise support.
+- Prove one workflow first: support escalation, incident/security ops, research intelligence, compliance review, or engineering automation.
+- Measure improvement honestly: context reused, false memories rejected, eval pass rate, human acceptance, token budget saved, and repeated work reduced.
+- Build training only after proof: approved traces, corrections, and eval assets can become SFT/RL data once the customer workflow and privacy boundary are clear.
+- Keep coding agents as a proof pack, not the headline TAM/SAM/SOM story.
 
 ## Skill Updates
 
@@ -292,7 +308,43 @@ lerim dashboard
 See [Skill Updates](docs/guides/skill-updates.md) for the dashboard workflow
 and [CLI: lerim skill](docs/cli/skill.md) for command details.
 
-## Custom Agent Traces
+## Custom & Non-Coding Agents
+
+Lerim is not only for coding agents. Support, incident/security operations,
+research, compliance, revenue, and other custom business agents feed the same
+compiler through clean JSONL traces and a signal profile that matches the workflow.
+
+<p align="center">
+  <img src="docs/assets/lerim-agent-improvement-loop.png" alt="The agent improvement loop: your agent produces a completed run, the Lerim open core captures and compiles it into cited context, context is served back to future runs, and the Lerim private layer specializes models for the workflow" width="860">
+</p>
+
+Bundled signal profiles cover the common verticals out of the box:
+
+| Profile | Workflow |
+| --- | --- |
+| `coding` | Repository and coding-agent work (default). |
+| `support` | Customer support and customer operations. |
+| `ops` | Incident response, operations, and reliability. |
+| `research` | Research, market intelligence, and analysis. |
+| `compliance` | Compliance, legal, regulatory, and policy review. |
+| `generic` | General-purpose fallback. |
+
+List and inspect them with `lerim profile list` / `lerim profile show research`.
+If none fit, write your own YAML profile in a few minutes — see
+[Customize Lerim For Your Use Case](docs/guides/custom-source-profiles.md).
+
+If your agent does not have a native Lerim adapter, start at
+[Custom & Non-Coding Agents](docs/guides/custom-agents.md) for the full path from
+choosing a profile to querying compiled context.
+
+Worked before/after demos with real extracted records:
+
+- [Support Ops Demo](docs/guides/support-ops-demo.md)
+- [Incident Ops Demo](docs/guides/incident-ops-demo.md)
+- [Research Demo](docs/guides/research-demo.md)
+- [Compliance Demo](docs/guides/compliance-demo.md)
+
+### Custom Agent Traces
 
 Built-in `connect` adapters monitor the supported sources available today:
 Claude Code, Codex CLI, Cursor, OpenCode, and pi.
@@ -411,9 +463,10 @@ Lerim core is Apache-2.0. The local CLI, runtime, MCP server, native adapters,
 context DB schema, benchmark scripts, and integration docs should remain useful
 without a paid account.
 
-The planned commercial path is hosted/team infrastructure: sync, hosted private
-MCP, dashboards, review workflows, governance, SSO, audit logs, managed
-retention, evaluation monitoring, private deployments, and enterprise support.
+The planned commercial path is the production layer around the open core:
+Context Audits, hosted/private MCP, dashboards, review workflows, governance,
+SSO, audit logs, managed retention, evaluation monitoring, private deployments,
+workflow packs, training-ready dataset export, and enterprise support.
 
 See [COMMERCIAL.md](COMMERCIAL.md) for the open-core boundary.
 

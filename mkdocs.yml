@@ -153,6 +153,7 @@ nav:
     - Model Roles: configuration/model-roles.md
     - Tracing: configuration/tracing.md
   - Guides:
+    - Custom & Non-Coding Agents: guides/custom-agents.md
     - Agent Startup Context: guides/agent-startup-context.md
     - Connecting Agents: guides/connecting-agents.md
     - MCP Quickstart: guides/mcp-quickstart.md
@@ -161,6 +162,8 @@ nav:
     - Submit A Custom Agent Trace: guides/submit-custom-agent-trace.md
     - Support Ops Demo: guides/support-ops-demo.md
     - Incident Ops Demo: guides/incident-ops-demo.md
+    - Research Demo: guides/research-demo.md
+    - Compliance Demo: guides/compliance-demo.md
     - Evaluate Extraction Quality: guides/evaluate-extraction-quality.md
     - Dashboard: guides/dashboard.md
     - Skill Updates: guides/skill-updates.md

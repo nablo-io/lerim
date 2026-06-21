@@ -12,7 +12,14 @@ import yaml
 from lerim.profiles.base import SignalPack
 
 DEFAULT_SIGNAL_PACK_ID = "coding"
-_PROFILE_FILES = ("coding.yaml", "generic.yaml", "support.yaml", "ops.yaml")
+_PROFILE_FILES = (
+    "coding.yaml",
+    "generic.yaml",
+    "support.yaml",
+    "ops.yaml",
+    "research.yaml",
+    "compliance.yaml",
+)
 
 
 def list_signal_packs() -> list[SignalPack]:

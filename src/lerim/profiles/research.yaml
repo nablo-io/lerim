@@ -1,0 +1,24 @@
+id: research
+display_name: Research and Market Intelligence
+description: Research, market-analysis, and intelligence-gathering agent traces.
+focus_rules:
+  - source-backed conclusions that apply beyond one report or run
+  - durable source-quality rules and analyst preferences that guide future research
+  - recurring analyst assumptions or framing choices that should persist across runs
+  - rejected leads, dead ends, or discredited sources only when they prevent likely repeated work
+  - standing scoping boundaries such as required coverage, exclusions, or comparables
+reject_as_noise:
+  - dead links, 404s, and transient browsing failures without a reusable lesson
+  - raw quotes and passages that do not support a durable conclusion
+  - one-off search queries and intermediate navigation steps
+  - unconfirmed hypotheses stated as tentative notes
+  - generic background knowledge not established or synthesized by the source session
+evidence_rules:
+  - keep source URLs, publication or filing dates, and source type when they support a durable record
+  - preserve uncertainty qualifiers; do not turn may, might, likely, or appears-to into certain facts
+  - distinguish confirmed findings from open questions and pending verification
+  - keep the reason a lead or source was rejected so future agents avoid repeating it
+  - fold multiple corroborating sources into one cited conclusion rather than one record per source
+scope_rules:
+  - use domain scope for reusable research workflow context
+  - use project scope only when the research is tied to one repository or deliverable

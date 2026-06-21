@@ -23,6 +23,26 @@ Clean and redact the trace before it enters Lerim:
 Lerim extraction is selective, but it is not a privacy firewall. Source owners
 still own export, cleaning, redaction, and retention.
 
+## Defense-In-Depth Redaction
+
+For a quick first pass, use the bundled redaction helper to strip common secrets
+and PII from a trace before import. It is pure regex, makes no network calls, and
+handles JSONL, JSON, and plain text.
+
+```bash
+python scripts/redact_trace.py ./raw-support-agent-run.jsonl -o ./clean-support-run.jsonl
+```
+
+It catches obvious high-risk patterns — API keys (`sk-...`, `AKIA...`, Stripe,
+GitHub, Slack tokens), bearer tokens, password assignments, private key blocks,
+emails, credit card numbers, SSNs, and IBANs — and reports a count per category.
+
+This is **defense-in-depth, not a compliance boundary**. A clean redaction report
+does not mean the trace is safe for regulated data. Review the output before
+import, and keep your customer-owned cleaning and retention process for anything
+regulated or customer-specific. Lerim extraction is selective, but it is not a
+privacy firewall.
+
 ## Accepted Trace Shapes
 
 ### JSONL
