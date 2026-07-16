@@ -255,3 +255,41 @@ jobs:
             ghcr.io/lerim-dev/lerim:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  github-release:
+    needs:
+      - publish
+      - docker-push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract release notes from CHANGELOG
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v ver="## [$version]" \
+            'index($0, ver) == 1 {f=1; next} /^## \[/ {if (f) exit} f' \
+            CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::error::No CHANGELOG section found for version $version" >&2
+            exit 1
+          fi
+
+      - name: Create or update the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists; updating notes."
+            gh release edit "$GITHUB_REF_NAME" \
+              --notes-file release-notes.md --latest
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --notes-file release-notes.md \
+              --verify-tag --latest
+          fi
