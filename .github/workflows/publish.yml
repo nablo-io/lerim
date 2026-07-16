@@ -209,8 +209,8 @@ jobs:
           push: false
           platforms: linux/amd64,linux/arm64
           tags: |
-            ghcr.io/lerim-dev/lerim:${{ steps.version.outputs.version }}
-            ghcr.io/lerim-dev/lerim:latest
+            ghcr.io/nablo-io/lerim:${{ steps.version.outputs.version }}
+            ghcr.io/nablo-io/lerim:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -251,8 +251,8 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |
-            ghcr.io/lerim-dev/lerim:${{ steps.version.outputs.version }}
-            ghcr.io/lerim-dev/lerim:latest
+            ghcr.io/nablo-io/lerim:${{ steps.version.outputs.version }}
+            ghcr.io/nablo-io/lerim:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

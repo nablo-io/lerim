@@ -10,11 +10,15 @@
 </p>
 
 <p align="center">
+  <em>Lerim is an open-source project by Nablo. It compiles context and does not train models — training a small model on the result is the Nablo pipeline.</em>
+</p>
+
+<p align="center">
   <a href="https://pypi.org/project/lerim/"><img src="https://img.shields.io/pypi/v/lerim?style=flat-square&color=245f46" alt="PyPI version"></a>
   <a href="https://pypi.org/project/lerim/"><img src="https://img.shields.io/badge/python-3.11%2B-3776AB?style=flat-square" alt="Python 3.11+"></a>
-  <a href="https://github.com/lerim-dev/lerim/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" alt="License"></a>
-  <a href="https://github.com/lerim-dev/lerim/actions"><img src="https://img.shields.io/github/actions/workflow/status/lerim-dev/lerim/ci.yml?style=flat-square&label=tests" alt="Tests"></a>
-  <a href="https://github.com/lerim-dev/lerim"><img src="https://img.shields.io/github/stars/lerim-dev/lerim?style=flat-square" alt="GitHub stars"></a>
+  <a href="https://github.com/nablo-io/lerim/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" alt="License"></a>
+  <a href="https://github.com/nablo-io/lerim/actions"><img src="https://img.shields.io/github/actions/workflow/status/nablo-io/lerim/ci.yml?style=flat-square&label=tests" alt="Tests"></a>
+  <a href="https://github.com/nablo-io/lerim"><img src="https://img.shields.io/github/stars/nablo-io/lerim?style=flat-square" alt="GitHub stars"></a>
 </p>
 
 <p align="center">
@@ -28,7 +32,7 @@
   ·
   <a href="https://pypi.org/project/lerim/">PyPI</a>
   ·
-  <a href="https://github.com/lerim-dev/lerim/blob/main/LICENSE">License</a>
+  <a href="https://github.com/nablo-io/lerim/blob/main/LICENSE">License</a>
 </p>
 
 
@@ -486,5 +490,5 @@ Good starting points include:
 Helpful links:
 
 - [Contributing Guide](https://docs.lerim.dev/contributing/getting-started/)
-- [Open issues](https://github.com/lerim-dev/lerim/issues)
+- [Open issues](https://github.com/nablo-io/lerim/issues)
 - Trace-source adapter examples: `src/lerim/adapters/`

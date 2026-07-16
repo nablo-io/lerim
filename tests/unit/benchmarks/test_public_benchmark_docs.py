@@ -91,7 +91,7 @@ def test_benchmark_docs_use_repo_relative_artifact_paths_before_release_links() 
 
     assert "benchmarks/results/raw/" in docs
     assert "benchmarks/results/reports/" in docs
-    assert "github.com/lerim-dev/lerim/tree/main/benchmarks/results" not in docs
+    assert "github.com/nablo-io/lerim/tree/main/benchmarks/results" not in docs
 
 
 def test_public_positioning_keeps_non_coding_custom_traces_available_today() -> None:

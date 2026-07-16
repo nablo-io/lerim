@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 FROM python:3.12-slim
 
-LABEL org.opencontainers.image.source=https://github.com/lerim-dev/lerim
+LABEL org.opencontainers.image.source=https://github.com/nablo-io/lerim
 
 # Install curl (healthcheck) and ripgrep
 RUN apt-get update && apt-get install -y --no-install-recommends curl ripgrep && \

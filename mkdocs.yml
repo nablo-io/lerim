@@ -1,8 +1,8 @@
 site_name: Lerim
 site_url: https://docs.lerim.dev
 site_description: Context compiler infrastructure for AI agents
-repo_url: https://github.com/lerim-dev/lerim
-repo_name: lerim-dev/lerim
+repo_url: https://github.com/nablo-io/lerim
+repo_name: nablo-io/lerim
 edit_uri: edit/main/docs/
 
 theme:
@@ -90,7 +90,7 @@ extra_css:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/lerim-dev/lerim
+      link: https://github.com/nablo-io/lerim
     - icon: fontawesome/brands/python
       link: https://pypi.org/project/lerim/
 

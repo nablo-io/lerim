@@ -86,5 +86,5 @@ def test_docker_release_uses_renamed_ghcr_package() -> None:
     )
 
     old_package = "ghcr.io/lerim-dev/" + "lerim-cli:"
-    assert "ghcr.io/lerim-dev/lerim:" in tags
+    assert "ghcr.io/nablo-io/lerim:" in tags
     assert old_package not in tags

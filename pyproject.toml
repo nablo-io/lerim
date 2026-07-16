@@ -31,11 +31,11 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://lerim.dev"
+Homepage = "https://nablo.io/lerim"
 Documentation = "https://docs.lerim.dev"
-Repository = "https://github.com/lerim-dev/lerim"
-Changelog = "https://github.com/lerim-dev/lerim/blob/main/CHANGELOG.md"
-Issues = "https://github.com/lerim-dev/lerim/issues"
+Repository = "https://github.com/nablo-io/lerim"
+Changelog = "https://github.com/nablo-io/lerim/blob/main/CHANGELOG.md"
+Issues = "https://github.com/nablo-io/lerim/issues"
 
 [project.optional-dependencies]
 mlx = [
