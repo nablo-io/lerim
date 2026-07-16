@@ -30,8 +30,15 @@ def apply_context_curation_plans(
     session_id: str,
     action_plans: list[dict[str, Any]],
     evidence_record_ids: set[str],
+    protected_record_ids: set[str] | None = None,
 ) -> ActionApplicationSummary:
-    """Validate and apply proposed context-curation actions."""
+    """Validate and apply proposed context-curation actions.
+
+    protected_record_ids names records that must never be retired by a supersede in
+    this pass. Write-time reconciliation passes the just-written record IDs so a new
+    record is never instantly superseded by the same trace that created it; periodic
+    curation passes None, leaving behavior unchanged.
+    """
     store = ContextStore(context_db_path)
     store.initialize()
     store.register_project(project_identity)
@@ -58,6 +65,7 @@ def apply_context_curation_plans(
             evidence_record_ids=evidence_record_ids,
             current_records=current_records,
             touched_record_ids=touched_record_ids,
+            protected_record_ids=protected_record_ids or set(),
         )
         if validation_error:
             observations.append(_observation("apply_context_curation_action", False, validation_error, action))
@@ -164,6 +172,7 @@ def _validate_action(
     evidence_record_ids: set[str],
     current_records: dict[str, dict[str, Any]],
     touched_record_ids: set[str],
+    protected_record_ids: set[str],
 ) -> str | None:
     """Return a validation error for unsafe actions, or None."""
     if not record_id:
@@ -173,6 +182,8 @@ def _validate_action(
     if record_id in touched_record_ids:
         return f"duplicate_action_for_record:{record_id}"
     if action_type == "supersede":
+        if record_id in protected_record_ids:
+            return f"protected_new_record:{record_id}"
         replacement_record_id = str(action.get("replacement_record_id") or "").strip()
         if not replacement_record_id:
             return "missing_replacement_record_id"

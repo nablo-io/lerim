@@ -13,6 +13,7 @@ from lerim.agents.context_curator.inventory import (
     build_similarity_clusters,
     format_records_json,
     load_active_records,
+    load_seed_and_neighbors,
 )
 from lerim.agents.context_curator.operations import (
     apply_context_curation_plans,
@@ -53,10 +54,16 @@ class ContextCuratorPipeline(dspy.Module):
         max_model_steps: int = 40,
         progress: bool = False,
         runtime: ModelRuntime | None = None,
+        seed_record_ids: list[str] | None = None,
         cluster_step: Any | None = None,
         health_step: Any | None = None,
     ) -> None:
-        """Create the context curator pipeline."""
+        """Create the context curator pipeline.
+
+        When seed_record_ids is set, the pipeline runs a scoped write-time
+        reconciliation pass over those records plus their active semantic neighbors
+        instead of the whole active project, and skips single-record health review.
+        """
         super().__init__()
         self.context_db_path = context_db_path
         self.project_identity = project_identity
@@ -71,24 +78,41 @@ class ContextCuratorPipeline(dspy.Module):
         self.progress = progress
         self.runtime = runtime
         self.adapter = dspy.JSONAdapter()
+        self.seed_record_ids = [
+            str(record_id).strip()
+            for record_id in (seed_record_ids or [])
+            if str(record_id).strip()
+        ]
         self.uses_real_model = cluster_step is None or health_step is None
         self.cluster_step = cluster_step or dspy.Predict(CurateContextCluster)
         self.health_step = health_step or dspy.Predict(CurateRecordHealthBatch)
 
     def forward(self) -> dict[str, Any]:
         """Run inventory, model review, and context-store mutation."""
-        records = load_active_records(
-            context_db_path=self.context_db_path,
-            project_identity=self.project_identity,
-        )
+        scoped = bool(self.seed_record_ids)
+        if scoped:
+            records = load_seed_and_neighbors(
+                context_db_path=self.context_db_path,
+                project_identity=self.project_identity,
+                seed_record_ids=self.seed_record_ids,
+            )
+        else:
+            records = load_active_records(
+                context_db_path=self.context_db_path,
+                project_identity=self.project_identity,
+            )
+        inventory_mode = "reconcile" if scoped else "active"
         if self.progress:
-            print(f"  context-curator inventory active_records={len(records)}", flush=True)
+            print(
+                f"  context-curator inventory {inventory_mode}_records={len(records)}",
+                flush=True,
+            )
         observations = [
             observation(
                 "load_inventory",
                 True,
-                f"active_records={len(records)}",
-                {"record_count": len(records)},
+                f"{inventory_mode}_records={len(records)}",
+                {"record_count": len(records), "scoped": scoped},
             )
         ]
         clusters = build_similarity_clusters(
@@ -116,15 +140,26 @@ class ContextCuratorPipeline(dspy.Module):
         )
         cluster_review = self.review_clusters(clusters)
         observations.extend(cluster_review["observations"])
-        health_review = self.review_health(
-            records=records,
-            prior_action_plans=cluster_review["action_plans"],
-            model_steps=cluster_review["model_steps"],
-        )
-        observations.extend(health_review["observations"])
+        if scoped:
+            # Write-time reconciliation only resolves duplicate/superseded records
+            # across the seed's neighborhood; single-record health review stays with
+            # the periodic curator so a brand-new record is not archived on write.
+            health_batches: list[list[dict[str, Any]]] = []
+            health_action_plans: list[Any] = []
+            model_steps = cluster_review["model_steps"]
+        else:
+            health_review = self.review_health(
+                records=records,
+                prior_action_plans=cluster_review["action_plans"],
+                model_steps=cluster_review["model_steps"],
+            )
+            observations.extend(health_review["observations"])
+            health_batches = health_review["health_batches"]
+            health_action_plans = health_review["action_plans"]
+            model_steps = health_review["model_steps"]
         action_plans = [
             *cluster_review["action_plans"],
-            *health_review["action_plans"],
+            *health_action_plans,
         ]
         evidence_record_ids = {
             str(record.get("record_id") or "")
@@ -137,6 +172,7 @@ class ContextCuratorPipeline(dspy.Module):
             session_id=self.session_id,
             action_plans=action_plans,
             evidence_record_ids=evidence_record_ids,
+            protected_record_ids=set(self.seed_record_ids) if scoped else None,
         )
         completion_summary = summarize_application(summary)
         final = observation(
@@ -156,13 +192,13 @@ class ContextCuratorPipeline(dspy.Module):
             print(f"  context-curator apply actions={summary.applied_actions}", flush=True)
         return {
             "observations": [*observations, *summary.observations, final],
-            "model_steps": health_review["model_steps"],
-            "llm_calls": health_review["model_steps"],
+            "model_steps": model_steps,
+            "llm_calls": model_steps,
             "records": records,
             "records_by_id": {str(record["record_id"]): record for record in records},
             "clusters": clusters,
             "clustered_record_ids": sorted(clustered_ids),
-            "health_batches": health_review["health_batches"],
+            "health_batches": health_batches,
             "action_plans": action_plans,
             "done": True,
             "completion_summary": completion_summary,

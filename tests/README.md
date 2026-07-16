@@ -123,8 +123,9 @@ Rules:
 - agent tool tests also cover source-session provenance defaults so historical traces do not look freshly created when indexed later
 - agent build tests guard the runtime tool contract against documentation and helper drift
 - adapter tests cover compact-trace visibility for canonical message fields and structured event messages without keyword heuristics
-- ingest persistence tests cover idempotent replay when a session episode already exists
+- ingest persistence tests cover idempotent replay when a session episode already exists, and the durable-record seed collection (`load_session_durable_record_ids`) that write-time reconciliation reviews
 - curate unit tests cover semantic clustering, action validation, and direct `ContextStore` mutation application
+- reconcile-on-write tests cover the scoped seed-plus-neighbor inventory, the write-time supersede that populates `valid_until`/`superseded_by_record_id` and drops the retired record from current retrieval, the protected-seed guard that stops a new record retiring itself, the scoped curator pass skipping single-record health review, and the ingestion trigger firing over the new durable ids (and skipping scope-only, empty, incomplete, and offline runs)
 - session catalog tests cover queue claim availability, legacy schema migration, derived FTS rebuilds, content-hash refresh/change detection, and stable pagination ordering
 - session catalog tests cover retrying both failed and dead-letter queue jobs without display pagination limits, including project child paths
 - dashboard HTTP tests cover project-scoped sessions under root and child paths, full-window source agent options for runs and search, scoped run detail/messages, scoped record detail, stats, search, legacy search schema migration, dashboard processing-status filters, requested session sort order, status-aware record filters, structured log filtering, graph project switching, all-project graph membership, registered-project graph bounds, read-only graph queries, full and partial graph record fallback, missing graph projection-table fallback, equivalent project aliases, invalid-project errors, degraded refine reports, and generated artifact history filtering
@@ -171,6 +172,7 @@ The current system is:
 - local semantic retrieval via ONNX embeddings + `sqlite-vec` + FTS5 + RRF
 - ingest graph: deterministic window reads, model trace observation, model durable-signal filtering, model context writing, context-store persistence
 - curate graph: active-record inventory, semantic-neighbor clusters, model context-cluster review, model record-health review for records without prior cluster actions, validated store mutations
+- reconcile-on-write: after ingest persists durable records, a scoped curate pass over just those seeds plus their active semantic neighbors supersedes replaced records at write time, protecting the just-written seeds and skipping single-record health review
 - context graph: active-record inventory, semantic candidate pairs, model link/review steps, semantic cluster persistence, context graph shipping
 - answer flow: model retrieval planning, read-only `ContextStore` count/list/search execution, model answer synthesis
 

@@ -141,6 +141,34 @@ def count_current_session_episodes(ctx: PersistenceContext) -> int:
     return int(row["total"] or 0) if row else 0
 
 
+def load_session_durable_record_ids(ctx: PersistenceContext) -> list[str]:
+    """Return active durable (non-episode) record IDs written by this session.
+
+    These are the seeds for write-time reconciliation: the durable records this
+    trace just persisted, which a scoped context-curation pass reviews against
+    their existing semantic neighbors. Episodes are excluded because reconciliation
+    only supersedes durable context. Mirrors count_current_session_episodes so the
+    session scope filter stays consistent.
+    """
+    store = ContextStore(ctx.context_db_path)
+    store.initialize()
+    with store.connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT record_id
+            FROM records
+            WHERE scope_type = ?
+              AND scope_id = ?
+              AND source_session_id = ?
+              AND kind != 'episode'
+              AND status = 'active'
+            ORDER BY created_at ASC, record_id ASC
+            """,
+            (ctx.scope_identity.scope_type, ctx.scope_identity.scope_id, ctx.session_id),
+        ).fetchall()
+    return [str(row["record_id"]) for row in rows]
+
+
 def persist_synthesized_extraction(
     synthesized: Any,
     ctx: PersistenceContext,

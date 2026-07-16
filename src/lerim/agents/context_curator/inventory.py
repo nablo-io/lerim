@@ -85,6 +85,60 @@ def load_active_records(
     return [_compact_record(row, preview=False) for row in listing.get("rows", [])]
 
 
+def load_seed_and_neighbors(
+    *,
+    context_db_path: Path,
+    project_identity: ProjectIdentity,
+    seed_record_ids: list[str],
+    neighbor_limit: int = CONTEXT_CURATOR_NEIGHBOR_LIMIT,
+) -> list[dict[str, Any]]:
+    """Load seed records plus their active semantic neighbors for scoped curation.
+
+    Used by write-time reconciliation: the seeds are durable records one trace just
+    wrote, and the neighbors are the existing active records most likely to be
+    duplicated or superseded by them. The deduped union is the bounded inventory a
+    scoped curator pass reviews, centered on the seeds instead of the whole project
+    as load_active_records does. Non-active or missing records are skipped.
+    """
+    store = ContextStore(context_db_path)
+    store.initialize()
+    store.register_project(project_identity)
+    collected: dict[str, dict[str, Any]] = {}
+
+    def _add(record_id: str) -> dict[str, Any] | None:
+        """Fetch one active record into the inventory, returning the full row."""
+        record_id = str(record_id or "").strip()
+        if not record_id or record_id in collected:
+            return None
+        record = store.fetch_record(
+            record_id,
+            project_ids=[project_identity.project_id],
+            include_versions=False,
+        )
+        if record is None or str(record.get("status") or "") != "active":
+            return None
+        collected[record_id] = _compact_record(record, preview=False)
+        return record
+
+    for seed_id in seed_record_ids:
+        seed = _add(seed_id)
+        if seed is None:
+            continue
+        query = record_search_query(seed)
+        if not query:
+            continue
+        hits = store.search(
+            project_ids=[project_identity.project_id],
+            query=query,
+            statuses=["active"],
+            include_archived=False,
+            limit=max(2, int(neighbor_limit) + 1),
+        )
+        for hit in hits:
+            _add(str(hit.record_id))
+    return list(collected.values())
+
+
 def build_similarity_clusters(
     *,
     context_db_path: Path,

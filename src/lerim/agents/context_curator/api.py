@@ -29,6 +29,7 @@ def run_context_curator(
     temperature: float | None = None,
     max_llm_calls: int | None = None,
     progress: bool = False,
+    seed_record_ids: list[str] | None = None,
 ) -> ContextCuratorResult:
     ...
 
@@ -48,6 +49,7 @@ def run_context_curator(
     temperature: float | None = None,
     max_llm_calls: int | None = None,
     progress: bool = False,
+    seed_record_ids: list[str] | None = None,
 ) -> tuple[ContextCuratorResult, ContextCuratorRunDetails]:
     ...
 
@@ -66,8 +68,14 @@ def run_context_curator(
     temperature: float | None = None,
     max_llm_calls: int | None = None,
     progress: bool = False,
+    seed_record_ids: list[str] | None = None,
 ) -> ContextCuratorResult | tuple[ContextCuratorResult, ContextCuratorRunDetails]:
-    """Run the context-curator pipeline on one project scope."""
+    """Run the context-curator pipeline on one project scope.
+
+    When seed_record_ids is provided, the pipeline runs a scoped write-time
+    reconciliation pass over those records plus their active semantic neighbors
+    rather than the whole active project.
+    """
     cfg = config or get_config()
     resolved_context_db_path = context_db_path.expanduser().resolve()
     effective_model_label = model_label(
@@ -99,6 +107,7 @@ def run_context_curator(
             temperature=temperature,
             max_model_steps=max_llm_calls or 40,
             progress=progress,
+            seed_record_ids=seed_record_ids,
         )()
     result = ContextCuratorResult(
         completion_summary=str(final_state.get("completion_summary") or "").strip()

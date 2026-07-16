@@ -6,6 +6,7 @@ from pathlib import Path
 
 from lerim.agents.trace_ingestion.persistence import (
     PersistenceContext,
+    load_session_durable_record_ids,
     persist_synthesized_extraction,
     prepare_context_store,
 )
@@ -174,6 +175,35 @@ def test_model_completion_summary_is_not_persisted(tmp_path) -> None:
     assert summary == "Trace ingestion completed: 1 durable record created."
     assert observations[-1]["content"] == summary
     assert "CSS" not in summary
+
+
+def test_load_session_durable_record_ids_returns_written_durable_records(tmp_path) -> None:
+    """Reconciliation seeds are exactly the durable (non-episode) records this session wrote."""
+    ctx = _context(tmp_path)
+    prepare_context_store(ctx)
+
+    _observations, done, _summary = persist_synthesized_extraction(_synthesized_payload(), ctx)
+
+    seed_ids = load_session_durable_record_ids(ctx)
+
+    store = ContextStore(ctx.context_db_path)
+    rows = store.query(
+        entity="records",
+        mode="list",
+        project_ids=[ctx.project_identity.project_id],
+        source_session_id=ctx.session_id,
+        limit=10,
+        include_archived=True,
+    )["rows"]
+    durable = [row for row in rows if row["kind"] != "episode"]
+    episodes = [row for row in rows if row["kind"] == "episode"]
+
+    assert done is True
+    assert len(durable) == 1
+    assert seed_ids == [str(durable[0]["record_id"])]
+    # The archived episode wrapper is never a reconciliation seed.
+    assert episodes
+    assert str(episodes[0]["record_id"]) not in seed_ids
 
 
 def test_persists_operational_role_metadata(tmp_path) -> None:

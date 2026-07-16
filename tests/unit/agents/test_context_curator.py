@@ -9,6 +9,7 @@ from lerim.agents.context_curator import ContextCuratorResult, ContextCuratorRun
 from lerim.agents.context_curator.inventory import (
     build_health_batches,
     build_similarity_clusters,
+    load_seed_and_neighbors,
     record_search_query,
 )
 from lerim.agents.context_curator.operations import apply_context_curation_plans
@@ -16,6 +17,7 @@ from lerim.agents.context_curator.pipeline import validate_action_plan_for_recor
 from lerim.agents.model_helpers import call_model_step
 from lerim.context import ContextStore
 from lerim.context.project_identity import ProjectIdentity
+from tests.helpers import make_config
 
 
 def _identity(tmp_path) -> ProjectIdentity:
@@ -71,6 +73,7 @@ class TestRunCurateSignature:
             "temperature",
             "max_llm_calls",
             "progress",
+            "seed_record_ids",
         }
         assert set(params.keys()) == expected
 
@@ -467,3 +470,237 @@ class TestContextCuratorOperations:
         assert fetched["kind"] == "decision"
         assert summary.observations[0]["ok"] is False
         assert "kind_change_not_allowed" in summary.observations[0]["content"]
+
+
+class TestContextCuratorReconcileOnWrite:
+    """Tests for scoped write-time reconciliation (seed_record_ids mode)."""
+
+    def test_load_seed_and_neighbors_collects_seed_and_search_neighbors(
+        self, tmp_path, monkeypatch
+    ):
+        """The scoped inventory is the seed plus its active search neighbors, not all records."""
+        identity = _identity(tmp_path)
+        store = ContextStore(tmp_path / "context.sqlite3")
+        store.initialize()
+        store.register_project(identity)
+        _seed_session(store, identity.project_id, "seed")
+        store.create_record(
+            project_id=identity.project_id,
+            session_id="seed",
+            record_id="rec_seed",
+            kind="decision",
+            title="Persist retry budget in job metadata",
+            body="Persist retry budget in job metadata so retries survive restarts.",
+            decision="Persist retry budget in job metadata.",
+            why="Retries must survive restarts.",
+        )
+        store.create_record(
+            project_id=identity.project_id,
+            session_id="seed",
+            record_id="rec_neighbor",
+            kind="decision",
+            title="Persist retry state",
+            body="Persist retry state in metadata.",
+            decision="Persist retry state.",
+            why="Workers need restart support.",
+        )
+        store.create_record(
+            project_id=identity.project_id,
+            session_id="seed",
+            record_id="rec_unrelated",
+            kind="fact",
+            title="Retry metrics are emitted",
+            body="Retry metrics are emitted to the dashboard.",
+        )
+
+        def fake_search(self, **kwargs):
+            return [SimpleNamespace(record_id="rec_neighbor")]
+
+        monkeypatch.setattr(ContextStore, "search", fake_search)
+
+        inventory = load_seed_and_neighbors(
+            context_db_path=store.db_path,
+            project_identity=identity,
+            seed_record_ids=["rec_seed"],
+        )
+
+        ids = {record["record_id"] for record in inventory}
+        assert ids == {"rec_seed", "rec_neighbor"}
+        # A non-neighbor active record is not pulled in, unlike load_active_records.
+        assert "rec_unrelated" not in ids
+
+    def test_scoped_supersede_populates_temporal_fields_and_drops_from_retrieval(
+        self, tmp_path
+    ):
+        """A write-time supersede retires the old neighbor and removes it from current retrieval."""
+        identity = _identity(tmp_path)
+        store = ContextStore(tmp_path / "context.sqlite3")
+        store.initialize()
+        store.register_project(identity)
+        _seed_session(store, identity.project_id, "seed")
+        _seed_session(store, identity.project_id, "reconcile")
+        store.create_record(
+            project_id=identity.project_id,
+            session_id="seed",
+            record_id="rec_old",
+            kind="decision",
+            title="Persist retry state",
+            body="Persist retry state in metadata.",
+            decision="Persist retry state.",
+            why="Workers need restart support.",
+        )
+        store.create_record(
+            project_id=identity.project_id,
+            session_id="reconcile",
+            record_id="rec_new",
+            kind="decision",
+            title="Persist retry budget in job metadata",
+            body="Persist retry budget in job metadata so retries survive restarts.",
+            decision="Persist retry budget in job metadata.",
+            why="Retries must survive restarts.",
+        )
+
+        summary = apply_context_curation_plans(
+            context_db_path=store.db_path,
+            project_identity=identity,
+            session_id="reconcile",
+            evidence_record_ids={"rec_old", "rec_new"},
+            protected_record_ids={"rec_new"},
+            action_plans=[
+                {
+                    "actions": [
+                        {
+                            "action_type": "supersede",
+                            "record_id": "rec_old",
+                            "replacement_record_id": "rec_new",
+                            "reason": "new record replaces the older duplicate",
+                        }
+                    ]
+                }
+            ],
+        )
+
+        assert summary.records_updated == 1
+        old = store.fetch_record("rec_old", project_ids=[identity.project_id])
+        assert old["valid_until"]
+        assert old["superseded_by_record_id"] == "rec_new"
+
+        current_ids = {
+            row["record_id"]
+            for row in store.query(
+                entity="records",
+                mode="list",
+                project_ids=[identity.project_id],
+            )["rows"]
+        }
+        assert "rec_old" not in current_ids
+        assert "rec_new" in current_ids
+
+    def test_protected_seed_is_never_retired_by_its_own_reconciliation(self, tmp_path):
+        """The direction guard blocks a supersede that would retire a just-written seed."""
+        identity = _identity(tmp_path)
+        store = ContextStore(tmp_path / "context.sqlite3")
+        store.initialize()
+        store.register_project(identity)
+        _seed_session(store, identity.project_id, "seed")
+        _seed_session(store, identity.project_id, "reconcile")
+        store.create_record(
+            project_id=identity.project_id,
+            session_id="reconcile",
+            record_id="rec_new",
+            kind="decision",
+            title="Persist retry state",
+            body="Persist retry state in metadata.",
+            decision="Persist retry state.",
+            why="Workers need restart support.",
+        )
+        store.create_record(
+            project_id=identity.project_id,
+            session_id="seed",
+            record_id="rec_old",
+            kind="decision",
+            title="Persist retry budget in job metadata",
+            body="Persist retry budget in job metadata so retries survive restarts.",
+            decision="Persist retry budget in job metadata.",
+            why="Retries must survive restarts.",
+        )
+
+        summary = apply_context_curation_plans(
+            context_db_path=store.db_path,
+            project_identity=identity,
+            session_id="reconcile",
+            evidence_record_ids={"rec_old", "rec_new"},
+            protected_record_ids={"rec_new"},
+            action_plans=[
+                {
+                    "actions": [
+                        {
+                            "action_type": "supersede",
+                            "record_id": "rec_new",
+                            "replacement_record_id": "rec_old",
+                            "reason": "model wrongly retires the just-written record",
+                        }
+                    ]
+                }
+            ],
+        )
+
+        assert summary.records_updated == 0
+        new = store.fetch_record("rec_new", project_ids=[identity.project_id])
+        assert new["valid_until"] is None
+        assert new["superseded_by_record_id"] is None
+        assert summary.observations[0]["ok"] is False
+        assert "protected_new_record" in summary.observations[0]["content"]
+
+    def test_scoped_run_reviews_only_seed_neighborhood(self, tmp_path, monkeypatch):
+        """A scoped run loads the seed neighborhood, not the whole project, and skips health review.
+
+        A lone seed with no returned neighbors yields no clusters, so the run completes
+        offline (no model call) while still exercising the scoped forward() branch:
+        seed-centered inventory selection and skipped single-record health review.
+        """
+        identity = _identity(tmp_path)
+        store = ContextStore(tmp_path / "context.sqlite3")
+        store.initialize()
+        store.register_project(identity)
+        _seed_session(store, identity.project_id, "seed")
+        store.create_record(
+            project_id=identity.project_id,
+            session_id="seed",
+            record_id="rec_seed",
+            kind="decision",
+            title="Persist retry budget in job metadata",
+            body="Persist retry budget in job metadata so retries survive restarts.",
+            decision="Persist retry budget in job metadata.",
+            why="Retries must survive restarts.",
+        )
+        # A second active record a whole-project pass would health-review; the scoped
+        # run must ignore it because it is not a neighbor of the seed.
+        store.create_record(
+            project_id=identity.project_id,
+            session_id="seed",
+            record_id="rec_other",
+            kind="fact",
+            title="Retry metrics are emitted",
+            body="Retry metrics are emitted to the dashboard.",
+        )
+
+        monkeypatch.setattr(ContextStore, "search", lambda self, **kwargs: [])
+
+        result, details = run_context_curator(
+            context_db_path=store.db_path,
+            project_identity=identity,
+            session_id="reconcile",
+            config=make_config(tmp_path / ".lerim"),
+            return_details=True,
+            seed_record_ids=["rec_seed"],
+        )
+
+        assert details.done is True
+        # Scoped inventory is the seed alone; the unrelated fact is never reviewed.
+        assert details.active_record_count == 1
+        assert result.completion_summary
+        for record_id in ("rec_seed", "rec_other"):
+            record = store.fetch_record(record_id, project_ids=[identity.project_id])
+            assert record["status"] == "active"
+            assert record["valid_until"] is None

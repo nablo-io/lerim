@@ -10,13 +10,14 @@ from lerim.agents.trace_ingestion.coding_records import (
     apply_coding_retention_decisions,
     coding_eval_polish_to_synthesized,
 )
+from lerim.agents.trace_ingestion.persistence import PersistenceContext
 from lerim.agents.trace_ingestion.pipeline import TraceIngestionPipeline
 from lerim.agents.trace_ingestion.summaries import (
     _episode_summary,
     _implementation_summary,
 )
 from lerim.agents.trace_ingestion.windowing import TRACE_MAX_CHUNK_BYTES, read_trace_window
-from lerim.context import ContextStore, resolve_project_identity
+from lerim.context import ContextStore, resolve_project_identity, scope_from_project
 from tests.helpers import make_config
 
 
@@ -1549,3 +1550,117 @@ def test_long_trace_summaries_keep_start_and_recent_items() -> None:
     assert "noise category 0" in implementation_summary
     assert "noise category 39" in implementation_summary
     assert "noise category 20" not in implementation_summary
+
+
+def _reconcile_context(tmp_path, *, with_project: bool = True) -> PersistenceContext:
+    """Build a persistence context for reconcile-on-write wiring tests."""
+    project_identity = resolve_project_identity(tmp_path)
+    return PersistenceContext(
+        context_db_path=tmp_path / "context.sqlite3",
+        project_identity=project_identity if with_project else None,
+        scope_identity=scope_from_project(project_identity),
+        session_id="session-reconcile",
+        trace_path=tmp_path / "trace.jsonl",
+        session_started_at="2026-01-01T00:00:00+00:00",
+        model_name="test-model",
+    )
+
+
+def test_reconcile_on_write_triggers_injected_reconciler_with_new_ids(tmp_path, monkeypatch):
+    """A completed persist hands the durable record ids it wrote to the reconciler."""
+    monkeypatch.setattr(
+        "lerim.agents.trace_ingestion.pipeline.load_session_durable_record_ids",
+        lambda ctx: ["rec_new_1", "rec_new_2"],
+    )
+    captured_ids: list[str] = []
+    pipeline = object.__new__(TraceIngestionPipeline)
+    pipeline.persistence_context = _reconcile_context(tmp_path)
+    pipeline._reconcile_records = captured_ids.extend
+    state = {"done": True, "observations": []}
+
+    pipeline._reconcile_new_records(state)
+
+    assert captured_ids == ["rec_new_1", "rec_new_2"]
+    events = [obs for obs in state["observations"] if obs["action"] == "reconcile_on_write"]
+    assert len(events) == 1
+    assert events[0]["ok"] is True
+
+
+def test_reconcile_on_write_skips_when_no_durable_records_written(tmp_path, monkeypatch):
+    """No durable record means nothing to reconcile and no reconciliation event."""
+    monkeypatch.setattr(
+        "lerim.agents.trace_ingestion.pipeline.load_session_durable_record_ids",
+        lambda ctx: [],
+    )
+    captured_ids: list[str] = []
+    pipeline = object.__new__(TraceIngestionPipeline)
+    pipeline.persistence_context = _reconcile_context(tmp_path)
+    pipeline._reconcile_records = captured_ids.extend
+    state = {"done": True, "observations": []}
+
+    pipeline._reconcile_new_records(state)
+
+    assert captured_ids == []
+    assert [obs for obs in state["observations"] if obs["action"] == "reconcile_on_write"] == []
+
+
+def test_reconcile_on_write_skips_scope_only_ingestion(tmp_path, monkeypatch):
+    """Scope-only ingestion has no project identity, so the curator cannot run."""
+
+    def _fail(ctx):
+        raise AssertionError("durable ids must not be loaded without a project identity")
+
+    monkeypatch.setattr(
+        "lerim.agents.trace_ingestion.pipeline.load_session_durable_record_ids", _fail
+    )
+    captured_ids: list[str] = []
+    pipeline = object.__new__(TraceIngestionPipeline)
+    pipeline.persistence_context = _reconcile_context(tmp_path, with_project=False)
+    pipeline._reconcile_records = captured_ids.extend
+    state = {"done": True, "observations": []}
+
+    pipeline._reconcile_new_records(state)
+
+    assert captured_ids == []
+
+
+def test_reconcile_on_write_skips_when_persist_incomplete(tmp_path, monkeypatch):
+    """An unfinished persist never reconciles."""
+
+    def _fail(ctx):
+        raise AssertionError("durable ids must not be loaded when persist did not complete")
+
+    monkeypatch.setattr(
+        "lerim.agents.trace_ingestion.pipeline.load_session_durable_record_ids", _fail
+    )
+    captured_ids: list[str] = []
+    pipeline = object.__new__(TraceIngestionPipeline)
+    pipeline.persistence_context = _reconcile_context(tmp_path)
+    pipeline._reconcile_records = captured_ids.extend
+    state = {"done": False, "observations": []}
+
+    pipeline._reconcile_new_records(state)
+
+    assert captured_ids == []
+
+
+def test_reconcile_on_write_offline_pipeline_does_not_invoke_real_curator(tmp_path, monkeypatch):
+    """With no injected reconciler and fake model steps, no real curator runs."""
+    monkeypatch.setattr(
+        "lerim.agents.trace_ingestion.pipeline.load_session_durable_record_ids",
+        lambda ctx: ["rec_new_1"],
+    )
+
+    def _boom(**kwargs):
+        raise AssertionError("offline ingestion must not call the real context curator")
+
+    monkeypatch.setattr("lerim.agents.trace_ingestion.pipeline.run_context_curator", _boom)
+    pipeline = object.__new__(TraceIngestionPipeline)
+    pipeline.persistence_context = _reconcile_context(tmp_path)
+    pipeline._reconcile_records = None
+    pipeline.uses_real_model = False
+    state = {"done": True, "observations": []}
+
+    pipeline._reconcile_new_records(state)
+
+    assert [obs for obs in state["observations"] if obs["action"] == "reconcile_on_write"] == []

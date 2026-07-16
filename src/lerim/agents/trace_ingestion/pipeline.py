@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 from contextlib import nullcontext
-from typing import Any
+from typing import Any, Callable
 
 from lerim.agents.dspy_compat import dspy
 
+from lerim.agents.context_curator import run_context_curator
 from lerim.agents.model_helpers import call_model_step, prediction_payload
 from lerim.agents.model_runtime import ModelRuntime, build_model_runtime
 from lerim.agents.trace_ingestion.coding_records import (
@@ -16,6 +17,7 @@ from lerim.agents.trace_ingestion.coding_records import (
 )
 from lerim.agents.trace_ingestion.persistence import (
     PersistenceContext,
+    load_session_durable_record_ids,
     persist_synthesized_extraction,
 )
 from lerim.agents.trace_ingestion.signatures import (
@@ -73,8 +75,15 @@ class TraceIngestionPipeline(dspy.Module):
         progress: bool = False,
         runtime: ModelRuntime | None = None,
         steps: dict[str, Any] | None = None,
+        reconcile_records: Callable[[list[str]], object] | None = None,
     ) -> None:
-        """Create the trace-ingestion pipeline."""
+        """Create the trace-ingestion pipeline.
+
+        reconcile_records, when provided, is called with the durable record IDs this
+        trace wrote and replaces the default write-time reconciliation pass (the real
+        scoped context curator). Tests inject a fake to assert the trigger without a
+        model; production leaves it None.
+        """
         super().__init__()
         self.persistence_context = persistence_context
         self.config = config
@@ -91,6 +100,7 @@ class TraceIngestionPipeline(dspy.Module):
         )
         self.progress = progress
         self.runtime = runtime
+        self._reconcile_records = reconcile_records
         self.adapter = dspy.JSONAdapter()
         self.source_profile_id = normalize_signal_pack_id(
             persistence_context.source_profile
@@ -739,6 +749,67 @@ class TraceIngestionPipeline(dspy.Module):
         state["observations"].extend(observations)
         state["done"] = done
         state["completion_summary"] = completion_summary
+        self._reconcile_new_records(state)
+
+    def _reconcile_new_records(self, state: dict[str, Any]) -> None:
+        """Reconcile newly written durable records against existing neighbors.
+
+        Runs a scoped context-curation pass over the durable records this trace just
+        wrote plus their active semantic neighbors, so an update supersedes the
+        record it replaces at write time instead of waiting for the periodic curator.
+        The scoped pass protects the just-written seeds, so a brand-new record is
+        never retired here; residual conflicts fall through to the periodic curator.
+
+        No-ops for scope-only ingestion (the curator needs a project identity), when
+        the persist step did not complete, and when no durable record was written.
+        Reconciliation is best-effort: a failure is recorded in the event stream but
+        never fails an already-completed ingest.
+        """
+        if not state.get("done"):
+            return
+        ctx = self.persistence_context
+        if ctx.project_identity is None:
+            return
+        new_record_ids = load_session_durable_record_ids(ctx)
+        if not new_record_ids:
+            return
+        try:
+            if self._reconcile_records is not None:
+                self._reconcile_records(new_record_ids)
+            elif self.uses_real_model:
+                run_context_curator(
+                    context_db_path=ctx.context_db_path,
+                    project_identity=ctx.project_identity,
+                    session_id=f"{ctx.session_id}:reconcile",
+                    config=self.config,
+                    provider=self.provider,
+                    model_name=self.model_name,
+                    api_base_url=self.api_base_url,
+                    api_key=self.api_key,
+                    temperature=self.temperature,
+                    seed_record_ids=new_record_ids,
+                    progress=self.progress,
+                )
+            else:
+                return
+        except Exception as exc:  # best-effort: a completed ingest must not fail here
+            state["observations"].append(
+                observation(
+                    "reconcile_on_write",
+                    False,
+                    f"{type(exc).__name__}: {exc}",
+                    {"seed_record_count": len(new_record_ids)},
+                )
+            )
+            return
+        state["observations"].append(
+            observation(
+                "reconcile_on_write",
+                True,
+                f"seeds={len(new_record_ids)}",
+                {"seed_record_count": len(new_record_ids)},
+            )
+        )
 
     def require_budget(self, state: dict[str, Any]) -> None:
         """Raise before starting a model step when the request budget is exhausted."""
