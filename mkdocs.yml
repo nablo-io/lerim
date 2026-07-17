@@ -10,7 +10,7 @@ theme:
   custom_dir: overrides
   font: false
   logo: assets/logo-nabla-drop.svg
-  favicon: assets/logo-nabla-drop-icon.png
+  favicon: assets/favicon-32.png
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default

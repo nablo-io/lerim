@@ -3,9 +3,13 @@
 These files are public documentation assets. Keep this folder limited to assets
 that are safe to ship with the docs site.
 
-- `logo-nabla-drop.svg` / `logo-nabla-drop-icon.png` are the docs-site logo and
-  favicon copy (the shared Nablo nabla-drop mark; Lerim is an open-source
-  project by Nablo).
+- `logo-nabla-drop.svg` is the docs-site header logo (the shared Nablo
+  nabla-drop mark; Lerim is an open-source project by Nablo).
+- `favicon-32.png` is the docs-site browser-tab icon. Copied verbatim from
+  `nablo/site/assets/favicon-32.png` so the tab icon matches nablo.io exactly
+  instead of using a different export of the same mark. `logo-nabla-drop-icon.png`
+  is kept for the embedded diagram illustrations (see lerim-context-compiler.svg
+  etc.) but is no longer the favicon.
 - `lerim-context-compiler.svg` is the public README hero showing completed
   runs flowing into Lerim, then into a context graph reused by agents and
   humans.
