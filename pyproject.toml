@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "lerim"
 version = "0.3.33"
-description = "Open-source agent-memory / context compiler by Nablo: compiles completed agent traces into cited, reusable context."
+description = "Open-source context compiler by Nablo: compiles completed agent traces into cited, reusable context."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
