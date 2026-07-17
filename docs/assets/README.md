@@ -9,8 +9,8 @@ that are safe to ship with the docs site.
 - `lerim-context-compiler.svg` is the public README hero showing completed
   runs flowing into Lerim, then into a context graph reused by agents and
   humans.
-- `lerim-context-retrieval.svg` is the public README visual showing CLI, skill,
-  and MCP retrieval from the context graph.
+- `lerim-context-retrieval.svg` is the public visual showing CLI, skill, and
+  MCP retrieval from the context graph. Used on the Querying Context guide.
 - `lerim-custom-trace-folder.svg` is the public custom-trace flow showing
   clean JSONL registration and daemon polling ingest. Trace-source labels use
   support/research/custom-harness examples to reflect the multi-vertical custom path.

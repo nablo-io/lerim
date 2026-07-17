@@ -106,3 +106,21 @@ Open a GitHub issue with:
 - [ ] New source files include an `if __name__ == "__main__":` self-test when practical.
 - [ ] No mocking or stubbing in self-test flows.
 - [ ] Related docs updated if behavior changed.
+
+## Release checklist
+
+Run these before tagging a release, after the version and changelog are updated:
+
+- `uv run python scripts/release_preflight.py --version <version>`
+- `uv run pytest tests/unit -q`
+- `uv run mkdocs build --strict`
+- `uv build`
+- `uv run python benchmarks/scripts/validate_public_artifacts.py`
+- `uv run python benchmarks/scripts/validate_public_artifacts.py --require-clean` before launch-grade benchmark claims
+- `uv run python benchmarks/scripts/validate_public_artifacts.py --require-tracked-public-files` before release packaging
+- Clean-environment install plus a `lerim mcp` startup check
+- README/docs/asset review for unsupported benchmark, support, or comparison claims
+
+Run the relevant live suites (`smoke`, `integration`, `e2e`) for the affected
+path before release. `smoke` is a short LLM-backed runtime check, not benchmark
+evidence.

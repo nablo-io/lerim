@@ -3,6 +3,10 @@
 Lerim provides several ways to search and retrieve context. All query paths are
 read-only.
 
+<p align="center">
+  <img src="../assets/lerim-context-retrieval.svg" alt="Agents retrieve source-backed context from Lerim through CLI, skill, or MCP" width="860">
+</p>
+
 ## Agent startup context
 
 If you want an agent to use Lerim as project context and memory when past work

@@ -82,3 +82,6 @@ the generated artifacts.
   its saved memories with the same labels and judge.
 - Do not publish competitor numbers without matching metric boundaries and
   source-backed provenance.
+- Before publishing a benchmark claim, require the exact command, git commit,
+  dataset snapshot, raw `report.json`, generated report, model/provider,
+  hardware/runtime metadata, and failure count.
