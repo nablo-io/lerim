@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from lerim.traces.submissions import (
+    SCHEMA_VERSION,
     create_submission_manifest,
     list_submission_manifests,
     load_submission_manifest,
@@ -218,4 +219,21 @@ def test_manifest_json_is_ascii_and_stable(tmp_path: Path) -> None:
 
     raw = submission_manifest_path(trace_path).read_text(encoding="utf-8")
     assert raw.endswith("\n")
-    assert json.loads(raw)["schema_version"] == 1
+    assert json.loads(raw)["schema_version"] == SCHEMA_VERSION
+
+
+def test_load_submission_manifest_rejects_a_pre_trajectory_manifest(tmp_path: Path) -> None:
+    """A schema-1 manifest points at a trace written in the retired cache shape.
+
+    Retrying it would resubmit records in the old {"type","message"} format, so
+    the mismatch has to be a loud error telling the user to resubmit the trace.
+    """
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text("{}", encoding="utf-8")
+    submission_manifest_path(trace_path).write_text(
+        json.dumps({"schema_version": 1, "trace_path": str(trace_path)}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="unsupported submission manifest schema: 1"):
+        load_submission_manifest(trace_path)

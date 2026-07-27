@@ -513,8 +513,8 @@ def test_coding_project_identity_repairs_source_ref_to_identity_url(tmp_path):
     trace_path.write_text(
         "\n".join(
             [
-                '{"message":{"role":"assistant","content":[{"type":"text","text":"Now I see the real issue."}]}}',
-                '{"message":{"role":"assistant","content":[{"type":"text","text":"The project_url is https://example.com/acme/lerim and project_name is lerim."}]}}',
+                '{"role":"assistant","content":"Now I see the real issue."}',
+                '{"role":"assistant","content":"The project_url is https://example.com/acme/lerim and project_name is lerim."}',
             ]
         ),
         encoding="utf-8",
@@ -551,10 +551,10 @@ def test_coding_project_identity_limits_lower_level_setup_records(tmp_path):
     trace_path.write_text(
         "\n".join(
             [
-                '{"message":{"role":"assistant","content":[{"type":"text","text":"Service project URL is https://example.com/acme/lerim."}]}}',
-                '{"message":{"role":"assistant","content":[{"type":"text","text":"Use the env var forwarding setup."}]}}',
-                '{"message":{"role":"assistant","content":[{"type":"text","text":"Diagnostic detail one."}]}}',
-                '{"message":{"role":"assistant","content":[{"type":"text","text":"Diagnostic detail two."}]}}',
+                '{"role":"assistant","content":"Service project URL is https://example.com/acme/lerim."}',
+                '{"role":"assistant","content":"Use the env var forwarding setup."}',
+                '{"role":"assistant","content":"Diagnostic detail one."}',
+                '{"role":"assistant","content":"Diagnostic detail two."}',
             ]
         ),
         encoding="utf-8",
@@ -615,8 +615,8 @@ def test_coding_other_records_drop_initial_task_only_details(tmp_path):
     trace_path.write_text(
         "\n".join(
             [
-                '{"message":{"role":"user","content":"Implement the detailed plan in module_a.py."}}',
-                '{"message":{"role":"assistant","content":[{"type":"text","text":"Later accepted decision: keep public docs separate from private launch notes."}]}}',
+                '{"role":"user","content":"Implement the detailed plan in module_a.py."}',
+                '{"role":"assistant","content":"Later accepted decision: keep public docs separate from private launch notes."}',
             ]
         ),
         encoding="utf-8",
@@ -663,10 +663,10 @@ def test_coding_records_drop_failed_tool_followup_debugging(tmp_path):
     trace_path.write_text(
         "\n".join(
             [
-                '{"message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{}}]}}',
-                '{"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"failed","is_error":true}]}}',
-                '{"message":{"role":"assistant","content":[{"type":"text","text":"The failing test needs repo_path fixture wiring."}]}}',
-                '{"message":{"role":"assistant","content":[{"type":"text","text":"The empty evaluation fixture caused extract failures."}]}}',
+                '{"role":"assistant","content":null,"tool_calls":[{"id":"toolu_1","name":"Bash","args":"{}"}]}',
+                '{"role":"tool","tool_call_id":"toolu_1","content":"Error: failed"}',
+                '{"role":"assistant","content":"The failing test needs repo_path fixture wiring."}',
+                '{"role":"assistant","content":"The empty evaluation fixture caused extract failures."}',
             ]
         ),
         encoding="utf-8",
@@ -711,9 +711,9 @@ def test_coding_unilateral_code_edit_execution_archives_without_records(tmp_path
     trace_path.write_text(
         "\n".join(
             [
-                '{"message":{"role":"user","content":"Implement this detailed plan."}}',
-                '{"message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Edit","input":{}}]}}',
-                '{"message":{"role":"assistant","content":[{"type":"text","text":"The implementation now routes sessions by cwd."}]}}',
+                '{"role":"user","content":"Implement this detailed plan."}',
+                '{"role":"assistant","content":null,"tool_calls":[{"id":"toolu_1","name":"Edit","args":"{}"}]}',
+                '{"role":"assistant","content":"The implementation now routes sessions by cwd."}',
             ]
         ),
         encoding="utf-8",
@@ -752,10 +752,10 @@ def test_coding_record_priority_keeps_primary_guidance_and_fixed_slots(tmp_path)
     trace_path.write_text(
         "\n".join(
                 [
-                    '{"message":{"role":"user","content":"Prefer local model work."}}',
-                    '{"message":{"role":"user","content":"Use the hybrid role split."}}',
-                    '{"message":{"role":"user","content":"Use my provider subscription."}}',
-                    '{"message":{"role":"assistant","content":[{"type":"text","text":"Technical constraint."}]}}',
+                    '{"role":"user","content":"Prefer local model work."}',
+                    '{"role":"user","content":"Use the hybrid role split."}',
+                    '{"role":"user","content":"Use my provider subscription."}',
+                    '{"role":"assistant","content":"Technical constraint."}',
                 ]
             ),
         encoding="utf-8",
@@ -815,12 +815,12 @@ def test_coding_record_priority_drops_other_records_when_strategy_slots_are_full
     trace_path.write_text(
         "\n".join(
             [
-                '{"message":{"role":"user","content":"Do not change models."}}',
-                '{"message":{"role":"user","content":"Prefer the 4B model."}}',
-                '{"message":{"role":"user","content":"Use my provider subscription."}}',
-                '{"message":{"role":"assistant","content":[{"type":"text","text":"Use hybrid local/cloud roles."}]}}',
-                '{"message":{"role":"assistant","content":[{"type":"text","text":"Reported upstream PR."}]}}',
-                '{"message":{"role":"assistant","content":[{"type":"text","text":"Local context window note."}]}}',
+                '{"role":"user","content":"Do not change models."}',
+                '{"role":"user","content":"Prefer the 4B model."}',
+                '{"role":"user","content":"Use my provider subscription."}',
+                '{"role":"assistant","content":"Use hybrid local/cloud roles."}',
+                '{"role":"assistant","content":"Reported upstream PR."}',
+                '{"role":"assistant","content":"Local context window note."}',
             ]
         ),
         encoding="utf-8",
@@ -857,7 +857,7 @@ def test_coding_role_split_record_is_semantic_recommendation(tmp_path):
     """Role-split restoration keeps the source-backed recommendation wording."""
     trace_path = tmp_path / "trace.jsonl"
     trace_path.write_text(
-        '{"message":{"role":"assistant","content":[{"type":"text","text":"Recommendation for your config: extract and summarize roles use mlx; lead and explorer roles keep using a cloud provider."}]}}\n',
+        '{"role":"assistant","content":"Recommendation for your config: extract and summarize roles use mlx; lead and explorer roles keep using a cloud provider."}\n',
         encoding="utf-8",
     )
 
@@ -889,13 +889,19 @@ def test_coding_role_split_record_is_semantic_recommendation(tmp_path):
 
 
 def test_coding_source_refs_repair_hidden_lines_to_nearby_visible_text(tmp_path):
-    """Hidden line refs are repaired to nearby visible conversation text."""
+    """Tool-result refs are repaired to nearby visible conversation text.
+
+    A ``tool`` record is machine output, not something a human or the model
+    said, so it cannot be cited. Unlike a tool *call*, which may only be
+    repaired to assistant text, a tool result may be repaired to any nearby
+    visible line — a user line here proves the two rules stay distinct.
+    """
     trace_path = tmp_path / "trace.jsonl"
     trace_path.write_text(
         "\n".join(
             [
-                '{"message":{"role":"assistant","content":[{"type":"thinking","thinking":"[thinking cleared: 0 chars]"}]}}',
-                '{"message":{"role":"assistant","content":[{"type":"text","text":"Use XML prompts for MiniMax."}]}}',
+                '{"role":"tool","tool_call_id":"call_1","content":"exit code 0"}',
+                '{"role":"user","content":"Use XML prompts for MiniMax."}',
             ]
         ),
         encoding="utf-8",
@@ -931,8 +937,8 @@ def test_coding_source_refs_drop_tool_payload_lines_instead_of_repairing(tmp_pat
     trace_path.write_text(
         "\n".join(
             [
-                '{"message":{"role":"assistant","content":[{"type":"tool_use","input":{"content":"Generated plan"}}]}}',
-                '{"message":{"role":"user","content":"Unrelated visible user text."}}',
+                '{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","name":"Write","args":"{\\"content\\":\\"Generated plan\\"}"}]}',
+                '{"role":"user","content":"Unrelated visible user text."}',
             ]
         ),
         encoding="utf-8",
@@ -966,8 +972,8 @@ def test_coding_source_refs_repair_tool_payloads_to_visible_assistant_explanatio
     trace_path.write_text(
         "\n".join(
             [
-                '{"message":{"role":"assistant","content":[{"type":"text","text":"Now let me implement the parser adapter."}]}}',
-                '{"message":{"role":"assistant","content":[{"type":"tool_use","name":"Write","input":{"content":"Generated parser adapter code"}}]}}',
+                '{"role":"assistant","content":"Now let me implement the parser adapter."}',
+                '{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","name":"Write","args":"{\\"content\\":\\"Generated parser adapter code\\"}"}]}',
             ]
         ),
         encoding="utf-8",
@@ -1003,7 +1009,7 @@ def test_coding_polish_drops_unsupported_evidence_refs(tmp_path):
     """Evidence refs must be visible source quotes, not model-authored paraphrases."""
     trace_path = tmp_path / "trace.jsonl"
     trace_path.write_text(
-        '{"message":{"role":"assistant","content":[{"type":"text","text":"Use XML prompts for MiniMax."}]}}\n',
+        '{"role":"assistant","content":"Use XML prompts for MiniMax."}\n',
         encoding="utf-8",
     )
 
@@ -1039,7 +1045,7 @@ def test_coding_full_fixed_slots_drop_optional_upstream_duplicate(tmp_path):
     """When all fixed eval slots exist, optional upstream facts cannot crowd them."""
     trace_path = tmp_path / "trace.jsonl"
     trace_path.write_text(
-        '{"message":{"role":"assistant","content":[{"type":"text","text":"Evidence."}]}}\n',
+        '{"role":"assistant","content":"Evidence."}\n',
         encoding="utf-8",
     )
 
@@ -1098,8 +1104,8 @@ def test_coding_strategy_slots_require_visible_user_source(tmp_path):
     trace_path.write_text(
         "\n".join(
             [
-                '{"message":{"role":"assistant","content":[{"type":"text","text":"Retry restarts the full trajectory."}]}}',
-                '{"message":{"role":"user","content":"Prefer local model work."}}',
+                '{"role":"assistant","content":"Retry restarts the full trajectory."}',
+                '{"role":"user","content":"Prefer local model work."}',
             ]
         ),
         encoding="utf-8",
@@ -1141,7 +1147,7 @@ def test_coding_strategy_records_drop_supporting_benchmark_numbers(tmp_path):
     """Strategy records retain the user preference without benchmark-result chatter."""
     trace_path = tmp_path / "trace.jsonl"
     trace_path.write_text(
-        '{"message":{"role":"user","content":"My priority is the small local model."}}\n',
+        '{"role":"user","content":"My priority is the small local model."}\n',
         encoding="utf-8",
     )
 
@@ -1180,12 +1186,12 @@ def test_coding_polish_dedupes_user_strategy_after_source_alignment(tmp_path):
         "\n".join(
             [
                 (
-                    '{"message":{"role":"user","content":"For the dashboard graph view, '
-                    'show an explicit projection-not-ready empty state."}}'
+                    '{"role":"user","content":"For the dashboard graph view, '
+                    'show an explicit projection-not-ready empty state."}'
                 ),
                 (
-                    '{"message":{"role":"user","content":"Initialize the graph renderer '
-                    'only after its container has a non-zero size."}}'
+                    '{"role":"user","content":"Initialize the graph renderer '
+                    'only after its container has a non-zero size."}'
                 ),
             ]
         ),
@@ -1260,8 +1266,8 @@ def test_coding_polish_dedupes_exact_body_with_different_refs(tmp_path):
     trace_path.write_text(
         "\n".join(
             [
-                '{"message":{"role":"user","content":"Always explain first."}}',
-                '{"message":{"role":"assistant","content":[{"type":"text","text":"The rule was saved."}]}}',
+                '{"role":"user","content":"Always explain first."}',
+                '{"role":"assistant","content":"The rule was saved."}',
             ]
         ),
         encoding="utf-8",
@@ -1306,7 +1312,7 @@ def test_coding_strategy_slots_drop_plain_model_trial_facts(tmp_path):
     """A model trial result is not a user model-size or provider preference."""
     trace_path = tmp_path / "trace.jsonl"
     trace_path.write_text(
-        '{"message":{"role":"user","content":"Can you try this local model too?"}}\n',
+        '{"role":"user","content":"Can you try this local model too?"}\n',
         encoding="utf-8",
     )
 
@@ -1341,11 +1347,17 @@ def test_coding_strategy_slots_drop_plain_model_trial_facts(tmp_path):
     assert payload["durable_records"] == []
 
 
-def test_coding_polish_drops_records_with_only_cleared_source_refs(tmp_path):
-    """Cleared thinking/tool-result lines cannot support durable records."""
+def test_coding_polish_drops_records_with_only_redacted_source_refs(tmp_path):
+    """A line redaction emptied of text cannot support a durable record.
+
+    Redaction runs before the trace cache is written, so a message that was
+    nothing but a secret survives as a placeholder with no source-domain text
+    left. With no visible line anywhere nearby to repair to, the record loses
+    its only citation and must be dropped rather than persisted unsupported.
+    """
     trace_path = tmp_path / "trace.jsonl"
     trace_path.write_text(
-        '{"message":{"role":"assistant","content":[{"type":"thinking","thinking":"[thinking cleared: 10 chars]"}]}}\n',
+        '{"role":"assistant","content":"[REDACTED:api_key]"}\n',
         encoding="utf-8",
     )
 
@@ -1357,7 +1369,7 @@ def test_coding_polish_drops_records_with_only_cleared_source_refs(tmp_path):
                 "title": "Use parser adapter",
                 "body": "Use parser adapter.",
                 "decision": "Use parser adapter",
-                "why": "The cleared line said so.",
+                "why": "The redacted line said so.",
                 "source_event_refs": ["line:1"],
             },
             "prompt_structure_decision": None,

@@ -272,30 +272,17 @@ def _serialize_run(row: dict[str, Any], projects: dict[str, str] | None = None) 
             job_status=row.get("extraction_status"),
         )
     repo_name = row.get("repo_name") or ""
+    # `session_path` points at Lerim's own trajectory-v1 cache file, never at
+    # the harness transcript, so the project can only come from `repo_path`.
     session_path = str(row.get("session_path") or "")
-    # Extract project name from repo_path (folder path) or session_path
     repo_path = str(row.get("repo_path") or "")
     project = ""
     if repo_path:
         matched_project = match_session_project(repo_path, projects or {})
         project = matched_project[0] if matched_project else Path(repo_path).name
-    elif session_path:
-        # Claude paths: ~/.claude/projects/-Users-...-project/uuid.jsonl
-        sp = Path(session_path)
-        if "projects" in sp.parts:
-            idx = sp.parts.index("projects")
-            if idx + 1 < len(sp.parts):
-                encoded = sp.parts[idx + 1]
-                project = encoded.rsplit("-", 1)[-1] if "-" in encoded else encoded
-    # Build display label: prefer branch/project over raw path
-    branch_display = repo_name
-    if (
-        branch_display
-        and "/" in branch_display
-        and not branch_display.startswith(("feat/", "fix/", "main", "master", "dev"))
-    ):
-        # Looks like a full path, extract last component
-        branch_display = Path(branch_display).name
+    # Display label for the run. `repo_name` is the working directory's folder
+    # name under trajectory-v1; the git branch lives in the trace's own `meta`
+    # record, which this list endpoint does not open.
     run_id = row.get("run_id") or ""
     short_id = str(run_id)[:8] if run_id else ""
     return {
@@ -311,7 +298,7 @@ def _serialize_run(row: dict[str, Any], projects: dict[str, str] | None = None) 
         "total_tokens": int(row.get("total_tokens") or 0),
         "repo_name": repo_name,
         "project": project,
-        "branch_display": branch_display or project or short_id,
+        "branch_display": repo_name or project or short_id,
         "short_id": short_id,
         "session_path": session_path,
         "snippet": row.get("summary_text") or "",
@@ -393,9 +380,13 @@ def _compute_stats(rows: list[sqlite3.Row]) -> dict[str, Any]:
         hour_bucket["tool_calls"] += tools
         hour_bucket["tokens"] += tokens
 
-    # Extract model and tool usage from JSONL traces (cached per session)
+    # Extract model and tool usage from the trajectory-v1 traces (cached per
+    # session). `tool_result_usage` counts the calls that came back with a
+    # `role: "tool"` record, so a tool whose result count trails its call count
+    # left invocations unanswered.
     model_usage: dict[str, dict[str, int]] = {}
     tool_usage: dict[str, int] = {}
+    tool_result_usage: dict[str, int] = {}
     max_detail_sessions = 200
     for row in rows[:max_detail_sessions]:
         try:
@@ -416,6 +407,8 @@ def _compute_stats(rows: list[sqlite3.Row]) -> dict[str, Any]:
             bucket["output"] += tokens - (tokens // 2)
         for tool_name, count in details.get("tools", {}).items():
             tool_usage[tool_name] = tool_usage.get(tool_name, 0) + count
+        for tool_name, count in details.get("tool_results", {}).items():
+            tool_result_usage[tool_name] = tool_result_usage.get(tool_name, 0) + count
 
     totals["unique_tools"] = len(tool_usage)
     if totals["tokens"] > 0:
@@ -448,6 +441,7 @@ def _compute_stats(rows: list[sqlite3.Row]) -> dict[str, Any]:
         "by_agent": by_agent,
         "model_usage": model_usage,
         "tool_usage": tool_usage,
+        "tool_result_usage": tool_result_usage,
         "daily_activity": daily_activity,
         "hourly_activity": hourly_activity,
         "cache": {
@@ -460,26 +454,40 @@ def _compute_stats(rows: list[sqlite3.Row]) -> dict[str, Any]:
 
 
 def _load_messages_for_run(run_doc: dict[str, Any]) -> list[dict[str, Any]]:
-    """Load normalized message list from source trace path in a run document."""
+    """Load one run's trajectory-v1 trace as a viewer message timeline.
+
+    Every record keeps its own line position, because extracted context cites
+    ``line:<N>`` into this same file. Tool calls stay attached to the assistant
+    record that issued them and each ``tool`` record reports the call it
+    answers, so a viewer can pair an invocation with its output.
+    """
     session_path = str(run_doc.get("session_path") or "").strip()
     if not session_path:
         return []
-    rows = load_jsonl_dict_lines(Path(session_path).expanduser())
     output: list[dict[str, Any]] = []
-    for row in rows:
-        content = row.get("content")
-        if content is None and isinstance(row.get("message"), dict):
-            content = row.get("message", {}).get("content")
-        if isinstance(content, (dict, list)):
-            content = json.dumps(content, ensure_ascii=True)
+    for line, record in enumerate(
+        load_jsonl_dict_lines(Path(session_path).expanduser()), start=1
+    ):
+        role = str(record.get("role") or "")
+        if role == "meta":
+            continue
+        content = record.get("content")
         output.append(
             {
-                "role": row.get("role") or "assistant",
-                "content": str(content or ""),
-                "timestamp": row.get("timestamp"),
-                "tool_name": row.get("tool_name"),
-                "tool_input": row.get("tool_input"),
-                "tool_output": row.get("tool_output"),
+                "line": line,
+                "role": role or "assistant",
+                "content": content if isinstance(content, str) else "",
+                "timestamp": record.get("timestamp"),
+                "tool_calls": [
+                    {
+                        "id": str(call.get("id") or ""),
+                        "name": str(call.get("name") or ""),
+                        "args": str(call.get("args") or ""),
+                    }
+                    for call in record.get("tool_calls") or []
+                    if isinstance(call, dict)
+                ],
+                "tool_call_id": record.get("tool_call_id"),
             }
         )
     return output

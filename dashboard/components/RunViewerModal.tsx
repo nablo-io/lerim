@@ -311,7 +311,8 @@ function MessageBubble({
                   Tool: {tc.name}
                 </summary>
                 <div className="border-t border-[var(--border)] px-3 py-2 text-xs text-[var(--text-muted)] font-mono">
-                  ID: {tc.id}
+                  <div>ID: {tc.id}</div>
+                  {tc.args && <pre className="mt-1 whitespace-pre-wrap break-all">{tc.args}</pre>}
                 </div>
               </details>
             ))}

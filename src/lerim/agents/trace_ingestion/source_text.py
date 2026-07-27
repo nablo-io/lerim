@@ -1,4 +1,12 @@
-"""Visible-source and evidence helpers for trace ingestion."""
+"""Visible-source and evidence helpers over trajectory-v1 trace records.
+
+Every trace cache file is newline-delimited trajectory-v1: record 0 is
+``{"role":"meta",...}`` and the rest are ``user`` / ``reasoning`` /
+``assistant`` / ``tool`` records. ``user``, ``reasoning``, and plain
+``assistant`` records carry visible source-domain text. An ``assistant``
+record with ``tool_calls`` has ``content: null`` and is a generated action,
+and a ``tool`` record is that action's result, linked by ``tool_call_id``.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +14,8 @@ import json
 import re
 from pathlib import Path
 from typing import Any
+
+from lerim.adapters.common import is_failed_tool_result_text
 
 EXTERNAL_REPORT_REF_RE = re.compile(
     r"\b(?P<label>PR|pull request|issue)\s*#?\s*(?P<number>\d+)\b",
@@ -16,6 +26,58 @@ GITHUB_REPORT_URL_RE = re.compile(
     re.IGNORECASE,
 )
 URL_RE = re.compile(r"https?://[^\s)>\]\"']+")
+REDACTION_ONLY_RE = re.compile(r"^(?:\[REDACTED:[A-Za-z_]+\]\s*)+$")
+
+VISIBLE_SOURCE_ROLES = frozenset({"user", "reasoning", "assistant"})
+
+
+def trajectory_record(raw_line: str) -> dict[str, Any] | None:
+    """Parse one trace line into a trajectory-v1 record object."""
+    try:
+        record = json.loads(raw_line)
+    except (TypeError, ValueError):
+        return None
+    return record if isinstance(record, dict) else None
+
+
+def record_role(record: dict[str, Any]) -> str:
+    """Return the lowercase trajectory-v1 role of one record."""
+    return str(record.get("role") or "").lower()
+
+
+def tool_call_names(raw_line: str) -> list[str]:
+    """Return the tool names invoked by one assistant tool-call record."""
+    record = trajectory_record(raw_line)
+    if record is None or record_role(record) != "assistant":
+        return []
+    calls = record.get("tool_calls")
+    if not isinstance(calls, list):
+        return []
+    return [
+        str(call.get("name") or "")
+        for call in calls
+        if isinstance(call, dict) and call.get("name")
+    ]
+
+
+def tool_result_content(raw_line: str) -> str | None:
+    """Return the result text of one tool record, or None for other records."""
+    record = trajectory_record(raw_line)
+    if record is None or record_role(record) != "tool":
+        return None
+    content = record.get("content")
+    return content if isinstance(content, str) else None
+
+
+def is_failed_tool_result(raw_line: str) -> bool:
+    """Return whether one trace line is a tool record reporting a failed call.
+
+    The rule itself lives in :func:`~lerim.adapters.common.is_failed_tool_result_text`
+    so that session indexing, which counts failures while normalizing, and this
+    pipeline, which cites them, agree on what a failed call is.
+    """
+    content = tool_result_content(raw_line)
+    return content is not None and is_failed_tool_result_text(content)
 
 
 def visible_source_message(
@@ -23,47 +85,32 @@ def visible_source_message(
     *,
     role: str | None = None,
 ) -> tuple[str, str] | None:
-    """Return the visible conversational role and text for one raw JSONL trace line."""
-    try:
-        event = json.loads(raw_line)
-    except (TypeError, ValueError):
+    """Return the visible conversational role and text for one trajectory-v1 line."""
+    record = trajectory_record(raw_line)
+    if record is None:
         return None
-    message = event.get("message")
-    if isinstance(message, dict):
-        line_role = str(message.get("role") or "").lower()
-        content = message.get("content")
-    else:
-        line_role = str(event.get("role") or "").lower()
-        content = event.get("content")
+    line_role = record_role(record)
     if role is not None and line_role != role:
         return None
-    if line_role not in {"user", "assistant"}:
+    if line_role not in VISIBLE_SOURCE_ROLES:
         return None
-    if isinstance(content, str):
-        text = " ".join(content.split()).strip()
-        return (line_role, text) if is_visible_source_text(text) else None
-    if not isinstance(content, list):
+    if record.get("tool_calls"):
         return None
-    parts: list[str] = []
-    for block in content:
-        if not isinstance(block, dict):
-            continue
-        if block.get("type") != "text":
-            continue
-        text = " ".join(str(block.get("text") or "").split()).strip()
-        if is_visible_source_text(text):
-            parts.append(text)
-    return (line_role, " ".join(parts)) if parts else None
+    content = record.get("content")
+    if not isinstance(content, str):
+        return None
+    text = " ".join(content.split()).strip()
+    return (line_role, text) if is_visible_source_text(text) else None
 
 
 def visible_source_role(raw_line: str) -> str | None:
-    """Return the visible conversational role for a raw JSONL trace line."""
+    """Return the visible conversational role for one trajectory-v1 trace line."""
     message = visible_source_message(raw_line)
     return message[0] if message else None
 
 
 def visible_source_text(raw_line: str, *, role: str | None = None) -> str | None:
-    """Return visible conversational text from a raw JSONL trace line."""
+    """Return visible conversational text from one trajectory-v1 trace line."""
     message = visible_source_message(raw_line, role=role)
     return message[1] if message else None
 
@@ -83,7 +130,7 @@ def visible_user_source_lines(trace_path: Path) -> str:
 
 
 def visible_source_lines(trace_path: Path) -> str:
-    """Render visible conversational source lines for final identity repair."""
+    """Render visible user, reasoning, and assistant source lines for record repair."""
     rendered: list[str] = []
     for line_number, raw_line in enumerate(read_trace_lines(trace_path), 1):
         message = visible_source_message(raw_line)
@@ -117,12 +164,11 @@ def truncate_source_line(text: str, limit: int = 6000) -> str:
 
 
 def is_visible_source_text(value: Any) -> bool:
-    """True for visible source-domain text, false for cleared/hidden placeholders."""
+    """True for visible source-domain text, false for empty or fully redacted text."""
     text = " ".join(str(value or "").split()).strip()
     if not text:
         return False
-    lowered = text.lower()
-    return "cleared:" not in lowered and "thinking cleared:" not in lowered
+    return REDACTION_ONLY_RE.match(text) is None
 
 
 def repair_external_report_refs(record: dict[str, Any], trace_path: Path) -> None:
@@ -532,7 +578,7 @@ def first_sentence(value: Any) -> str:
 
 
 def prune_unusable_source_refs(record: dict[str, Any], trace_path: Path) -> None:
-    """Drop or repair refs that point only to cleared/tool-only trace lines."""
+    """Drop or repair refs pointing at meta, tool-call, or tool-result records."""
     refs = [str(ref).strip() for ref in record.get("source_event_refs") or []]
     if not refs:
         return
@@ -561,37 +607,25 @@ def prune_unusable_source_refs(record: dict[str, Any], trace_path: Path) -> None
 
 
 def _source_line_kind(raw_line: str) -> str | None:
-    """Classify a raw trace line as visible text, hidden text, tool payload, or none."""
-    try:
-        event = json.loads(raw_line)
-    except (TypeError, ValueError):
+    """Classify a trajectory-v1 line as visible text, tool call, hidden, or none."""
+    record = trajectory_record(raw_line)
+    if record is None:
         return None
-    message = event.get("message")
-    if isinstance(message, dict):
-        content = message.get("content")
-    else:
-        content = event.get("content")
-    if isinstance(content, str):
-        return "visible" if is_visible_source_text(content) else "hidden"
-    if isinstance(content, list):
-        saw_hidden = False
-        for block in content:
-            if not isinstance(block, dict):
-                continue
-            block_type = block.get("type")
-            if block_type == "text" and is_visible_source_text(block.get("text")):
-                return "visible"
-            if block_type == "tool_use":
-                return "tool"
-            if block_type in {"thinking", "tool_result"}:
-                saw_hidden = True
-        if saw_hidden:
-            return "hidden"
-    return None
+    line_role = record_role(record)
+    if line_role == "assistant" and record.get("tool_calls"):
+        return "tool"
+    if line_role == "tool":
+        return "hidden"
+    if line_role not in VISIBLE_SOURCE_ROLES:
+        return None
+    content = record.get("content")
+    if not isinstance(content, str):
+        return None
+    return "visible" if is_visible_source_text(content) else "hidden"
 
 
 def _nearby_visible_source_ref(line_number: int, lines: list[str]) -> str | None:
-    """Find nearby visible source-domain text for a model-cited hidden/tool line."""
+    """Find nearby visible source-domain text for a model-cited tool-result line."""
     for distance in range(1, 4):
         for candidate in (line_number + distance, line_number - distance):
             if candidate < 1 or candidate > len(lines):

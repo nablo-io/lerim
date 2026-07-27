@@ -62,6 +62,17 @@ OBSERVE_SOURCE_WINDOW_INSTRUCTIONS = """
 You are Lerim's source-session observer. Scan one window from an agent activity stream.
 Return only structured output. Do not include <think> tags, hidden reasoning, markdown, or prose.
 
+Source window format:
+- Every window line is line:<number> followed by one trajectory-v1 record.
+- role user is the human operator. role assistant is the agent's visible reply.
+- role reasoning is the agent's own deliberation, preserved in full. It is the best
+  place to find considered alternatives, rejected hypotheses, and stated constraints.
+- An assistant record with tool_calls has null content and is a generated action, not a
+  statement. A role tool record is that action's result, linked by tool_call_id.
+- A role meta record holds session context (source, cwd, git branch, model). It is not
+  conversation and is never semantic evidence.
+- Long tool results and long tool arguments carry a trailing truncation marker.
+
 Output contract:
 - episode_update: short source-session progress only.
 - durable_findings: only reusable future-agent context.
@@ -81,7 +92,8 @@ Instruction preambles, AGENTS.md/global/repo guidelines, system/developer messag
 If a source line is mainly an injected instruction or environment scaffold, discard it for durable findings and episode details unless a later source-domain message restates the same requirement as product or project context.
 Implementation detail alone is not durable context.
 Routine actions, local tool calls, transient debugging, raw command output, temporary workspace state, eval chatter, review comments, and no-save artifacts are not durable context.
-Source lines whose content is cleared, redacted, truncated, or hidden are not semantic evidence for the hidden content. They can show that an interaction happened, but not what was chosen or said. Do not infer user choices from cleared tool-result lines.
+Redaction placeholders and truncated tool results are not semantic evidence for the removed content. They can show that an interaction happened, but not what was chosen or said. Do not infer user choices from truncated tool-result lines.
+Reasoning records are agent deliberation, not commitments. Use them as evidence for considered alternatives, rejected hypotheses, constraints the agent was working under, and the why behind an accepted approach. Do not treat a reasoning record alone as an accepted decision or as a user statement; a later user or assistant record must confirm it.
 One-time QA, review, audit, bug-hunt, cleanup, eval, dashboard-check, and historical-status notes are not durable context unless the source explicitly promotes them into a standing future rule.
 For implementation-heavy source sessions, preserve user-level decisions, durable contracts, standing constraints, and still-open future actions. Treat completed local code facts, refactor inventory, file moves, module layouts, signatures, test names, command flags, metrics, pricing, and config values as implementation findings unless the source makes the exact item a future-facing contract or source of truth.
 In coding eval/debug sessions, accepted model, prompt, adapter, fixture, or runtime behavior choices can be durable when they define how future agents should run or interpret evaluations.
@@ -135,8 +147,8 @@ Write a separate source-of-truth fact only when the source choice independently 
 Keep source identifiers as evidence when they support the durable record.
 Keep ticket, case, incident, or trace-local identifiers out of durable findings unless the reusable record is explicitly scoped to that exact ongoing item.
 If a window has no durable signal, return an empty durable_findings list.
-Every durable finding must include kind, theme, note, and direct visible evidence when available. Do not cite cleared/redacted lines for semantic claims.
-When a tool result is cleared but the neighboring assistant/user text states the conclusion visibly, cite the visible neighboring line, not the cleared tool-result line.
+Every durable finding must include kind, theme, note, and direct visible evidence when available. Do not cite meta, tool-call, or tool-result lines for semantic claims.
+When a tool result is truncated but the neighboring assistant, reasoning, or user text states the conclusion visibly, cite that visible neighboring line, not the tool-result line.
 
 
 
@@ -219,7 +231,7 @@ Reject findings that are:
 - ReAct loop internals, retry-restart mechanics, one-tool-per-iteration mechanics, malformed-output floors, exact parser tag examples, trajectory-contamination diagnostics, prompt-internal section-removal details, output-format-block details, pass/fail counts, timeout numbers, and path-specific fixture constants unless the source explicitly promotes them into a standing public contract.
 - single-tool-per-iteration facts when their only value is supporting an adapter/normalization decision already kept.
 - assistant-only implementation-location or architecture-location conclusions, even when phrased as "belongs in X", unless the user explicitly confirmed them as a standing future boundary or a stable public interface.
-- semantic claims whose only supporting line is cleared, redacted, truncated, or hidden.
+- semantic claims whose only supporting line is a meta record, a tool-call record, a truncated tool result, or a redaction placeholder.
 
 Prefer the fewest findings that preserve all future-action value.
 In implementation-heavy sessions, compress candidate findings around the user's durable goal: project decisions, standing constraints, reusable eval/release contracts, and stable interface facts. Reject lower-level code facts that merely prove the work happened.
@@ -273,7 +285,8 @@ If no candidate passes this bar, return an empty kept_durable_findings list.
 
 
 
-Cleared or hidden tool-result lines are duplicate-risk/process evidence only. Do not treat them as evidence for a user choice or source fact. Prefer adjacent visible explanatory lines when they support the same claim.
+Tool-call and tool-result lines are process evidence only. Do not treat them as evidence for a user choice or source fact. Prefer adjacent visible user, assistant, or reasoning lines when they support the same claim.
+A reasoning line is real source-domain evidence for what the agent considered and why, but a user preference or accepted decision still needs a visible user or assistant line.
 """
 
 FilterDurableSignal = signature(
@@ -361,7 +374,7 @@ Durable record rules:
 - For model configuration records, keep only settings that were applied or validated as the active future rule. Omit adjacent recommended parameters unless the source says they should be applied too.
 - Do not add official-doc recommendations, provider defaults, framework defaults, or companion parameter values unless the source explicitly states that exact claim.
 - If the source uses speculative language such as may, might, likely, or hypothesis, keep that uncertainty or omit the claim. Never convert speculation into certainty.
-- If a user choice is hidden behind a cleared/redacted UI result, do not claim the user selected a specific option unless later visible source text confirms it.
+- If a user choice sits behind a truncated tool result or a redaction placeholder, do not claim the user selected a specific option unless later visible source text confirms it.
 - Merge related thresholds, prerequisites, evidence, verification, approval, source citation, route, and no-action limits into the one record they govern.
 - Do not create a separate decision, routing, handoff, or source record when it only repeats a constraint already being written.
 - A named source belongs in evidence_refs unless it is part of the fact or constraint body.
@@ -394,7 +407,7 @@ Durable record rules:
 - Do not include raw errors, command output, local debug steps, incidental personal names, or source-session contrast text.
 - Incidental personal names are forbidden in durable record fields, episode fields, evidence refs, and completion_summary unless identity itself is the reusable claim. Source attribution alone is not enough; rewrite the context role-neutrally.
 - Include source_event_refs when line refs are available. Copy the exact source window ref format: line:<number>. Never write line 42 or bare numbers.
-- Do not cite cleared/redacted tool-result lines for semantic claims. If the conclusion is stated in nearby visible assistant/user text, cite that visible line instead.
+- Do not cite meta, tool-call, or tool-result lines for semantic claims. If the conclusion is stated in nearby visible user, assistant, or reasoning text, cite that visible line instead.
 - Do not invent line refs or evidence.
 
 Classification:
@@ -475,7 +488,7 @@ Final guard policy:
 - Do not keep pull-request numbers, issue numbers, or framework-internal tracker numbers unless the source makes the identifier a stable future action or external source of truth. Prefer semantic wording such as upstream retry support or local adapter retry.
 - Do not add official-doc, provider-default, framework-default, or companion-setting claims unless supplied summaries explicitly state the exact value and future agents need it.
 - Omit exact smoke-test pass/fail counts and raw test-result numbers unless the record is explicitly an eval report artifact.
-- Do not cite cleared, redacted, hidden, or truncated lines for semantic claims.
+- Do not cite meta, tool-call, or tool-result lines for semantic claims.
 - Do not create records from instruction preambles, AGENTS/global/repo guidance, environment scaffolds, system/developer messages, or tool-use rules.
 - Do not create records whose only point is that a current-run detail should not be saved.
 - Use source_event_refs only when the supplied candidate or finding gives direct line refs. Do not invent line refs.
@@ -524,7 +537,7 @@ Return only structured output. Do not include <think> tags, hidden reasoning, ma
 
 Use USER SOURCE LINES as evidence for user slots. Each supplied item starts with line:N.
 Use DURABLE FINDINGS and REJECTED FINDINGS as evidence for role_split_record only.
-Do not use assistant summaries, tool results, generated files, command output, or hidden/cleared content.
+Do not use assistant summaries, agent reasoning records, tool calls, tool results, generated files, command output, or redacted content. User slots must quote the user's own line.
 
 Fill only these named slots:
 - silent_change_feedback_record: user correction that the agent changed model, provider, scope, architecture, or cost tier without asking.
@@ -623,6 +636,8 @@ Return null when the visible source lines do not state that identity directly.
 
 Rules:
 - Use only VISIBLE SOURCE LINES as evidence.
+- Each VISIBLE SOURCE LINE is rendered as line:<number> <role>: <text>, where role is user (the human operator), assistant (the agent's visible reply), or reasoning (the agent's own deliberation). Tool calls, tool results, and the session meta record are not rendered here.
+- A reasoning line alone cannot establish a configured project identity; cite the user or assistant line that states the service, project name, or URL.
 - source_event_refs must cite the visible line that actually states the service/project name or URL.
 - Record only the identity: service name, project name, and dashboard/workspace/project URL when stated.
 - Do not include secret values, token prefixes, local credential file paths, env-var forwarding mechanics, host/container root causes, setup implementation details, command output, test results, or benchmark numbers.
@@ -672,6 +687,9 @@ Important distinctions:
 - Future agents read saved records, not source traces. A candidate covers a standing convention only when its title, body, or structured fields explicitly state that convention; do not keep a broader nearby record as a substitute for a direct user-convention candidate whose saved text is more complete.
 - Keep distinct accepted project decisions from later user lines when they are reusable, even if earlier user lines already produced good convention records.
 - If unsure whether a technical record is future policy or current-task mechanics, drop it. Gaps are better than polluting memory with implementation debris.
+
+Each VISIBLE SOURCE LINE is rendered as line:<number> <role>: <text>, where role is user (the human operator), assistant (the agent's visible reply), or reasoning (the agent's own deliberation). Tool calls, tool results, and the session meta record are not rendered here.
+A reasoning line records what the agent considered, not what the user asked for. Do not keep a record that claims a user preference when only a reasoning line supports it.
 
 For each candidate durable record in final_records_json.durable_records, return exactly one CodingRecordRetentionDecision.
 record_index is zero-based.
@@ -768,7 +786,8 @@ Evidence and refs:
 - evidence_refs must be exact short visible source quotes or exact external references that appear in visible source text. If you only have a paraphrase of the evidence, use [] and rely on source_event_refs.
 - For user preferences, corrections, cost/subscription choices, model-size priorities, and role-split choices stated by the user, prefer source_event_refs on visible user text over assistant summaries. Assistant summaries can support project outcomes, but they should not be the only evidence for a record that claims "User prefers..." when a direct user line exists.
 - Never cite tool-use payload lines, generated file-content payloads, or assistant-written spec content as semantic evidence. If a generated spec restates a user preference, find the visible conversation line where the user stated it; if that line is not available, omit the user-preference claim.
-- Source refs must point to visible user or assistant text that states the claim. Do not cite tool-call command lines, cleared tool results, hidden thinking, or file-read payloads as semantic evidence. When a tool-call line is adjacent to visible assistant/user text that states the claim, cite the visible text line instead.
+- Source refs must point to visible user, assistant, or reasoning text that states the claim. Do not cite meta records, tool-call records, or tool results as semantic evidence. When a tool-call line is adjacent to visible text that states the claim, cite the visible text line instead.
+- A reasoning record supports what the agent considered, rejected, or intended, and can support adapter, prompt, model-setting, and deferred-design records. It is never enough for a record that claims "User prefers..."; that needs a visible user line.
 - When an adopted approach is demonstrated by a generated tool action, cite the nearby visible assistant text that planned, explained, implemented, or validated the approach; do not cite the generated tool action itself.
 - For deferred_design_fact, include both the visible line that describes the concrete design and the visible user line that explicitly defers it when the body names the design. If only the user-deferral line is available, keep the body at the user-choice level and do not add unsupported design details.
 - If evidence supports the concept but not a specific file name, count, default interpretation, or implementation detail, remove the specific detail.
@@ -776,8 +795,8 @@ Evidence and refs:
 - If a draft record about a local server/CLI workaround is the only evidence for a broader upstream tool-calling bug that was externally reported, rewrite it as the upstream bug/report fact. Do not preserve the local workaround.
 - If a record claims an upstream report, pull request, issue, or external link exists, one of its source_event_refs must directly cite the visible line that states that report or link. If no such line is available, omit the report identifier and keep only the source-supported bug.
 - Do not create abstract framework-protocol records unless the cited source line directly states that protocol contract. Observed tool-calling failures alone are not enough to invent a protocol explanation.
-- If a parser or protocol record is supported only by cleared tool output, thinking lines, or indirect diagnostics, drop it and prefer a source-supported upstream bug/report or user/project decision.
-- Do not cite cleared, redacted, hidden, or truncated lines for semantic claims.
+- If a parser or protocol record is supported only by truncated tool output or indirect diagnostics, drop it and prefer a source-supported upstream bug/report or user/project decision.
+- Do not cite truncated tool results or redaction placeholders for semantic claims.
 
 Episode:
 - Preserve exactly one archived episode as compact provenance.

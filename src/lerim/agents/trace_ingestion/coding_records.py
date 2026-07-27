@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +15,6 @@ from lerim.agents.trace_ingestion.source_text import (
     first_sentence,
     first_sentences,
     is_continuation_summary_text,
-    is_visible_source_text,
     line_contains_visible_quote,
     line_ref_number,
     normalized_terms,
@@ -28,9 +26,14 @@ from lerim.agents.trace_ingestion.source_text import (
     shortest_visible_source_text,
     source_ref_for_visible_quote,
     supported_external_report_refs,
+    is_failed_tool_result,
+    tool_call_names,
     visible_source_role,
     visible_source_text,
 )
+
+_CODE_EDIT_TOOL_NAMES = frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit"})
+
 
 def coding_eval_polish_to_synthesized(
     result: Any,
@@ -249,28 +252,8 @@ def _record_uses_failed_tool_followup_source(
 
 def _has_recent_failed_tool_result(lines: list[str], line_number: int) -> bool:
     """Return whether a line closely follows a failed tool result in the trace."""
-    for candidate in range(max(1, line_number - 4), line_number):
-        if _is_failed_tool_result_line(lines[candidate - 1]):
-            return True
-    return False
-
-
-def _is_failed_tool_result_line(raw_line: str) -> bool:
-    """Return whether a raw trace line is a failed tool result from the source agent."""
-    try:
-        event = json.loads(raw_line)
-    except (TypeError, ValueError):
-        return False
-    message = event.get("message")
-    content = message.get("content") if isinstance(message, dict) else event.get("content")
-    if not isinstance(content, list):
-        return False
-    return any(
-        isinstance(block, dict)
-        and block.get("type") == "tool_result"
-        and bool(block.get("is_error"))
-        for block in content
-    )
+    window = range(max(1, line_number - 4), line_number)
+    return any(is_failed_tool_result(lines[candidate - 1]) for candidate in window)
 
 
 def _is_unilateral_code_edit_execution(trace_path: Path) -> bool:
@@ -282,57 +265,21 @@ def _is_unilateral_code_edit_execution(trace_path: Path) -> bool:
 
 
 def _visible_source_user_prompt_count(trace_path: Path) -> int:
-    """Count visible source-domain user prompts, excluding tool results and wrappers."""
-    count = 0
-    for raw_line in read_trace_lines(trace_path):
-        if _source_domain_user_text(raw_line) is not None:
-            count += 1
-    return count
-
-
-def _source_domain_user_text(raw_line: str) -> str | None:
-    """Return direct user-authored source text, excluding tool results/wrappers."""
-    try:
-        event = json.loads(raw_line)
-    except (TypeError, ValueError):
-        return None
-    message = event.get("message")
-    if isinstance(message, dict):
-        role = str(message.get("role") or "").lower()
-        content = message.get("content")
-    else:
-        role = str(event.get("role") or "").lower()
-        content = event.get("content")
-    if role != "user":
-        return None
-    if isinstance(content, list):
-        return None
-    if not isinstance(content, str):
-        return None
-    text = " ".join(content.split()).strip()
-    if not is_visible_source_text(text):
-        return None
-    return text
+    """Count visible user records, which trajectory-v1 keeps free of tool results."""
+    return sum(
+        1
+        for raw_line in read_trace_lines(trace_path)
+        if visible_source_text(raw_line, role="user") is not None
+    )
 
 
 def _trace_uses_code_edit_tool(trace_path: Path) -> bool:
     """Return whether the source agent used a file-editing tool."""
-    for raw_line in read_trace_lines(trace_path):
-        try:
-            event = json.loads(raw_line)
-        except (TypeError, ValueError):
-            continue
-        message = event.get("message")
-        content = message.get("content") if isinstance(message, dict) else event.get("content")
-        if not isinstance(content, list):
-            continue
-        for block in content:
-            if not isinstance(block, dict) or block.get("type") != "tool_use":
-                continue
-            tool_name = str(block.get("name") or "")
-            if tool_name in {"Edit", "Write", "MultiEdit"}:
-                return True
-    return False
+    return any(
+        name in _CODE_EDIT_TOOL_NAMES
+        for raw_line in read_trace_lines(trace_path)
+        for name in tool_call_names(raw_line)
+    )
 
 
 def _strategy_record(value: Any, field: str, trace_path: Path) -> dict[str, Any] | None:

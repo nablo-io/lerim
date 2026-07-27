@@ -1374,7 +1374,12 @@ def _running_activity_rows(
 
 
 def _public_platforms(platforms: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return platform metadata without local agent paths."""
+    """Return platform metadata without local agent paths.
+
+    ``message`` is carried through alongside ``status``: a platform that no
+    longer has a trajectory adapter reports why, and dropping it here would
+    leave callers with a bare ``unsupported_platform`` and no explanation.
+    """
     output: list[dict[str, Any]] = []
     for item in platforms:
         public_item: dict[str, Any] = {
@@ -1386,6 +1391,9 @@ def _public_platforms(platforms: list[dict[str, Any]]) -> list[dict[str, Any]]:
         status = str(item.get("status") or "").strip()
         if status:
             public_item["status"] = status
+        message = str(item.get("message") or "").strip()
+        if message:
+            public_item["message"] = message
         validation = item.get("validation")
         if isinstance(validation, dict):
             public_item["validation"] = {"ok": bool(validation.get("ok"))}
@@ -1851,13 +1859,21 @@ def api_project_remove(name: str) -> dict[str, Any]:
 
 
 def detect_agents() -> dict[str, dict[str, Any]]:
-    """Detect available coding agents by checking known default paths."""
+    """Detect ingestible coding agents by checking their default paths.
+
+    Only platforms with a trajectory adapter are reported. ``KNOWN_PLATFORMS``
+    also lists platforms Lerim recognizes but can no longer read, which
+    ``default_path_for`` answers ``None`` for; offering those in the setup
+    wizard would let someone select a source that can never be ingested.
+    """
     result: dict[str, dict[str, Any]] = {}
     for name in KNOWN_PLATFORMS:
         resolved = default_path_for(name)
+        if resolved is None:
+            continue
         result[name] = {
-            "path": str(resolved) if resolved else "",
-            "exists": resolved.exists() if resolved else False,
+            "path": str(resolved),
+            "exists": resolved.exists(),
         }
     return result
 

@@ -30,6 +30,7 @@ import lerim.server.docker_runtime as docker_mod
 import lerim.server.skill_api as skill_api_mod
 import lerim.sessions.catalog as catalog_mod
 from lerim.adapters.registry import KNOWN_PLATFORMS
+from lerim.adapters.trajectory_source import SOURCE_MAP, UNSUPPORTED_PLATFORMS
 from lerim.context import ContextStore, resolve_project_identity
 from lerim.server.api import (
     api_connect,
@@ -107,14 +108,26 @@ def test_api_health_returns_ok() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_detect_agents_returns_all_known() -> None:
-    """detect_agents returns entries for all known agent default paths."""
+def test_detect_agents_returns_every_ingestible_platform() -> None:
+    """detect_agents returns a default path for each platform Lerim can normalize."""
     agents = detect_agents()
-    for name in KNOWN_PLATFORMS:
-        assert name in agents
+    assert set(agents) == set(SOURCE_MAP)
+    for name in SOURCE_MAP:
         assert "path" in agents[name]
-        assert "exists" in agents[name]
         assert isinstance(agents[name]["exists"], bool)
+
+
+def test_detect_agents_omits_platforms_without_a_trajectory_adapter() -> None:
+    """The init wizard must not offer a source that can never be ingested.
+
+    cursor/opencode/pi stay in KNOWN_PLATFORMS so `lerim connect` can explain
+    the regression, but offering them here would let someone select a store
+    Lerim has no normalizer for.
+    """
+    agents = detect_agents()
+
+    assert set(UNSUPPORTED_PLATFORMS) <= set(KNOWN_PLATFORMS)
+    assert set(agents).isdisjoint(UNSUPPORTED_PLATFORMS)
 
 
 def test_detect_agents_path_expanded() -> None:

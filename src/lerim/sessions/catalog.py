@@ -13,10 +13,14 @@ import tempfile
 from typing import Any, Callable
 
 from lerim.adapters import registry as adapter_registry
+from lerim.adapters import trajectory_source
+from lerim.adapters.trajectory_bridge import TrajectoryRequestError
+from lerim.adapters.trajectory_source import UnsupportedPlatformError
 from lerim.config.project_scope import match_session_project, project_path_sql_scope
 from lerim.config.logging import logger
 from lerim.config.settings import PROJECT_TYPE_CUSTOM, get_config, reload_config
 from lerim.sessions.custom_traces import iter_custom_trace_sessions
+from lerim.sessions.types import SessionRecord
 
 
 JOB_TYPE_EXTRACT = "extract"
@@ -67,6 +71,34 @@ class IndexedSession:
     start_time: str | None
     repo_path: str | None = None
     changed: bool = False
+
+
+@dataclass(frozen=True)
+class SourceLedgerEntry:
+    """What a source transcript looked like the last time it produced a session.
+
+    ``size_bytes`` and ``updated_at`` are the trajectory listing's own view of
+    the file, available without parsing it, so an unchanged transcript can be
+    recognized before paying to normalize it. ``repo_path`` is the working
+    directory of the session it produced, which is what lets a later ingest
+    re-decide the session's project scope without parsing the file again.
+
+    ``normalizer`` is the fingerprint of the code that produced that session,
+    so an entry written by an older normalizer — a different trajectory
+    version, different tool-result bounds — is not trusted to describe what
+    normalizing the same transcript would produce today.
+
+    Only transcripts that produced a session are recorded. The ones that did
+    not — rejected by the normalizer, too short to index, or unreadable at the
+    time — are cheap to retry and can turn productive later, so they are simply
+    left out and reconsidered every cycle. Measured on 236 real sessions they
+    are 65 files totalling 2.3 MB, against 556 MB of productive ones.
+    """
+
+    size_bytes: int
+    updated_at: str
+    repo_path: str
+    normalizer: str
 
 
 def _utc_now() -> datetime:
@@ -277,6 +309,27 @@ def init_sessions_db() -> None:
             "UPDATE session_docs SET content = COALESCE(NULLIF(content, ''), summary_text, '') "
             "WHERE content IS NULL OR content = ''"
         )
+        conn.execute(
+            """
+                    CREATE TABLE IF NOT EXISTS session_sources (
+                        run_id TEXT PRIMARY KEY,
+                        agent_type TEXT NOT NULL,
+                        size_bytes INTEGER NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        repo_path TEXT NOT NULL,
+                        seen_at TEXT NOT NULL,
+                        normalizer TEXT NOT NULL DEFAULT ''
+                    )
+                    """
+        )
+        source_columns = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(session_sources)").fetchall()
+        }
+        if "normalizer" not in source_columns:
+            conn.execute(
+                "ALTER TABLE session_sources ADD COLUMN normalizer TEXT NOT NULL DEFAULT ''"
+            )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_session_docs_run ON session_docs (run_id)"
         )
@@ -649,6 +702,73 @@ def _get_indexed_content_hashes() -> dict[str, str | None]:
     }
 
 
+def _load_source_ledger() -> dict[str, SourceLedgerEntry]:
+    """Return the discovery ledger keyed by run id, in one table scan."""
+    _ensure_sessions_db_initialized()
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT run_id, size_bytes, updated_at, repo_path, normalizer "
+            "FROM session_sources"
+        ).fetchall()
+    return {
+        str(row["run_id"]): SourceLedgerEntry(
+            size_bytes=int(row["size_bytes"]),
+            updated_at=str(row["updated_at"]),
+            repo_path=str(row["repo_path"]),
+            normalizer=str(row["normalizer"] or ""),
+        )
+        for row in rows
+        if row.get("run_id")
+    }
+
+
+def _save_source_ledger(
+    agent_type: str,
+    listings: list[trajectory_source.SessionListing],
+    sessions: list[SessionRecord],
+) -> None:
+    """Record the transcripts that just produced a session, as listed.
+
+    Listings that produced nothing are deliberately left unrecorded so the next
+    cycle reconsiders them.
+    """
+    produced = {session.run_id: session.repo_path or "" for session in sessions}
+    rows = [
+        (
+            listing.run_id,
+            agent_type,
+            listing.size_bytes,
+            listing.updated_at.isoformat(),
+            produced[listing.run_id],
+            _iso_now(),
+            trajectory_source.NORMALIZER_FINGERPRINT,
+        )
+        for listing in listings
+        if listing.run_id in produced
+    ]
+    if not rows:
+        return
+    with _connect() as conn:
+        conn.executemany(
+            """
+            INSERT INTO session_sources (
+                run_id, agent_type, size_bytes, updated_at, repo_path, seen_at,
+                normalizer
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id) DO UPDATE SET
+                agent_type = excluded.agent_type,
+                size_bytes = excluded.size_bytes,
+                updated_at = excluded.updated_at,
+                repo_path = excluded.repo_path,
+                seen_at = excluded.seen_at,
+                normalizer = excluded.normalizer
+            """,
+            rows,
+        )
+        conn.commit()
+
+
 def list_sessions_window(
     *,
     limit: int = 100,
@@ -779,6 +899,14 @@ def reset_indexed_sessions_for_project(repo_path: str) -> dict[str, int]:
             "DELETE FROM session_docs WHERE repo_path = ? OR repo_path LIKE ? ESCAPE '\\'",
             (normalized, child_path),
         )
+        # The discovery ledger has to go with the docs. Left behind, it would
+        # report every one of this project's transcripts as already accounted
+        # for and a reset project would never be ingested again.
+        conn.execute(
+            "DELETE FROM session_sources "
+            "WHERE repo_path = ? OR repo_path LIKE ? ESCAPE '\\'",
+            (normalized, child_path),
+        )
         conn.commit()
     return counts
 
@@ -798,6 +926,7 @@ def reset_all_session_state() -> dict[str, int]:
         counts = _count_all_session_state(conn)
         conn.execute("DELETE FROM session_jobs")
         conn.execute("DELETE FROM session_docs")
+        conn.execute("DELETE FROM session_sources")
         conn.execute("DELETE FROM service_runs")
         conn.commit()
     return counts
@@ -902,12 +1031,18 @@ def index_new_sessions(
     skip_unscoped: bool = False,
     stats: dict[str, int] | None = None,
 ) -> int | list[IndexedSession]:
-    """Discover and index new sessions from connected adapters and custom folders.
+    """Discover and index new sessions from connected platforms and custom folders.
 
-    Known sessions with the same content hash are skipped. New sessions are
-    returned with ``changed=False``; known sessions with a missing or different
-    stored hash are returned with ``changed=True`` so extraction can backfill or
-    refresh their DB context.
+    Discovery is two-stage. The trajectory listing reports every session's size
+    and modification time without reading it, and the ``session_sources`` ledger
+    remembers both for every transcript already normalized, so a cycle costs
+    the sessions that actually moved rather than the whole window. Whatever
+    survives that filter is normalized, and the content hash stays the
+    authority on whether the normalized session really changed.
+
+    New sessions are returned with ``changed=False``; known sessions with a
+    missing or different stored hash are returned with ``changed=True`` so
+    extraction can backfill or refresh their DB context.
 
     When ``skip_unscoped=True`` and ``projects`` is provided, sessions whose
     ``repo_path`` does not map to a registered project are ignored and counted
@@ -925,42 +1060,30 @@ def index_new_sessions(
     selected_agent_set = set(selected_agents)
     known_ids = get_indexed_run_ids()
     known_hashes = _get_indexed_content_hashes()
+    ledger = _load_source_ledger()
 
     new_sessions: list[IndexedSession] = []
 
     for agent_name in selected_agents:
-        if agent_name == PROJECT_TYPE_CUSTOM:
-            continue
-        adapter = adapter_registry.get_adapter(agent_name)
         traces_dir = connected_paths.get(agent_name)
-        if adapter is None or traces_dir is None:
+        if agent_name == PROJECT_TYPE_CUSTOM or traces_dir is None:
             continue
-
-        try:
-            sessions = adapter.iter_sessions(
-                traces_dir=traces_dir,
-                start=start,
-                end=end,
-                known_run_ids=None,
-            )
-        except Exception as exc:
-            logger.warning(
-                "session discovery failed | agent={} error={}", agent_name, str(exc)
-            )
-            continue
-
+        listings = _listings_to_normalize(
+            _list_platform_sessions(agent_name, traces_dir, start=start, end=end),
+            ledger=ledger,
+            known_ids=known_ids,
+            cached_run_ids=trajectory_source.cached_run_ids(agent_name),
+            projects=projects,
+            skip_unscoped=skip_unscoped,
+            stats=stats,
+        )
+        sessions = trajectory_source.normalize_batch(listings)
+        _save_source_ledger(agent_name, listings, sessions)
         for session in sessions:
-            if skip_unscoped:
-                if (
-                    not projects
-                    or match_session_project(session.repo_path, projects) is None
-                ):
-                    if stats is not None:
-                        stats["skipped_unscoped"] = (
-                            int(stats.get("skipped_unscoped") or 0) + 1
-                        )
-                    continue
-
+            if _skip_unscoped_session(
+                session, projects=projects, skip_unscoped=skip_unscoped, stats=stats
+            ):
+                continue
             indexed_session = _index_discovered_session(
                 session=session,
                 known_ids=known_ids,
@@ -980,6 +1103,10 @@ def index_new_sessions(
                 end=end,
             )
             for session in sessions:
+                if _skip_unscoped_session(
+                    session, projects=projects, skip_unscoped=skip_unscoped, stats=stats
+                ):
+                    continue
                 indexed_session = _index_discovered_session(
                     session=session,
                     known_ids=known_ids,
@@ -993,6 +1120,122 @@ def index_new_sessions(
     return new_sessions if return_details else len(new_sessions)
 
 
+def _list_platform_sessions(
+    agent_name: str,
+    traces_dir: Path,
+    *,
+    start: datetime | None = None,
+    end: datetime | None = None,
+) -> list[trajectory_source.SessionListing]:
+    """List one platform's sessions in the window, without reading any of them.
+
+    A listing failure is a data problem with one platform's store, so it is
+    logged and that platform is skipped. Bridge infrastructure failures — no
+    node, a broken install, a protocol mismatch — are not caught: they make
+    every platform unreadable, and reporting "0 new sessions" would hide that.
+    ``OSError`` is deliberately absent from the caught set: the bridge reports
+    an unrunnable node or npm as a typed :class:`TrajectoryBridgeError`, so
+    catching ``OSError`` here would only re-hide those infrastructure failures.
+    """
+    try:
+        return trajectory_source.list_sessions(
+            agent_name, root=traces_dir, start=start, end=end
+        )
+    except (TrajectoryRequestError, UnsupportedPlatformError) as exc:
+        logger.warning(
+            "session discovery failed | agent={} error={}", agent_name, str(exc)
+        )
+        return []
+
+
+def _listings_to_normalize(
+    listings: list[trajectory_source.SessionListing],
+    *,
+    ledger: dict[str, SourceLedgerEntry],
+    known_ids: set[str],
+    cached_run_ids: set[str],
+    projects: dict[str, str] | None,
+    skip_unscoped: bool,
+    stats: dict[str, int] | None,
+) -> list[trajectory_source.SessionListing]:
+    """Drop the listed transcripts whose outcome the ledger already knows.
+
+    A transcript is always normalized when the ledger has never recorded it,
+    when it grew or was touched since it did, when the ledger entry came from a
+    different normalizer, or when the trace cache the entry stands for is no
+    longer on disk. That last case is why the check exists at all: without it a
+    deleted cache file — the cache lives under a directory named ``cache`` —
+    would never be rebuilt, leaving an indexed session pointing at nothing
+    until ``lerim memory reset``.
+
+    For the rest the ledger decides:
+
+    * it produced a session outside every registered project, which is counted
+      as skipped from the recorded working directory rather than by parsing the
+      file again to rediscover it;
+    * it produced a session inside a registered project that is not indexed,
+      which means the project was registered after the session was first seen
+      and the session has to be brought in now;
+    * it produced a session that is already indexed, whose content hash cannot
+      have changed while the transcript, the normalizer, and the cache all
+      stayed as recorded.
+    """
+    pending: list[trajectory_source.SessionListing] = []
+    for listing in listings:
+        entry = ledger.get(listing.run_id)
+        if (
+            entry is None
+            or entry.size_bytes != listing.size_bytes
+            or entry.updated_at != listing.updated_at.isoformat()
+            or entry.normalizer != trajectory_source.NORMALIZER_FINGERPRINT
+            or listing.run_id not in cached_run_ids
+        ):
+            pending.append(listing)
+            continue
+        unscoped = _skip_unscoped_repo_path(
+            entry.repo_path,
+            projects=projects,
+            skip_unscoped=skip_unscoped,
+            stats=stats,
+        )
+        if not unscoped and listing.run_id not in known_ids:
+            pending.append(listing)
+    return pending
+
+
+def _skip_unscoped_session(
+    session: SessionRecord,
+    *,
+    projects: dict[str, str] | None,
+    skip_unscoped: bool,
+    stats: dict[str, int] | None,
+) -> bool:
+    """Return whether a session falls outside every registered project."""
+    return _skip_unscoped_repo_path(
+        session.repo_path,
+        projects=projects,
+        skip_unscoped=skip_unscoped,
+        stats=stats,
+    )
+
+
+def _skip_unscoped_repo_path(
+    repo_path: str | None,
+    *,
+    projects: dict[str, str] | None,
+    skip_unscoped: bool,
+    stats: dict[str, int] | None,
+) -> bool:
+    """Return whether a working directory falls outside every project, counting it."""
+    if not skip_unscoped:
+        return False
+    if projects and match_session_project(repo_path, projects) is not None:
+        return False
+    if stats is not None:
+        stats["skipped_unscoped"] = int(stats.get("skipped_unscoped") or 0) + 1
+    return True
+
+
 def index_session_by_run_id(
     run_id: str,
     *,
@@ -1001,10 +1244,12 @@ def index_session_by_run_id(
     skip_unscoped: bool = False,
     stats: dict[str, int] | None = None,
 ) -> IndexedSession | None:
-    """Discover and index one session by run id from connected adapters.
+    """Discover and index one session by run id from connected platforms.
 
     This supports hook-style ingestion where an agent passes the just-finished
-    session id before the general background indexer has seen it.
+    session id before the general background indexer has seen it. The session
+    is normalized even when its transcript looks unchanged, because the caller
+    is asserting it just finished.
     """
     if not run_id:
         return None
@@ -1020,54 +1265,40 @@ def index_session_by_run_id(
     known_hashes = _get_indexed_content_hashes()
 
     for agent_name in selected_agents:
-        if agent_name == PROJECT_TYPE_CUSTOM:
-            continue
-        adapter = adapter_registry.get_adapter(agent_name)
         traces_dir = connected_paths.get(agent_name)
-        if adapter is None or traces_dir is None:
+        if agent_name == PROJECT_TYPE_CUSTOM or traces_dir is None:
             continue
-        try:
-            sessions = adapter.iter_sessions(
-                traces_dir=traces_dir,
-                known_run_ids=None,
-            )
-        except Exception as exc:
-            logger.warning(
-                "targeted session discovery failed | agent={} run_id={} error={}",
-                agent_name,
-                run_id,
-                str(exc),
-            )
+        listing = next(
+            (
+                item
+                for item in _list_platform_sessions(agent_name, traces_dir)
+                if item.run_id == run_id
+            ),
+            None,
+        )
+        if listing is None:
             continue
+        sessions = trajectory_source.normalize_batch([listing])
+        _save_source_ledger(agent_name, [listing], sessions)
         for session in sessions:
-            if session.run_id != run_id:
-                continue
-            if skip_unscoped:
-                if (
-                    not projects
-                    or match_session_project(session.repo_path, projects) is None
-                ):
-                    if stats is not None:
-                        stats["skipped_unscoped"] = (
-                            int(stats.get("skipped_unscoped") or 0) + 1
-                        )
-                    return None
+            if _skip_unscoped_session(
+                session, projects=projects, skip_unscoped=skip_unscoped, stats=stats
+            ):
+                return None
             return _index_discovered_session(
-                session=session,
-                known_ids=known_ids,
-                known_hashes=known_hashes,
+                session=session, known_ids=known_ids, known_hashes=known_hashes
             )
     return None
 
 
 def _index_discovered_session(
     *,
-    session: Any,
+    session: SessionRecord,
     known_ids: set[str],
     known_hashes: dict[str, str | None],
 ) -> IndexedSession | None:
     """Persist one discovered session row and return its queue payload."""
-    content_hash = getattr(session, "content_hash", None)
+    content_hash = session.content_hash
     previous_hash = known_hashes.get(session.run_id)
     is_known = session.run_id in known_ids
     if is_known and content_hash is not None and previous_hash == content_hash:
@@ -1078,7 +1309,7 @@ def _index_discovered_session(
     summary_text = "\n".join(item for item in session.summaries if item)
     content = summary_text or f"run:{session.run_id} agent:{session.agent_type}"
 
-    indexed = index_session_for_fts(
+    stored = index_session_for_fts(
         run_id=session.run_id,
         agent_type=session.agent_type,
         content=content,
@@ -1096,7 +1327,7 @@ def _index_discovered_session(
         session_path=session.session_path,
         content_hash=content_hash,
     )
-    if not indexed:
+    if not stored:
         return None
 
     known_ids.add(session.run_id)

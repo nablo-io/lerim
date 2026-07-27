@@ -5,6 +5,98 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-07-27
+
+### BREAKING
+
+Lerim replaced its five hand-written harness parsers with Letta's
+[trajectory](https://github.com/letta-ai/trajectory) standard (Apache-2.0).
+`trajectory-v1` is now Lerim's single internal trace format. Four things change
+for existing installs:
+
+- **Node.js 20 or newer is now required.** Transcript parsing runs through the
+  `@letta-ai/trajectory` npm package, which Lerim installs into `<data dir>/node/`.
+  `lerim init`, `lerim up`, and `lerim serve` verify node before doing anything else
+  and exit with an install hint when it is missing or older than 20. There is no
+  Python fallback parser and none will be added. The Docker image ships node and the
+  pinned package, so containers need no network on first ingest.
+- **Cursor, OpenCode, and pi are temporarily unsupported.** trajectory has no
+  upstream adapter for those harnesses yet, and keeping Lerim's own parsers would
+  mean maintaining a second parsing path. `lerim connect cursor|opencode|pi` now
+  fails with an explanation, and their sessions are no longer ingested. Context
+  records already extracted from them are untouched and still queryable. Until the
+  upstream adapters land, export those sessions yourself and register them as a
+  custom trace folder.
+- **The trace cache format changed, which forces a one-time full re-extraction that
+  costs real tokens.** Cache files under `~/.lerim/cache/traces/` now hold
+  trajectory-v1 records instead of the previous `{"type","message","timestamp"}`
+  shape. Every session's `content_hash` therefore changes, every known session is
+  marked changed, and the next full ingest re-runs LLM extraction over the entire
+  corpus. This is not a free reindex — budget for it, and pace it with
+  `--max-sessions` rather than re-extracting everything in one run:
+  `lerim ingest --window all --force --max-sessions 50`. Records extracted before
+  this release cite evidence as `line:<N>` into the old cache files; those citations
+  do not resolve against the re-normalized files until the session is re-extracted.
+- **Custom-trace cleaner scripts must be regenerated.** Files in registered custom
+  folders must now be trajectory-v1; the old
+  `{"type","message":{"role","content"},"timestamp"}` shape is rejected there. The
+  rewritten [Custom Trace Folders](docs/guides/custom-trace-folders.md) guide
+  documents trajectory-v1, points at the canonical JSON Schema shipped inside the
+  installed npm package, and ships an updated paste-in prompt that regenerates your
+  cleaner against it. The four example traces in `docs/examples/traces/` are already
+  converted and validate against that schema.
+
+### Added
+- Added `src/lerim/adapters/trajectory_bridge.py`, a subprocess client for the
+  `@letta-ai/trajectory` protocol-v1 bridge: it resolves node, installs and verifies
+  the pinned package on first use, batches many sessions into one node process, and
+  returns typed per-request outcomes so a single unparseable session is skipped and
+  logged instead of failing its batch.
+- Added agent reasoning to the compiled context. Previous Lerim adapters discarded
+  thinking blocks as `[thinking cleared: N chars]`, so rejected hypotheses and stated
+  constraints never reached extraction. trajectory preserves them as `reasoning`
+  records.
+- Added tool-call to tool-result linkage. Every `tool` record carries the
+  `tool_call_id` of the `assistant` record that issued it, so extraction can tell
+  what a result was an answer to.
+- Added native trace parsing for Letta Code and OpenClaw, inherited from
+  trajectory's adapter set. trajectory also covers Hermes, OpenHands, and
+  DeepAgents, but those store sessions as a SQLite database, a directory of event
+  files, and LangGraph checkpoints rather than transcript files, so Lerim leaves
+  them unwired rather than reintroducing per-harness assembly code. Connecting
+  Hermes or OpenHands says so, instead of reporting an unknown platform name.
+- Added a node preflight to `lerim init`, `lerim up`, and `lerim serve`, and node 20
+  plus a build-time npm bootstrap to the Docker image.
+
+### Changed
+- Changed the trace cache to trajectory-v1 records — `meta` first, then `user`,
+  `reasoning`, `assistant` (optionally with `tool_calls`), and `tool`. The cache
+  stays strictly one compact JSON record per line, because context records cite
+  evidence by line number.
+- Changed tool-result trimming from Lerim's hand-rolled `[cleared: N chars]` marker
+  to trajectory's bounded head-and-tail truncation, so the outcome of a long tool
+  call survives compaction. Measured on one real 714 KB Claude Code session: 4.2x
+  fewer characters, 30 reasoning records preserved, and all 43 tool calls linked to
+  their results.
+- Changed `lerim trace import` and `lerim_trace_submit` to emit trajectory-v1
+  records, so imported, submitted, and natively parsed traces share one shape.
+- Secret redaction still runs on Lerim's side. trajectory does not redact, so
+  normalized records are redacted before anything is kept from them — the trace
+  cache, and the session summary that is indexed for search, shown in the
+  dashboard, and shipped to Lerim Cloud. A tool call's `args` is a JSON document
+  rather than prose, so its decoded values are redacted and re-encoded; scrubbing
+  the raw string let a placeholder eat the `n` out of an `\n` escape and leave
+  behind arguments that no longer parsed.
+- Changed a session's error count from the harness `is_error` flag, which
+  trajectory-v1 does not carry, to a count of tool results whose text reports a
+  failure. It reads as a lower bound: measured against raw Claude Code
+  `is_error` blocks over 150 local sessions it catches 81 of 129 failures.
+
+### Removed
+- Removed the per-harness adapters `src/lerim/adapters/{claude,codex,pi,cursor,opencode}.py`
+  and their base class. Adding a harness now means contributing an adapter upstream to
+  trajectory, where every consumer benefits, instead of adding a parser to Lerim.
+
 ## [0.3.33] - 2026-07-17
 
 ### Added

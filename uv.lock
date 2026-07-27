@@ -2237,7 +2237,7 @@ wheels = [
 
 [[package]]
 name = "lerim"
-version = "0.3.33"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "dspy" },
@@ -2273,6 +2273,7 @@ mlx = [
     { name = "vllm-mlx" },
 ]
 test = [
+    { name = "jsonschema" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-timeout" },
@@ -2291,6 +2292,7 @@ requires-dist = [
     { name = "eval-type-backport", marker = "python_full_version < '3.13'", specifier = "==0.3.1" },
     { name = "huggingface-hub", specifier = ">=0.35.0" },
     { name = "json5", specifier = ">=0.13.0" },
+    { name = "jsonschema", marker = "extra == 'test'", specifier = ">=4.20" },
     { name = "loguru", specifier = "==0.7.3" },
     { name = "mcp", specifier = "==1.26.0" },
     { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.6" },

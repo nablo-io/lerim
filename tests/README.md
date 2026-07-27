@@ -84,6 +84,8 @@ Shape:
 - one `helpers.py` per cluster when that cluster needs a runner/harness
 - one expectation YAML per case under `tests/fixtures/expectations/<contract>/`; most contracts match cluster names, while context-answerer cases use the established `answer` contract folder
 - trace fixtures under `tests/fixtures/traces/trace_ingestion/` only when the agent truly works from a trace
+- `tests/fixtures/trajectory/<source>/<case>/{input.jsonl,expected.json}` holds upstream's own Apache-2.0 fixtures, copied verbatim from the `@letta-ai/trajectory` tag Lerim pins, so parity tests compare against the reference implementation instead of a Lerim-authored expectation. Refresh them from the same tag when `TRAJECTORY_VERSION` moves
+- `tests/trajectory_helpers.py` writes raw claude-code and codex transcripts for tests that need the real normalizer to run over a real file
 
 Design rule:
 
@@ -122,7 +124,9 @@ Rules:
 - each subpackage has its own `conftest.py` with domain-specific fixtures
 - agent tool tests also cover source-session provenance defaults so historical traces do not look freshly created when indexed later
 - agent build tests guard the runtime tool contract against documentation and helper drift
-- adapter tests cover compact-trace visibility for canonical message fields and structured event messages without keyword heuristics
+- adapter tests run the real `@letta-ai/trajectory` normalizer over real transcripts rather than faking a session source: fixture parity against upstream's own expectations, per-session skip-and-log inside a batch, the trajectory-v1 schema and one-record-per-line contract of every written cache, redaction of content and tool-call arguments, the `(sizeBytes, updatedAt)` ingest pre-filter including an in-place rewrite that keeps the same size, and a named error for the platforms that lost their parser (`cursor`, `opencode`, `pi`)
+- the trajectory-v1 format is checked wherever a trace file is produced, not only in `tests/unit/adapters/`: the generic/custom import path in `tests/unit/traces/test_envelope.py` and the catalog ingest path in `tests/unit/sessions/test_indexer_paths.py` use the same `assert_valid_trace_file` fixture
+- `tests/unit/sessions/test_custom_traces.py` cross-checks `custom_traces._validate_record` — a deliberate Python restatement of `trajectory-v1.schema.json` — against the real schema, record shape by record shape
 - ingest persistence tests cover idempotent replay when a session episode already exists, and the durable-record seed collection (`load_session_durable_record_ids`) that write-time reconciliation reviews
 - curate unit tests cover semantic clustering, action validation, and direct `ContextStore` mutation application
 - reconcile-on-write tests cover the scoped seed-plus-neighbor inventory, the write-time supersede that populates `valid_until`/`superseded_by_record_id` and drops the retired record from current retrieval, the protected-seed guard that stops a new record retiring itself, the scoped curator pass skipping single-record health review, and the ingestion trigger firing over the new durable ids (and skipping scope-only, empty, incomplete, and offline runs)
@@ -158,6 +162,7 @@ Rules:
 8. **When adding a store method:** test happy path, each validation error, idempotency, canonical side effects, and best-effort derived index refresh (FTS/embedding).
 9. **Keep tests independent.** Each test creates its own temp state. No shared mutable state.
 10. **Reference source constants.** Use `MAX_RECORD_TITLE_CHARS + 1` not `121` in boundary tests.
+11. **Unit tests run node, not the network.** Trace normalization lives in the `@letta-ai/trajectory` npm package, so the unit suite drives the real bridge subprocess against a local install. The first run installs the pinned package under the Lerim data dir; after that it is offline like the rest of the suite. A machine without Node 20+ fails loudly rather than falling back to a second parser.
 
 ## Architecture under test
 
@@ -188,7 +193,12 @@ Main ones:
 - `live_config` — current provider/model config copied into that isolated root
 - `live_repo_root` — temporary project root for live runtime flows
 - `live_runtime` — runtime bound to the isolated root and temp project
-- `TRACES_DIR` — normalized trace fixtures for supported adapters
+- `TRACES_DIR` — trace fixtures for the trace-ingestion pipeline
+- `trajectory_validator` — session-scoped `Draft202012Validator` built from `trajectory-v1.schema.json` as shipped by the pinned npm package, so a version bump fails the tests instead of passing against a vendored copy
+- `assert_valid_trajectory` — assert a record list is valid trajectory-v1
+- `assert_valid_trace_file` — assert a written trace file is valid, opens with `meta`, and holds exactly one compact record per line (checked on raw bytes, because `read_trace_window` numbers lines and context records cite them as `line:<N>`)
+- `warning_log` — collect Lerim's loguru warnings; loguru does not reach pytest's `caplog`, so skip-and-log behavior is otherwise unobservable
+- `trajectory_data_root` (in `tests/unit/adapters/conftest.py`) — Lerim data root in `tmp_path` that still resolves `node_root()` to the real install, so npm runs once per session instead of once per test
 
 Live QA helpers live in `tests/live_helpers.py`.
 They audit:

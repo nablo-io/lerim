@@ -509,10 +509,23 @@ def _project_timestamps(db_path: Path) -> dict[tuple[str, str], str]:
 
 
 def _write_dashboard_trace(path: Path) -> None:
-    """Write a tiny trace with message, model, and tool metadata."""
+    """Write a tiny trajectory-v1 trace cache with model and tool metadata.
+
+    The model lives on the leading ``meta`` record, and a tool invocation is an
+    ``assistant`` record with ``tool_calls`` answered by a ``tool`` record
+    linked through ``tool_call_id`` — the shape the dashboard reads.
+    """
     path.write_text(
         "\n".join(
             [
+                json.dumps(
+                    {
+                        "role": "meta",
+                        "source": "claude-code",
+                        "cwd": "/workspace/myapp",
+                        "model": "claude-test-model",
+                    }
+                ),
                 json.dumps(
                     {
                         "role": "user",
@@ -522,15 +535,20 @@ def _write_dashboard_trace(path: Path) -> None:
                 ),
                 json.dumps(
                     {
-                        "type": "assistant",
-                        "message": {
-                            "role": "assistant",
-                            "model": "claude-test-model",
-                            "content": [
-                                {"type": "tool_use", "name": "Bash", "input": {}}
-                            ],
-                        },
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {"id": "toolu_1", "name": "Bash", "args": "{}"}
+                        ],
                         "timestamp": "2026-03-20T10:00:02Z",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "role": "tool",
+                        "tool_call_id": "toolu_1",
+                        "content": "ok",
+                        "timestamp": "2026-03-20T10:00:03Z",
                     }
                 ),
             ]
@@ -2479,8 +2497,14 @@ def test_serialize_run_extracts_project_from_repo_path():
     assert result["run_id"] == "run-001"
 
 
-def test_serialize_run_extracts_project_from_claude_path():
-    """_serialize_run extracts project from Claude session path."""
+def test_serialize_run_does_not_read_the_project_out_of_the_session_path():
+    """`session_path` is Lerim's own trace cache, so it cannot name a project.
+
+    Before trajectory-v1 this column held the harness transcript path, and the
+    dashboard mined the claude-code project directory out of it. It now holds
+    `<data dir>/traces/claude/<run id>.jsonl` for every platform, so a project
+    guessed from it would read "claude" for every run on the machine.
+    """
     from lerim.server.httpd import _serialize_run
 
     row = {
@@ -2496,9 +2520,37 @@ def test_serialize_run_extracts_project_from_claude_path():
         "repo_name": "",
         "repo_path": "",
         "summary_text": "",
-        "session_path": "~/.claude/projects/-Users-test-myapp/abc123.jsonl",
+        "session_path": "~/.lerim/traces/claude/abc123.jsonl",
     }
+
     result = _serialize_run(row)
+
+    assert result["project"] == ""
+    assert result["session_path"] == "~/.lerim/traces/claude/abc123.jsonl"
+
+
+def test_serialize_run_takes_the_project_from_the_working_directory():
+    """The trace's own `cwd` lands in `repo_path`, which is where project comes from."""
+    from lerim.server.httpd import _serialize_run
+
+    row = {
+        "run_id": "run-003",
+        "agent_type": "claude",
+        "status": "completed",
+        "start_time": "2026-03-20T10:00:00Z",
+        "duration_ms": 5000,
+        "message_count": 10,
+        "tool_call_count": 3,
+        "error_count": 0,
+        "total_tokens": 1000,
+        "repo_name": "",
+        "repo_path": "/Users/test/code/myapp",
+        "summary_text": "",
+        "session_path": "~/.lerim/traces/claude/abc123.jsonl",
+    }
+
+    result = _serialize_run(row)
+
     assert result["project"] == "myapp"
 
 

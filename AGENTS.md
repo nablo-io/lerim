@@ -21,9 +21,46 @@ The important storage rules are strict:
 - durable context is only `~/.lerim/context.sqlite3`
 - session catalog is `~/.lerim/index/sessions.sqlite3`
 - run artifacts are only `~/.lerim/workspace/`
+- normalized traces are only `~/.lerim/cache/traces/<agent>/<run_id>.jsonl`
 
 Registered projects are just scoped host paths in config.
 Project separation happens in the database by `project_id`.
+
+## Trace format and parsing
+
+Lerim does not write harness parsers. Transcript parsing belongs to Letta's
+[trajectory](https://github.com/letta-ai/trajectory) standard, and
+**trajectory-v1 is Lerim's single internal trace format**.
+
+- Native harness sessions go through the pinned `@letta-ai/trajectory` npm
+  package, driven from `src/lerim/adapters/trajectory_bridge.py` over its
+  protocol-v1 stdin/stdout bridge. That module owns transport only.
+- Custom folders, `lerim trace import`, and `lerim_trace_submit` produce the same
+  trajectory-v1 records directly. One format, one downstream pipeline.
+- Records are `meta` (always first), `user`, `reasoning`, `assistant`
+  (optionally with `tool_calls`), and `tool`. The canonical schema is
+  `trajectory-v1.schema.json`, shipped inside the installed npm package.
+- **The trace cache is one JSON record per line, compact.** Context records cite
+  evidence as `line:<N>` into these files, so pretty-printing or merging lines
+  silently invalidates every citation already in the database.
+- trajectory does not redact. Lerim's redaction still runs on normalized records
+  before they are written to the cache.
+- A session the normalizer rejects is skipped and logged. A per-session failure
+  must never fail its batch.
+
+Node.js >= 20 is therefore a hard runtime requirement. `lerim init`, `lerim up`,
+and `lerim serve` preflight it and fail with an install hint. Do not add a
+Python fallback parser.
+
+Adding support for a new harness means contributing an adapter upstream to
+trajectory, not adding a parser here. `SOURCE_MAP` in
+`src/lerim/adapters/trajectory_source.py` lists what Lerim ingests today
+(`claude`, `codex`, `letta-code`, `openclaw`) and `UNSUPPORTED_PLATFORMS` lists
+what it refuses and why. Cursor, OpenCode, and pi have no upstream adapter.
+Hermes, OpenHands, and DeepAgents do, but their session stores are not transcript
+files — wiring them means writing per-harness assembly code, which is exactly
+what this migration deleted, so they stay unsupported until upstream hands Lerim
+a transcript.
 
 ## How to query existing context
 
@@ -69,6 +106,8 @@ Not allowed:
 - file CRUD as durable context tools
 - raw SQL as an agent tool
 - alternate code paths that preserve removed architecture
+- hand-rolled harness parsers alongside the trajectory normalizer
+- a second trace format alongside trajectory-v1
 
 ## Rules
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
@@ -9,7 +10,14 @@ from pathlib import Path
 
 import pytest
 
-from lerim.adapters.base import SessionRecord
+from lerim.adapters import trajectory_source
+from lerim.config.settings import get_trace_cache_dir
+from tests.trajectory_helpers import (
+    assistant_line,
+    user_line,
+    write_abandoned_session,
+    write_claude_session,
+)
 from lerim.sessions.catalog import (
     _connect,
     claim_session_jobs,
@@ -460,141 +468,98 @@ class TestFtsIndexing:
         doc = fetch_session_doc("sum-2")
         assert doc["summary_text"] == ""
 
-    def test_index_new_sessions_skips_known_same_hash(
-        self, sessions_db, monkeypatch, tmp_path
+    def test_index_new_sessions_skips_a_session_whose_content_hash_is_unchanged(
+        self, sessions_db, claude_store
     ):
+        """A transcript that normalizes to the same trace is not re-indexed."""
         from lerim.sessions.catalog import index_new_sessions
 
-        index_session_for_fts(
-            run_id="known-same",
-            agent_type="claude",
-            content="old content",
-            summary_text="old summary",
-            session_path="/tmp/known-same.jsonl",
-            content_hash="same-hash",
-        )
+        write_claude_session(claude_store, "stable-run")
+        first = index_new_sessions(agents=["claude"], return_details=True)
         with _connect() as conn:
             conn.execute(
                 "UPDATE session_docs SET indexed_at = ? WHERE run_id = ?",
-                ("2000-01-01T00:00:00+00:00", "known-same"),
+                ("2000-01-01T00:00:00+00:00", "stable-run"),
             )
             conn.commit()
 
-        class FakeAdapter:
-            def iter_sessions(self, **kwargs):
-                return [
-                    SessionRecord(
-                        run_id="known-same",
-                        agent_type="claude",
-                        session_path="/tmp/known-same.jsonl",
-                        summaries=["new summary should not index"],
-                        content_hash="same-hash",
-                    )
-                ]
+        again = index_new_sessions(agents=["claude"], return_details=True)
 
-        monkeypatch.setattr(
-            "lerim.sessions.catalog.adapter_registry.get_connected_platform_paths",
-            lambda path: {"claude": tmp_path},
-        )
-        monkeypatch.setattr(
-            "lerim.sessions.catalog.adapter_registry.get_adapter",
-            lambda name: FakeAdapter(),
+        assert [session.run_id for session in first] == ["stable-run"]
+        assert again == []
+        assert fetch_session_doc("stable-run")["indexed_at"] == (
+            "2000-01-01T00:00:00+00:00"
         )
 
-        details = index_new_sessions(agents=["claude"], return_details=True)
-
-        assert details == []
-        doc = fetch_session_doc("known-same")
-        assert doc["indexed_at"] == "2000-01-01T00:00:00+00:00"
-        assert doc["summary_text"] == "old summary"
-
-    def test_index_new_sessions_marks_known_missing_hash_changed(
-        self, sessions_db, monkeypatch, tmp_path
+    def test_index_new_sessions_marks_a_known_session_without_a_hash_as_changed(
+        self, sessions_db, claude_store
     ):
+        """A row indexed before hashing existed is refreshed, not skipped."""
         from lerim.sessions.catalog import index_new_sessions
 
+        write_claude_session(claude_store, "legacy-run")
         index_session_for_fts(
-            run_id="known-missing",
+            run_id="legacy-run",
             agent_type="claude",
             content="old content",
-            session_path="/tmp/known-missing.jsonl",
+            session_path="/tmp/legacy-run.jsonl",
             content_hash=None,
         )
 
-        class FakeAdapter:
-            def iter_sessions(self, **kwargs):
-                return [
-                    SessionRecord(
-                        run_id="known-missing",
-                        agent_type="claude",
-                        session_path="/tmp/known-missing.jsonl",
-                        summaries=["backfill summary"],
-                        content_hash="new-hash",
-                    )
-                ]
+        details = index_new_sessions(agents=["claude"], return_details=True)
 
-        monkeypatch.setattr(
-            "lerim.sessions.catalog.adapter_registry.get_connected_platform_paths",
-            lambda path: {"claude": tmp_path},
-        )
-        monkeypatch.setattr(
-            "lerim.sessions.catalog.adapter_registry.get_adapter",
-            lambda name: FakeAdapter(),
-        )
+        assert [session.run_id for session in details] == ["legacy-run"]
+        assert details[0].changed is True
+        assert fetch_session_doc("legacy-run")["content_hash"]
+
+    def test_index_new_sessions_reindexes_a_transcript_that_grew(
+        self, sessions_db, claude_store
+    ):
+        """A session that gained turns is normalized again and reported as changed."""
+        from lerim.sessions.catalog import index_new_sessions
+
+        transcript = write_claude_session(claude_store, "growing-run")
+        index_new_sessions(agents=["claude"], return_details=True)
+        first_hash = fetch_session_doc("growing-run")["content_hash"]
+        with transcript.open("a", encoding="utf-8") as handle:
+            handle.write(
+                user_line(
+                    40, "one more thing", cwd="/workspace/project", branch="main"
+                )
+                + "\n"
+            )
+            handle.write(assistant_line(41, "Handled it.") + "\n")
 
         details = index_new_sessions(agents=["claude"], return_details=True)
 
-        assert len(details) == 1
-        assert details[0].run_id == "known-missing"
+        assert [session.run_id for session in details] == ["growing-run"]
         assert details[0].changed is True
-        assert fetch_session_doc("known-missing")["content_hash"] == "new-hash"
+        assert fetch_session_doc("growing-run")["content_hash"] != first_hash
 
-    def test_index_session_by_run_id_discovers_single_connected_session(
-        self,
-        sessions_db,
-        tmp_path,
-        monkeypatch,
+    def test_index_new_sessions_tolerates_a_rejected_transcript(
+        self, sessions_db, claude_store
     ):
-        traces_dir = tmp_path / "codex-sessions"
-        traces_dir.mkdir()
+        """One unparseable session never stops the rest of the platform indexing."""
+        from lerim.sessions.catalog import index_new_sessions
 
-        class FakeAdapter:
-            def iter_sessions(self, **kwargs):
-                assert kwargs["traces_dir"] == traces_dir
-                return [
-                    SessionRecord(
-                        run_id="target-run",
-                        agent_type="codex",
-                        session_path=str(traces_dir / "target-run.jsonl"),
-                        start_time="2026-05-19T10:00:00+00:00",
-                        repo_path=str(tmp_path),
-                        summaries=["target summary"],
-                        content_hash="target-hash",
-                    ),
-                    SessionRecord(
-                        run_id="other-run",
-                        agent_type="codex",
-                        session_path=str(traces_dir / "other-run.jsonl"),
-                        repo_path=str(tmp_path),
-                    ),
-                ]
+        write_claude_session(claude_store, "good-run")
+        write_abandoned_session(claude_store, "abandoned-run")
 
-        monkeypatch.setattr(
-            "lerim.sessions.catalog.adapter_registry.get_connected_platform_paths",
-            lambda _path: {"codex": traces_dir},
-        )
-        monkeypatch.setattr(
-            "lerim.sessions.catalog.adapter_registry.get_connected_agents",
-            lambda _path: ["codex"],
-        )
-        monkeypatch.setattr(
-            "lerim.sessions.catalog.adapter_registry.get_adapter",
-            lambda name: FakeAdapter() if name == "codex" else None,
-        )
+        details = index_new_sessions(agents=["claude"], return_details=True)
+
+        assert [session.run_id for session in details] == ["good-run"]
+        assert fetch_session_doc("abandoned-run") is None
+
+    def test_index_session_by_run_id_indexes_only_the_requested_session(
+        self, sessions_db, claude_store, tmp_path
+    ):
+        """Hook-style ingest brings in the named session and leaves its peers alone."""
+        write_claude_session(claude_store, "target-run", cwd=str(tmp_path))
+        write_claude_session(claude_store, "other-run", cwd=str(tmp_path))
 
         indexed = index_session_by_run_id(
             "target-run",
-            agents=["codex"],
+            agents=["claude"],
             projects={"test": str(tmp_path)},
             skip_unscoped=True,
         )
@@ -602,49 +567,21 @@ class TestFtsIndexing:
         assert indexed is not None
         assert indexed.run_id == "target-run"
         assert indexed.changed is False
-        doc = fetch_session_doc("target-run")
-        assert doc is not None
-        assert doc["agent_type"] == "codex"
-        assert doc["content_hash"] == "target-hash"
+        assert fetch_session_doc("target-run")["agent_type"] == "claude"
         assert fetch_session_doc("other-run") is None
 
-    def test_index_session_by_run_id_counts_unscoped_match(
-        self,
-        sessions_db,
-        tmp_path,
-        monkeypatch,
+    def test_index_session_by_run_id_counts_an_unscoped_match(
+        self, sessions_db, claude_store, tmp_path
     ):
-        traces_dir = tmp_path / "codex-sessions"
-        traces_dir.mkdir()
-
-        class FakeAdapter:
-            def iter_sessions(self, **_kwargs):
-                return [
-                    SessionRecord(
-                        run_id="unscoped-run",
-                        agent_type="codex",
-                        session_path=str(traces_dir / "unscoped-run.jsonl"),
-                        repo_path=str(tmp_path / "other-project"),
-                    )
-                ]
-
-        monkeypatch.setattr(
-            "lerim.sessions.catalog.adapter_registry.get_connected_platform_paths",
-            lambda _path: {"codex": traces_dir},
-        )
-        monkeypatch.setattr(
-            "lerim.sessions.catalog.adapter_registry.get_connected_agents",
-            lambda _path: ["codex"],
-        )
-        monkeypatch.setattr(
-            "lerim.sessions.catalog.adapter_registry.get_adapter",
-            lambda name: FakeAdapter() if name == "codex" else None,
+        """A session outside every registered project is counted, not indexed."""
+        write_claude_session(
+            claude_store, "unscoped-run", cwd=str(tmp_path / "other-project")
         )
         stats = {"skipped_unscoped": 0}
 
         indexed = index_session_by_run_id(
             "unscoped-run",
-            agents=["codex"],
+            agents=["claude"],
             projects={"test": str(tmp_path / "registered")},
             skip_unscoped=True,
             stats=stats,
@@ -1880,3 +1817,193 @@ class TestJobQueueAdvanced:
         assert "rn" not in job
         for key in ("run_id", "status", "repo_path", "attempts"):
             assert key in job
+
+
+class TestIngestPreFilter:
+    """The `(size_bytes, updated_at)` ledger that decides what gets normalized.
+
+    Ingest lists every transcript in the window cheaply, then normalizes only
+    the ones whose outcome the ledger cannot already account for. These tests
+    prove that filter both ways: an unchanged transcript really does skip
+    normalization, and every kind of change really does defeat the skip. What
+    is asserted is whether the trace cache file was rewritten, because that is
+    the observable side effect of normalization having run.
+    """
+
+    SENTINEL = '{"role":"meta","source":"sentinel-not-rewritten"}\n'
+
+    def _cache_path(self, run_id: str) -> Path:
+        """Return the trace cache file one claude run writes to."""
+        return get_trace_cache_dir("claude") / f"{run_id}.jsonl"
+
+    def _mark_cache(self, run_id: str) -> Path:
+        """Overwrite a cache file so a later rewrite is detectable."""
+        path = self._cache_path(run_id)
+        assert path.is_file()
+        path.write_text(self.SENTINEL, encoding="utf-8")
+        return path
+
+    def _was_renormalized(self, run_id: str) -> bool:
+        """Return whether the marked cache file was written again."""
+        return self._cache_path(run_id).read_text(encoding="utf-8") != self.SENTINEL
+
+    def test_an_unchanged_transcript_skips_normalization_entirely(
+        self, sessions_db, claude_store
+    ):
+        """A steady-state cycle costs the listing only, not a re-parse."""
+        from lerim.sessions.catalog import index_new_sessions
+
+        write_claude_session(claude_store, "steady-run")
+        index_new_sessions(agents=["claude"], return_details=True)
+        self._mark_cache("steady-run")
+
+        again = index_new_sessions(agents=["claude"], return_details=True)
+
+        assert again == []
+        assert not self._was_renormalized("steady-run")
+
+    def test_a_transcript_that_grew_is_normalized_again(
+        self, sessions_db, claude_store
+    ):
+        """A session still being written is picked up when its size changes."""
+        from lerim.sessions.catalog import index_new_sessions
+
+        transcript = write_claude_session(claude_store, "growing-run")
+        index_new_sessions(agents=["claude"], return_details=True)
+        self._mark_cache("growing-run")
+        with transcript.open("a", encoding="utf-8") as handle:
+            handle.write(assistant_line(60, "One more step.") + "\n")
+
+        index_new_sessions(agents=["claude"], return_details=True)
+
+        assert self._was_renormalized("growing-run")
+
+    def test_a_transcript_rewritten_in_place_at_the_same_size_is_normalized_again(
+        self, sessions_db, claude_store
+    ):
+        """Size alone cannot decide: an equal-length rewrite still re-normalizes.
+
+        A cleaner script or an editor that rewrites a transcript in place can
+        land on exactly the previous byte count, so the modification time has
+        to be part of the key.
+        """
+        from lerim.sessions.catalog import index_new_sessions
+
+        transcript = write_claude_session(claude_store, "rewritten-run")
+        index_new_sessions(agents=["claude"], return_details=True)
+        self._mark_cache("rewritten-run")
+        original = transcript.read_text(encoding="utf-8")
+        rewritten = original.replace("Looking at retry.py now.", "Looking at retry.py NOW!")
+        assert len(rewritten) == len(original), "the rewrite must not change the size"
+        transcript.write_text(rewritten, encoding="utf-8")
+        later = datetime.now(timezone.utc).timestamp() + 60
+        os.utime(transcript, (later, later))
+
+        index_new_sessions(agents=["claude"], return_details=True)
+
+        assert transcript.stat().st_size == len(original.encode("utf-8"))
+        assert self._was_renormalized("rewritten-run")
+
+    def test_a_deleted_cache_file_is_rebuilt(self, sessions_db, claude_store):
+        """The ledger never certifies a session whose trace is no longer on disk.
+
+        The cache lives under a directory named ``cache``, so losing it to a
+        disk cleanup is ordinary. Without this check the indexed session would
+        point at nothing until a full memory reset.
+        """
+        from lerim.sessions.catalog import index_new_sessions
+
+        write_claude_session(claude_store, "orphaned-run")
+        index_new_sessions(agents=["claude"], return_details=True)
+        self._cache_path("orphaned-run").unlink()
+
+        index_new_sessions(agents=["claude"], return_details=True)
+
+        assert self._cache_path("orphaned-run").is_file()
+
+    def test_a_different_normalizer_re_normalizes_everything(
+        self, sessions_db, claude_store, monkeypatch
+    ):
+        """After an upgrade the cached traces no longer match what this code writes."""
+        from lerim.sessions.catalog import index_new_sessions
+
+        write_claude_session(claude_store, "upgraded-run")
+        index_new_sessions(agents=["claude"], return_details=True)
+        self._mark_cache("upgraded-run")
+        monkeypatch.setattr(
+            trajectory_source, "NORMALIZER_FINGERPRINT", "9.9.9/4000/head-tail/redaction2"
+        )
+
+        index_new_sessions(agents=["claude"], return_details=True)
+
+        assert self._was_renormalized("upgraded-run")
+
+    def test_an_out_of_scope_session_is_counted_from_the_ledger(
+        self, sessions_db, claude_store, tmp_path
+    ):
+        """Skipped-unscoped counting stays faithful without re-reading transcripts."""
+        from lerim.sessions.catalog import index_new_sessions
+
+        write_claude_session(claude_store, "outside-run", cwd=str(tmp_path / "elsewhere"))
+        projects = {"registered": str(tmp_path / "registered")}
+        cold = {"skipped_unscoped": 0}
+        index_new_sessions(
+            agents=["claude"], projects=projects, skip_unscoped=True, stats=cold
+        )
+        self._mark_cache("outside-run")
+
+        warm = {"skipped_unscoped": 0}
+        index_new_sessions(
+            agents=["claude"], projects=projects, skip_unscoped=True, stats=warm
+        )
+
+        assert cold["skipped_unscoped"] == 1
+        assert warm["skipped_unscoped"] == 1
+        assert not self._was_renormalized("outside-run")
+
+    def test_registering_a_project_later_brings_in_its_past_sessions(
+        self, sessions_db, claude_store, tmp_path
+    ):
+        """A session first seen out of scope is indexed once its project is registered."""
+        from lerim.sessions.catalog import index_new_sessions
+
+        project = tmp_path / "late-project"
+        write_claude_session(claude_store, "late-run", cwd=str(project))
+        index_new_sessions(
+            agents=["claude"],
+            projects={"other": str(tmp_path / "other")},
+            skip_unscoped=True,
+        )
+        assert fetch_session_doc("late-run") is None
+
+        details = index_new_sessions(
+            agents=["claude"],
+            projects={"late": str(project)},
+            skip_unscoped=True,
+            return_details=True,
+        )
+
+        assert [session.run_id for session in details] == ["late-run"]
+
+    def test_the_ledger_is_cleared_when_a_project_is_reset(
+        self, sessions_db, claude_store, tmp_path
+    ):
+        """A reset project re-ingests, so its ledger rows must not survive the reset."""
+        from lerim.sessions.catalog import (
+            index_new_sessions,
+            reset_indexed_sessions_for_project,
+        )
+
+        project = tmp_path / "resettable"
+        write_claude_session(claude_store, "reset-run", cwd=str(project))
+        index_new_sessions(agents=["claude"], return_details=True)
+
+        reset_indexed_sessions_for_project(str(project))
+
+        with _connect() as conn:
+            remaining = conn.execute(
+                "SELECT COUNT(*) AS n FROM session_sources"
+            ).fetchone()["n"]
+        assert remaining == 0
+        details = index_new_sessions(agents=["claude"], return_details=True)
+        assert [session.run_id for session in details] == ["reset-run"]

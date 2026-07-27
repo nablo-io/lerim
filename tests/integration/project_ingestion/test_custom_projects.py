@@ -15,21 +15,20 @@ from lerim.sessions import catalog
 from tests.helpers import write_test_config
 
 
-def _canonical(role: str, content: str, timestamp: str) -> str:
-    """Return one Lerim canonical JSONL row."""
-    return json.dumps(
-        {
-            "type": role,
-            "message": {"role": role, "content": content},
-            "timestamp": timestamp,
-        }
-    )
+def _meta(source: str = "support-agent") -> str:
+    """Return the leading trajectory-v1 meta record every clean trace opens with."""
+    return json.dumps({"role": "meta", "source": source})
+
+
+def _record(role: str, content: str, timestamp: str) -> str:
+    """Return one trajectory-v1 conversation record."""
+    return json.dumps({"role": role, "content": content, "timestamp": timestamp})
 
 
 def _write_trace(path: Path, rows: list[str]) -> None:
-    """Write one synthetic cleaned trace."""
+    """Write one synthetic cleaned trace, meta record first."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    path.write_text("\n".join([_meta(), *rows]) + "\n", encoding="utf-8")
 
 
 @pytest.mark.integration
@@ -53,12 +52,12 @@ def test_custom_project_folder_indexes_and_queues_clean_traces(
     _write_trace(
         first_trace,
         [
-            _canonical(
+            _record(
                 "user",
                 "Customer asks whether renewal needs legal approval.",
                 "2026-05-16T08:00:00Z",
             ),
-            _canonical(
+            _record(
                 "assistant",
                 "Agent records that legal approval is required above EUR 500.",
                 "2026-05-16T08:02:00Z",
@@ -68,12 +67,12 @@ def test_custom_project_folder_indexes_and_queues_clean_traces(
     _write_trace(
         second_trace,
         [
-            _canonical(
+            _record(
                 "user",
                 "Operations agent investigates delayed export paperwork.",
                 "2026-05-16T09:00:00Z",
             ),
-            _canonical(
+            _record(
                 "assistant",
                 "Agent keeps the customs ticket open until carrier confirmation.",
                 "2026-05-16T09:04:00Z",

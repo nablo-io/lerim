@@ -562,12 +562,21 @@ export const api = {
     const raw = await apiFetch<Record<string, unknown>>(`/api/runs/${encodeURIComponent(runId)}/messages${qs}`);
     const messages = arrayValue(raw.messages).map((value) => {
       const item = objectValue(value);
-      const toolName = asNullableString(item.tool_name);
+      /* trajectory-v1: an assistant record carries its calls in `tool_calls`,
+         each linked to its `role: "tool"` result by id. */
+      const toolCalls = arrayValue(item.tool_calls).map((entry) => {
+        const call = objectValue(entry);
+        return {
+          id: asNullableString(call.id) || "",
+          name: asNullableString(call.name) || "",
+          args: asNullableString(call.args) || "",
+        };
+      });
       return {
         role: String(item.role || "assistant"),
         content: String(item.content || ""),
         timestamp: String(item.timestamp || ""),
-        tool_calls: toolName ? [{ name: toolName, id: toolName }] : [],
+        tool_calls: toolCalls,
       };
     });
     return { messages, total: messages.length } satisfies MessagesResponse;

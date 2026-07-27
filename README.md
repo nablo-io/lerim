@@ -50,7 +50,7 @@ the source session.
 
 | Moment | Lerim does | Future agents get |
 | --- | --- | --- |
-| A completed agent run lands | Imports a source session from an adapter, MCP submit, or clean custom JSONL | A stable source boundary instead of a transcript paste |
+| A completed agent run lands | Imports a source session through the trajectory normalizer, MCP submit, or clean custom JSONL | A stable source boundary instead of a transcript paste |
 | The trace is noisy | Compacts the run and filters for reusable decisions, constraints, facts, preferences, corrections, and handoffs | Durable context and eval-ready signal, not another log index |
 | Someone asks later | Retrieves relevant records and answers with citations back to stored evidence | A shorter start with less re-explaining |
 
@@ -58,6 +58,11 @@ Most routine traces produce no durable record. Lerim's value is compact, cited
 context, not more logs.
 
 ## Quick Install
+
+Requires **Python 3.11+** and **Node.js 20+**. Lerim parses agent transcripts
+with Letta's [trajectory](https://github.com/letta-ai/trajectory) normalizer, an
+npm package, so node is a hard runtime requirement — there is no fallback
+parser. `lerim init` verifies node and installs the pinned normalizer for you.
 
 ```bash
 pip install lerim
@@ -67,7 +72,11 @@ lerim project add .
 lerim up
 ```
 
-Native adapters ingest completed local sessions where a stable trace store
+If node is missing, install it first (macOS: `brew install node`, Linux:
+<https://nodejs.org/en/download>) and re-run `lerim init`. The Docker image ships
+node and the pinned normalizer already.
+
+Native trace sources ingest completed local sessions where a stable trace store
 exists; MCP setup writes tool entries for compatible agents. See
 [Agent Support](#agent-support) for what is verified per agent.
 
@@ -90,7 +99,7 @@ context or eval signal, and every new session starts too close to zero.
 
 Lerim fits best where one repeated workflow has trace access, a workflow owner,
 privacy constraints, and a measurable quality failure to fix. Coding is the
-proof-rich workflow today because the native adapters are mature; support,
+proof-rich workflow today because native trace parsing is mature there; support,
 incident, research, and compliance run the same compiler through custom traces.
 
 ## Key Capabilities
@@ -115,15 +124,17 @@ incident, research, and compliance run the same compiler through custom traces.
 
 Lerim has two integration layers:
 
-- **Native trace adapters** read completed local sessions and feed Lerim's compiler.
+- **Native trace parsing** reads completed local sessions through the
+  [trajectory](https://github.com/letta-ai/trajectory) normalizer and feeds Lerim's compiler.
 - **MCP support** lets compatible agents query Lerim context and explicitly submit completed sessions through `lerim_trace_submit`; it is not automatic local-history capture.
 
 | Support level | Agents and sources |
 | --- | --- |
-| Native adapter plus MCP config writer | Claude Code, Codex CLI, Cursor, OpenCode |
-| MCP config writer; live recall/submit only where verified | Gemini CLI, Cline, Claude Desktop, OpenClaw, Hermes, Goose, Roo Code, Kilo Code, Windsurf |
-| Native adapter, no MCP claim | pi |
-| Experimental or user-owned path | OpenHuman, custom JSONL, generic MCP trace submit |
+| Native trace parsing plus MCP config writer | Claude Code, Codex CLI, OpenClaw |
+| Native trace parsing, no MCP claim | Letta Code |
+| MCP config writer; live recall/submit only where verified | Gemini CLI, Cline, Claude Desktop, Hermes, Goose, Roo Code, Kilo Code, Windsurf |
+| Experimental or user-owned path | OpenHuman, custom trajectory-v1 JSONL, generic MCP trace submit |
+| Not supported in 0.4.0 | Cursor, OpenCode, pi (no upstream trajectory adapter); Hermes, OpenHands, DeepAgents (upstream adapter exists but the session store is not a transcript file) — use a custom trace folder |
 
 See the [integration matrix](docs/integrations/matrix.md) for the exact support
 boundary and evidence level per agent.
@@ -213,15 +224,16 @@ or jump to a worked demo:
 
 ### Custom Agent Traces
 
-Built-in `connect` adapters cover Claude Code, Codex CLI, Cursor, OpenCode, and
-pi. For any other agent or business workflow, register already-clean canonical
-JSONL — one `.jsonl` file per completed session. Custom mode has no adapter and
-no compaction step, so you own export, cleaning, redaction, and retention before
+Built-in `connect` sources cover Claude Code, Codex CLI, Letta Code, and
+OpenClaw. For any other agent or business workflow, register already-clean
+trajectory-v1 JSONL — one `.jsonl` file per completed session. Custom mode has no
+normalizer step, so you own export, cleaning, redaction, and retention before
 files enter the folder.
 
-See [Submit a Custom Agent Trace](docs/guides/submit-custom-agent-trace.md) for
-the JSONL schema, the `clean_to_lerim_jsonl.py` pattern, and the
-`lerim trace import` profile/scope flags.
+See [Custom Trace Folders](docs/guides/custom-trace-folders.md) for the
+trajectory-v1 schema and a paste-in prompt that generates a cleaner for your
+source, and [Submit a Custom Agent Trace](docs/guides/submit-custom-agent-trace.md)
+for the `lerim trace import` profile/scope flags.
 
 ## Common Commands
 
@@ -244,6 +256,9 @@ uv pip install -e '.[test]'
 tests/run_tests.sh unit
 ```
 
+Node.js 20+ must be on `PATH`; the trace-parsing tests shell out to the pinned
+`@letta-ai/trajectory` normalizer.
+
 See the [Contributing Guide](https://docs.nablo.io/contributing/getting-started/)
 for full dev setup, the live test suites, and the release checklist.
 
@@ -254,8 +269,8 @@ To read the codebase, start with
 ## License
 
 Lerim core is Apache-2.0. The local CLI, runtime, self-hosted sync server,
-native adapters, context DB schema, benchmark scripts, and integration docs stay
-usable without any paid account. Any hosted, commercial, or model-training
+native trace parsing, context DB schema, benchmark scripts, and integration docs
+stay usable without any paid account. Any hosted, commercial, or model-training
 offering is Nablo's business, not a Lerim product. See COMMERCIAL.md for the
 open-source scope.
 
@@ -268,7 +283,8 @@ Contributions are welcome.
 
 Good starting points include:
 
-- trace-source adapters and custom trace-folder examples
+- new harness adapters, contributed upstream to [trajectory](https://github.com/letta-ai/trajectory) so every consumer gets them
+- custom trace-folder examples
 - extraction quality
 - context curation quality
 - context graph link quality
@@ -278,4 +294,5 @@ Helpful links:
 
 - [Contributing Guide](https://docs.nablo.io/contributing/getting-started/)
 - [Open issues](https://github.com/nablo-io/lerim/issues)
-- Trace-source adapter examples: `src/lerim/adapters/`
+- Trace-source plumbing: `src/lerim/adapters/`
+- Upstream adapter guide: [letta-ai/trajectory](https://github.com/letta-ai/trajectory)

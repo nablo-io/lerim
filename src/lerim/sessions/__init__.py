@@ -1,51 +1,8 @@
-"""Session catalog and queue helpers."""
+"""Session catalog, queue, and shared session models.
 
-from lerim.sessions.catalog import (
-    IndexedSession,
-    claim_session_jobs,
-    complete_session_job,
-    count_fts_indexed,
-    count_unscoped_sessions_by_agent,
-    count_session_jobs_by_status,
-    enqueue_session_job,
-    fail_session_job,
-    fetch_session_doc,
-    get_indexed_run_ids,
-    heartbeat_session_job,
-    index_new_sessions,
-    index_session_for_fts,
-    init_sessions_db,
-    latest_service_run,
-    list_service_runs,
-    list_queue_jobs,
-    list_session_jobs,
-    list_sessions_window,
-    list_unscoped_sessions,
-    record_service_run,
-    update_session_extract_fields,
-)
-
-__all__ = [
-    "init_sessions_db",
-    "index_session_for_fts",
-    "fetch_session_doc",
-    "update_session_extract_fields",
-    "count_fts_indexed",
-    "get_indexed_run_ids",
-    "IndexedSession",
-    "index_new_sessions",
-    "list_sessions_window",
-    "enqueue_session_job",
-    "claim_session_jobs",
-    "complete_session_job",
-    "fail_session_job",
-    "heartbeat_session_job",
-    "list_session_jobs",
-    "count_session_jobs_by_status",
-    "count_unscoped_sessions_by_agent",
-    "record_service_run",
-    "latest_service_run",
-    "list_service_runs",
-    "list_queue_jobs",
-    "list_unscoped_sessions",
-]
+Importing this package pulls in nothing: callers import the submodule they
+need (``lerim.sessions.catalog``, ``lerim.sessions.types``). That keeps
+``lerim.sessions.types`` a leaf module, so the trace sources in
+``lerim.adapters`` can depend on it without an import cycle back through the
+catalog.
+"""

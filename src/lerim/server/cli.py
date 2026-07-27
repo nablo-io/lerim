@@ -39,6 +39,15 @@ from lerim.integrations.mcp_connect import (
     known_mcp_targets,
     resolve_mcp_target,
 )
+from lerim.adapters.trajectory_bridge import (
+    MINIMUM_NODE_MAJOR,
+    TRAJECTORY_PACKAGE,
+    TRAJECTORY_VERSION,
+    TrajectoryBridgeError,
+    ensure_trajectory_installed,
+    resolve_node,
+)
+from lerim.adapters.trajectory_source import SOURCE_MAP, UNSUPPORTED_PLATFORMS
 
 from lerim.server.api import (
     api_feedback,
@@ -419,6 +428,11 @@ def _cmd_connect(args: argparse.Namespace) -> int:
         platforms_path, name, custom_path=getattr(args, "path", None)
     )
     status = str(result.get("status") or "")
+    if status == "unsupported_platform":
+        _emit(f"Not supported: {name}", file=sys.stderr)
+        _emit(str(result.get("message") or ""), file=sys.stderr)
+        _emit(f"Supported platforms: {', '.join(SOURCE_MAP)}", file=sys.stderr)
+        return 1
     if status == "path_not_found":
         _emit(f"Path not found: {result.get('path')}", file=sys.stderr)
         return 1
@@ -529,6 +543,16 @@ def _dry_run_adapter_auto_result(
     custom_path: str | None,
 ) -> dict[str, Any]:
     """Return a non-mutating native adapter auto-connect preview."""
+    if name in UNSUPPORTED_PLATFORMS:
+        return {
+            "name": name,
+            "path": None,
+            "session_count": 0,
+            "connected_at": None,
+            "status": "unsupported_platform",
+            "message": UNSUPPORTED_PLATFORMS[name],
+            "dry_run": True,
+        }
     resolved = Path(custom_path).expanduser().resolve() if custom_path else default_path_for(name)
     exists = bool(resolved and resolved.exists())
     return {
@@ -2053,6 +2077,33 @@ def _setup_api_keys() -> None:
     _emit(f"\n  Keys saved to {env_path} (permissions: 600)")
 
 
+def _preflight_trace_runtime() -> bool:
+    """Verify node and the pinned trajectory package, installing the package if absent.
+
+    Lerim parses every agent transcript with Letta's trajectory-v1 normalizer,
+    which runs on node. There is no Python parser to fall back to, so a missing
+    or too-old runtime is a hard failure surfaced with an install hint instead of
+    a degraded ingest. Returns False after writing the reason to stderr.
+    """
+    try:
+        node_path = resolve_node()
+        ensure_trajectory_installed()
+    except TrajectoryBridgeError as exc:
+        _emit(
+            f"Trace parsing runtime unavailable: {exc}",
+            file=sys.stderr,
+        )
+        _emit(
+            f"Lerim parses agent transcripts with {TRAJECTORY_PACKAGE}@{TRAJECTORY_VERSION}, "
+            f"which requires node >= {MINIMUM_NODE_MAJOR}. There is no fallback parser.",
+            file=sys.stderr,
+        )
+        return False
+    _emit(f"  Node: {node_path} ✓")
+    _emit(f"  Trace parser: {TRAJECTORY_PACKAGE}@{TRAJECTORY_VERSION} ✓")
+    return True
+
+
 def _cmd_init(args: argparse.Namespace) -> int:
     """Interactive setup wizard — agents, API keys, config."""
     _emit("")
@@ -2091,7 +2142,13 @@ def _cmd_init(args: argparse.Namespace) -> int:
     # Step 2: API keys
     _setup_api_keys()
 
-    # Step 3: Docker check
+    # Step 3: Trace parsing runtime — node plus the pinned trajectory normalizer.
+    _emit("\n── Trace Parsing Runtime ──────────────────────────")
+    _emit("")
+    if not _preflight_trace_runtime():
+        return 1
+
+    # Step 4: Docker check
     _emit("\n── Docker ─────────────────────────────────────────")
     _emit("")
     if docker_available():
@@ -2586,6 +2643,8 @@ def _print_memory_reset_result(payload: dict[str, Any]) -> None:
 
 def _cmd_up(args: argparse.Namespace) -> int:
     """Start the Docker container."""
+    if not _preflight_trace_runtime():
+        return 1
     config = get_config()
     _emit(
         f"Starting Lerim with {len(config.projects)} projects and {len(config.agents)} agents..."
@@ -2811,6 +2870,9 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         queue_health_snapshot,
         reap_stale_running_jobs,
     )
+
+    if not _preflight_trace_runtime():
+        return 1
 
     config = get_config()
     host = args.host or config.server_host or "0.0.0.0"

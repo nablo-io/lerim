@@ -1,4 +1,4 @@
-"""Dashboard data helpers for HTTP views."""
+"""Dashboard data helpers for HTTP views over trajectory-v1 trace caches."""
 
 from __future__ import annotations
 
@@ -53,67 +53,43 @@ def build_extract_report(
 
 
 def extract_session_details(session_path: str) -> dict[str, Any]:
-    """Extract model name and tool usage counts from a session JSONL trace."""
+    """Summarize one trajectory-v1 trace cache for the dashboard.
+
+    Returns ``model`` from the leading meta record, ``tools`` counting every
+    ``assistant.tool_calls`` entry by name, and ``tool_results`` counting the
+    calls that received a ``role: "tool"`` record, matched by ``tool_call_id``.
+    A name whose result count trails its call count had calls left unanswered.
+    """
     if session_path in _SESSION_DETAILS_CACHE:
         return _SESSION_DETAILS_CACHE[session_path]
-    result: dict[str, Any] = {"model": "", "tools": {}}
-
-    def pick_model(row: dict[str, Any], msg_obj: Any, payload_obj: Any) -> str:
-        """Pick best-effort model id from known trace formats."""
-        msg = msg_obj if isinstance(msg_obj, dict) else {}
-        payload = payload_obj if isinstance(payload_obj, dict) else {}
-        model_cfg = row.get("modelConfig")
-        model_info = row.get("modelInfo")
-        payload_info = payload.get("info")
-        collab = payload.get("collaboration_mode")
-        collab_settings = collab.get("settings") if isinstance(collab, dict) else None
-        payload_session = payload.get("session")
-        candidates: list[Any] = [
-            row.get("model"),
-            row.get("model_name"),
-            msg.get("model"),
-            model_cfg.get("modelName") if isinstance(model_cfg, dict) else "",
-            model_info.get("modelName") if isinstance(model_info, dict) else "",
-            payload.get("model"),
-            payload_info.get("model") if isinstance(payload_info, dict) else "",
-            collab_settings.get("model") if isinstance(collab_settings, dict) else "",
-            payload_session.get("model") if isinstance(payload_session, dict) else "",
-        ]
-        for value in candidates:
-            text = str(value or "").strip()
-            if text:
-                return text
-        return ""
-
-    try:
-        rows = load_jsonl_dict_lines(Path(session_path).expanduser())
-        for row in rows:
-            msg = row.get("message") if isinstance(row.get("message"), dict) else {}
-            payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
-
-            picked_model = pick_model(row, msg, payload)
-            if picked_model and not result["model"]:
-                result["model"] = picked_model
-
-            for block in (
-                msg.get("content", []) if isinstance(msg.get("content"), list) else []
-            ):
-                if isinstance(block, dict) and block.get("type") == "tool_use":
-                    name = str(block.get("name", "unknown"))
-                    result["tools"][name] = result["tools"].get(name, 0) + 1
-
-            if row.get("tool_name"):
-                name = str(row["tool_name"])
-                result["tools"][name] = result["tools"].get(name, 0) + 1
-
-            if row.get("type") == "tool_call" and row.get("name"):
-                name = str(row["name"])
-                result["tools"][name] = result["tools"].get(name, 0) + 1
-
-            if payload.get("type") == "function_call":
-                name = str(payload.get("name", "unknown"))
-                result["tools"][name] = result["tools"].get(name, 0) + 1
-    except Exception:
-        pass
+    records = load_jsonl_dict_lines(Path(session_path).expanduser())
+    model = ""
+    tools: dict[str, int] = {}
+    tool_results: dict[str, int] = {}
+    call_names: dict[str, str] = {}
+    for record in records:
+        role = str(record.get("role") or "").lower()
+        if role == "meta":
+            model = model or str(record.get("model") or "").strip()
+            continue
+        if role == "assistant":
+            for call in record.get("tool_calls") or []:
+                if not isinstance(call, dict):
+                    continue
+                name = str(call.get("name") or "unknown")
+                tools[name] = tools.get(name, 0) + 1
+                call_id = str(call.get("id") or "")
+                if call_id:
+                    call_names[call_id] = name
+            continue
+        if role == "tool":
+            name = call_names.get(str(record.get("tool_call_id") or ""))
+            if name:
+                tool_results[name] = tool_results.get(name, 0) + 1
+    result: dict[str, Any] = {
+        "model": model,
+        "tools": tools,
+        "tool_results": tool_results,
+    }
     _SESSION_DETAILS_CACHE[session_path] = result
     return result

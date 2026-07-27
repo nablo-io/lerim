@@ -9,6 +9,12 @@ Canonical command:
 If `lerim` is not on `PATH`, resolve the runnable command in `SKILL.md` first.
 Common fallback: `uvx lerim` or `$HOME/.local/bin/uvx lerim`.
 
+**Runtime requirement:** Lerim parses agent transcripts with Letta's
+[trajectory](https://github.com/letta-ai/trajectory) normalizer, which needs
+**Node.js >= 20**. `init`, `up`, and `serve` verify node and install the pinned
+`@letta-ai/trajectory` package into `<data dir>/node/` before doing anything
+else. Missing or too-old node is a hard failure — there is no fallback parser.
+
 Durable Lerim context lives in the global SQLite DB under the active Lerim data dir (default: `~/.lerim/context.sqlite3`).
 Commands that call the HTTP API (`answer`, `ingest`, `curate`, `status`) require a
 running server (`lerim up` or `lerim serve`). `unscoped` also requires the running
@@ -75,6 +81,10 @@ the active Lerim config path (default: `~/.lerim/config.toml`).
 lerim init
 ```
 
+`init` also verifies Node.js >= 20 and installs the pinned
+`@letta-ai/trajectory` normalizer into `<data dir>/node/`. It exits `1` with an
+install hint when node is missing or older than 20.
+
 ### `lerim project` (host-only)
 
 Manage tracked project paths. Project registration only records the path and
@@ -91,7 +101,7 @@ lerim project remove my-app             # unregister a project
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--type` | `supported` | `supported` for projects whose sessions come from connected adapters; `custom` for folders of already-clean Lerim canonical JSONL traces |
+| `--type` | `supported` | `supported` for projects whose sessions come from connected native sources; `custom` for folders of already-clean trajectory-v1 JSONL traces |
 
 Adding/removing a project restarts the Docker container if running.
 
@@ -108,6 +118,10 @@ lerim down                  # stop it
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--build` | off | Build from local Dockerfile, tag it as `lerim-lerim:local`, and recreate the container instead of pulling the GHCR image |
+
+`up` runs the node preflight on the host before starting the container and exits
+`1` if it fails. The Lerim data dir is bind-mounted into the container, so the
+normalizer the host installs is the one the container uses.
 
 ### `lerim logs` (host-only)
 
@@ -154,14 +168,28 @@ lerim serve
 lerim serve --host 0.0.0.0 --port 8765  # custom bind
 ```
 
+`serve` runs the node preflight before binding the port and exits `1` if it
+fails, so the daemon never starts unable to parse traces.
+
 ### `lerim connect`
 
-Register, list, or remove native trace adapters and MCP client config.
+Register, list, or remove native trace sources and MCP client config.
 Lerim reads session data from connected native platforms to build context
 records. MCP clients can query Lerim and submit completed sessions through the
 stdio server.
 
-Native adapter targets: `claude`, `codex`, `cursor`, `opencode`, `pi`.
+Native trace sources: `claude`, `codex`, `letta-code`, `openclaw`. These are the
+trajectory sources whose sessions are standalone transcript files, so Lerim can
+list and normalize them without harness-specific assembly code.
+
+**Removed in 0.4.0:** `cursor`, `opencode`, and `pi` have no upstream trajectory
+adapter, so `lerim connect` rejects them with an explanation instead of silently
+producing nothing. `hermes`, `openhands`, and `deepagents` have upstream
+adapters but store sessions as a SQLite database, an event directory, and
+LangGraph checkpoints respectively; they are not wired up until upstream can hand
+Lerim a transcript. Use a
+[custom trace folder](../../../docs/guides/custom-trace-folders.md) for any of
+these agents in the meantime.
 
 MCP config targets: `codex`, `claude-code`, `cursor`, `opencode`, `gemini-cli`,
 `cline`, `cline-cli`, `claude-desktop`, `openclaw`, `hermes`, `goose`,
@@ -173,7 +201,7 @@ lerim connect list --all                  # include MCP target status
 lerim connect                             # same as list
 lerim connect auto                        # auto-detect and connect native adapters
 lerim connect claude                      # connect the Claude platform
-lerim connect pi                          # connect pi's native JSONL sessions
+lerim connect letta-code                  # connect Letta Code's session store
 lerim connect claude --path /custom/dir   # connect with custom session store path
 lerim connect auto --mode mcp --dry-run   # preview MCP config writes
 lerim connect auto --mode mcp             # write Lerim MCP config for detected targets
@@ -200,6 +228,9 @@ auto mode tries the native adapter when one exists and writes MCP config when th
 target is known. `lerim connect auto --mode auto` writes MCP config only for
 detected installed MCP targets. `--mode plugin` is intentionally pending for
 OpenClaw, Hermes, and pi; it returns nonzero and does not silently run MCP setup.
+Plugin status is independent of trace parsing: OpenClaw gained native trajectory
+parsing in 0.4.0 while its plugin stays pending, and pi lost its native adapter
+in the same release.
 
 ### `lerim mcp` (host-only)
 
@@ -225,6 +256,12 @@ Exposed tools:
 Hot-path: discover new sessions from connected platforms and custom clean-trace
 folders, enqueue them, and run extraction to create context records.
 Requires a running server (`lerim up` or `lerim serve`).
+
+Native sessions are parsed by the `@letta-ai/trajectory` normalizer into
+trajectory-v1 records; custom folders already hold those records. Both land in
+the same one-record-per-line cache under
+`<data dir>/cache/traces/<agent>/<run_id>.jsonl`. A session the normalizer
+rejects is skipped and logged; it never fails the rest of the run.
 
 **Time window** controls which sessions to scan:
 - `--window <duration>` -- relative window like `7d`, `24h`, `30m` (default: from config, `7d`)
@@ -263,10 +300,17 @@ Notes:
 - Normal backlog ingest claims the newest available session per project first.
 - `--ignore-lock` exists only as a CLI-local debug flag and is intentionally not supported by `/api/ingest`; skipping the writer lock risks corruption.
 - Cold curation work is not executed in `ingest`.
+- `--agent` accepts the connected native sources (`claude`, `codex`, `letta-code`, `openclaw`) and `custom`. `cursor`, `opencode`, and `pi` are not valid in 0.4.0.
 
 ### `lerim trace import` (host-only)
 
 Import one JSON, JSONL, or text trace file into an explicit scope.
+
+`trace import` is the lenient one-file path: it maps arbitrary events onto
+trajectory-v1 records and writes those to the workspace. Registered custom
+folders are the strict path — those files must already be valid trajectory-v1.
+See [Custom Trace Folders](../../../docs/guides/custom-trace-folders.md) for the
+schema and a cleaner-generator prompt.
 
 For ongoing custom-agent workflows, prefer custom project folders:
 
@@ -290,7 +334,7 @@ lerim trace import ./support-agent-run.jsonl \
 
 | Flag | Description |
 |------|-------------|
-| `path` | Trace file path. JSON, JSONL, and plain text are accepted |
+| `path` | Trace file path. JSON, trajectory-v1 JSONL, and plain text are accepted |
 | `--source-name` | Source agent or system name, for example `support-bot` |
 | `--source-profile` | Source profile, for example `coding`, `generic`, `support`, `ops`, or a registered custom profile |
 | `--scope-type` | One of `project`, `domain`, `user`, `session`, `workspace`, or `custom` |
@@ -299,8 +343,8 @@ lerim trace import ./support-agent-run.jsonl \
 | `--session-id` | Optional stable session id. Defaults to the normalized trace id |
 | `--force` | Re-run extraction even when the same session id already has identical normalized trace content |
 
-The imported trace is copied to the Lerim workspace imports directory in compact
-canonical form, then ingested into the shared context store. If the same
+The imported trace is copied to the Lerim workspace imports directory as compact
+trajectory-v1 records, then ingested into the shared context store. If the same
 session id already points at identical normalized trace content, Lerim skips the
 duplicate unless `--force` is set.
 

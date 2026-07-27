@@ -1,92 +1,210 @@
-"""Unit tests for shared adapter helpers in lerim.adapters.common.
+"""Unit tests for the shared adapter helpers in ``lerim.adapters.common``.
 
-Covers parse_timestamp, load_jsonl_dict_lines, count_non_empty_files,
-in_window, compute_file_hash, compact_jsonl, readonly_connect, and
-write_session_cache.
+The module is small on purpose after the trajectory migration: timestamp
+parsing, the one JSONL writer every trace file goes through, window filtering,
+hashing, and the tool-failure classifier. The writer gets the most attention
+here because the one-record-per-line layout it produces is what makes
+``line:<N>`` evidence citations addressable.
 """
 
 from __future__ import annotations
 
 import json
-import sqlite3
 from datetime import datetime, timezone
-from typing import Any
+from pathlib import Path
+
+import pytest
 
 from lerim.adapters.common import (
-	compact_jsonl,
-	compute_file_hash,
-	count_non_empty_files,
-	in_window,
-	load_jsonl_dict_lines,
-	parse_timestamp,
-	readonly_connect,
-	write_session_cache,
+    TOOL_ERROR_WRAPPER,
+    TOOL_FAILURE_PREFIXES,
+    compute_file_hash,
+    in_window,
+    is_failed_tool_result_text,
+    load_jsonl_dict_lines,
+    normalize_timestamp_iso,
+    parse_timestamp,
+    write_trajectory_jsonl,
 )
 
+# The three characters `json.dumps(ensure_ascii=False)` emits raw and
+# `str.splitlines()` treats as line breaks.
+LINE_SEPARATORS = ("\u2028", "\u2029", "\u0085")
+
 
 # ---------------------------------------------------------------------------
-# parse_timestamp
+# write_trajectory_jsonl — the load-bearing writer
 # ---------------------------------------------------------------------------
 
 
-def test_parse_timestamp_iso():
-	"""ISO 8601 string -> datetime."""
-	result = parse_timestamp("2026-02-20T10:00:00+00:00")
-	assert isinstance(result, datetime)
-	assert result.year == 2026
-	assert result.tzinfo is not None
+def test_writer_emits_one_compact_record_per_line(tmp_path):
+    """Records land one per line with no pretty-printing whitespace."""
+    path = write_trajectory_jsonl(
+        tmp_path / "trace.jsonl",
+        [
+            {"role": "meta", "source": "generic"},
+            {"role": "user", "content": "hello", "timestamp": "2026-05-16T09:00:00Z"},
+        ],
+    )
+
+    lines = path.read_text(encoding="utf-8").split("\n")
+    assert lines == [
+        '{"role":"meta","source":"generic"}',
+        '{"role":"user","content":"hello","timestamp":"2026-05-16T09:00:00Z"}',
+        "",
+    ]
 
 
-def test_parse_timestamp_epoch_ms():
-	"""Millisecond epoch int -> datetime."""
-	result = parse_timestamp(1_706_000_000_000)
-	assert isinstance(result, datetime)
-	assert result.tzinfo is not None
+@pytest.mark.parametrize("separator", LINE_SEPARATORS)
+def test_writer_escapes_characters_that_would_split_a_record(tmp_path, separator):
+    """A record carrying a Unicode line separator still occupies exactly one line.
+
+    Both readers must agree: ``for line in handle`` splits on ``\\n`` only,
+    while ``str.splitlines()`` also splits on U+2028/U+2029/U+0085. An
+    unescaped separator makes them disagree and silently rebinds every later
+    ``line:<N>`` citation in the file.
+    """
+    path = write_trajectory_jsonl(
+        tmp_path / "trace.jsonl",
+        [
+            {"role": "meta", "source": "generic"},
+            {"role": "user", "content": f"var a=1;{separator}var b=2;"},
+            {"role": "assistant", "content": "ok"},
+        ],
+    )
+
+    raw = path.read_text(encoding="utf-8")
+    assert separator not in raw
+    assert len(raw.splitlines()) == 3
+    with path.open("r", encoding="utf-8") as handle:
+        assert len(list(handle)) == 3
+    assert json.loads(raw.splitlines()[1])["content"] == f"var a=1;{separator}var b=2;"
 
 
-def test_parse_timestamp_epoch_s():
-	"""Second epoch int -> datetime."""
-	result = parse_timestamp(1_706_000_000)
-	assert isinstance(result, datetime)
-	assert result.tzinfo is not None
+def test_writer_keeps_non_ascii_text_readable(tmp_path):
+    """Ordinary non-ASCII content is written as itself, not as escape sequences."""
+    path = write_trajectory_jsonl(
+        tmp_path / "trace.jsonl", [{"role": "meta", "source": "generic", "cwd": "/tmp/naïve"}]
+    )
+
+    raw = path.read_text(encoding="utf-8")
+    assert "naïve" in raw
+    assert json.loads(raw)["cwd"] == "/tmp/naïve"
 
 
-def test_parse_timestamp_invalid():
-	"""Invalid input -> None (no crash)."""
-	assert parse_timestamp("not-a-date") is None
-	assert parse_timestamp(None) is None
-	assert parse_timestamp("") is None
-	assert parse_timestamp([1, 2, 3]) is None
+def test_writer_creates_missing_parent_directories(tmp_path):
+    """A first write into a new agent's cache directory succeeds."""
+    destination = tmp_path / "cache" / "traces" / "claude" / "run.jsonl"
+
+    path = write_trajectory_jsonl(destination, [{"role": "meta", "source": "claude-code"}])
+
+    assert path == destination
+    assert destination.is_file()
 
 
-def test_parse_timestamp_datetime_passthrough():
-	"""A datetime object is returned as-is (with tz)."""
-	dt = datetime(2026, 3, 15, 12, 0, 0, tzinfo=timezone.utc)
-	result = parse_timestamp(dt)
-	assert result == dt
-	assert result.tzinfo is not None
+def test_writer_replaces_previous_content(tmp_path):
+    """Re-normalizing a session overwrites its cache rather than appending to it."""
+    destination = tmp_path / "trace.jsonl"
+    write_trajectory_jsonl(destination, [{"role": "meta", "source": "a"}])
+
+    write_trajectory_jsonl(destination, [{"role": "meta", "source": "b"}])
+
+    assert destination.read_text(encoding="utf-8") == '{"role":"meta","source":"b"}\n'
 
 
-def test_parse_timestamp_naive_datetime():
-	"""A naive datetime gets UTC attached."""
-	naive = datetime(2026, 3, 15, 12, 0, 0)
-	result = parse_timestamp(naive)
-	assert result.tzinfo == timezone.utc
-	assert result.year == 2026
+def test_writing_no_records_produces_an_empty_file(tmp_path):
+    """An empty record list is written as an empty file, not a malformed one."""
+    path = write_trajectory_jsonl(tmp_path / "trace.jsonl", [])
+
+    assert path.read_text(encoding="utf-8") == ""
 
 
-def test_parse_timestamp_iso_with_z_suffix():
-	"""ISO string ending in Z is parsed correctly."""
-	result = parse_timestamp("2026-03-15T12:00:00Z")
-	assert isinstance(result, datetime)
-	assert result.tzinfo is not None
+# ---------------------------------------------------------------------------
+# is_failed_tool_result_text
+# ---------------------------------------------------------------------------
 
 
-def test_parse_timestamp_negative_epoch():
-	"""Large-magnitude negative epoch (pre-1970) returns None on OSError."""
-	# A very large negative number may cause OSError on some platforms
-	result = parse_timestamp(-1e18)
-	assert result is None or isinstance(result, datetime)
+@pytest.mark.parametrize("prefix", TOOL_FAILURE_PREFIXES)
+def test_every_declared_failure_prefix_is_detected(prefix):
+    """Each marker in the table classifies the result it was added for."""
+    assert is_failed_tool_result_text(f"{prefix} while running the command")
+
+
+def test_the_error_wrapper_anywhere_in_the_head_marks_a_failure():
+    """Harness-wrapped errors are detected even behind a short preamble."""
+    assert is_failed_tool_result_text(f"tool output {TOOL_ERROR_WRAPPER} bad path")
+
+
+def test_a_nonzero_exit_code_is_a_failure_and_zero_is_not():
+    """`Exit code 0` is success even though it shares the prefix with failures."""
+    assert is_failed_tool_result_text("Exit code 1\nplan.md")
+    assert not is_failed_tool_result_text("Exit code 0\nplan.md")
+
+
+def test_classification_ignores_case_and_leading_whitespace():
+    """Markers are matched on normalized text, not on exact harness formatting."""
+    assert is_failed_tool_result_text("   ERROR: no such file")
+
+
+def test_ordinary_output_and_empty_results_are_not_failures():
+    """A successful result is never counted, and neither is a blank one."""
+    assert not is_failed_tool_result_text("1\tdef retry():")
+    assert not is_failed_tool_result_text("")
+    assert not is_failed_tool_result_text("   \n  ")
+
+
+def test_a_failure_marker_far_into_the_output_is_not_counted():
+    """Only the head is inspected, so prose mentioning an error is not a failure."""
+    assert not is_failed_tool_result_text("ok\n" * 200 + "Error: too late to matter")
+
+
+# ---------------------------------------------------------------------------
+# parse_timestamp / normalize_timestamp_iso
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "2026-02-20T10:00:00+00:00",
+        "2026-03-15T12:00:00Z",
+        "2026-03-06T14:15:22.394Z",
+        1_706_000_000,
+        1_706_000_000_000,
+        datetime(2026, 3, 15, 12, 0, tzinfo=timezone.utc),
+        datetime(2026, 3, 15, 12, 0),
+    ],
+)
+def test_known_timestamp_shapes_parse_to_aware_datetimes(value):
+    """Every shape harnesses emit becomes a timezone-aware UTC datetime."""
+    parsed = parse_timestamp(value)
+
+    assert isinstance(parsed, datetime)
+    assert parsed.tzinfo is not None
+
+
+@pytest.mark.parametrize("value", ["not-a-date", None, "", [1, 2, 3], {"a": 1}])
+def test_unparseable_timestamps_return_none(value):
+    """A timestamp Lerim cannot read is absent, not a crash or a wrong instant."""
+    assert parse_timestamp(value) is None
+
+
+def test_a_datetime_with_a_zone_is_returned_unchanged():
+    """An already-aware datetime is not re-interpreted."""
+    moment = datetime(2026, 3, 15, 12, 0, tzinfo=timezone.utc)
+    assert parse_timestamp(moment) == moment
+
+
+def test_a_naive_datetime_is_read_as_utc():
+    """Harnesses that omit a zone are treated as UTC rather than local time."""
+    assert parse_timestamp(datetime(2026, 3, 15, 12, 0)).tzinfo == timezone.utc
+
+
+def test_normalize_timestamp_iso_renders_a_stable_utc_string():
+    """The catalog stores one timestamp spelling regardless of input shape."""
+    assert normalize_timestamp_iso("2026-02-19T10:00:00Z") == "2026-02-19T10:00:00Z"
+    assert normalize_timestamp_iso(1_706_000_000) is not None
+    assert normalize_timestamp_iso("not-a-date") is None
 
 
 # ---------------------------------------------------------------------------
@@ -94,59 +212,32 @@ def test_parse_timestamp_negative_epoch():
 # ---------------------------------------------------------------------------
 
 
-def test_load_jsonl_dict_lines_valid(tmp_path):
-	"""File with valid JSON dict lines -> list of dicts."""
-	f = tmp_path / "valid.jsonl"
-	f.write_text('{"a":1}\n{"b":2}\n', encoding="utf-8")
-	rows = load_jsonl_dict_lines(f)
-	assert rows == [{"a": 1}, {"b": 2}]
+def test_only_json_objects_are_returned_from_a_jsonl_file(tmp_path):
+    """Arrays, junk lines and blanks are skipped; objects are kept in order."""
+    path = tmp_path / "mixed.jsonl"
+    path.write_text('{"a":1}\n\n[1,2,3]\nnot-json\n{"b":2}\n', encoding="utf-8")
+
+    assert load_jsonl_dict_lines(path) == [{"a": 1}, {"b": 2}]
 
 
-def test_load_jsonl_dict_lines_mixed(tmp_path):
-	"""File with dicts + arrays + invalid -> only dicts returned."""
-	f = tmp_path / "mixed.jsonl"
-	f.write_text('{"a":1}\n[1,2,3]\nnot-json\n{"b":2}\n', encoding="utf-8")
-	rows = load_jsonl_dict_lines(f)
-	assert rows == [{"a": 1}, {"b": 2}]
+def test_reading_a_missing_or_empty_file_yields_nothing(tmp_path):
+    """A cache file that is gone or empty reads as no rows, not an exception."""
+    empty = tmp_path / "empty.jsonl"
+    empty.write_text("", encoding="utf-8")
+
+    assert load_jsonl_dict_lines(empty) == []
+    assert load_jsonl_dict_lines(tmp_path / "missing.jsonl") == []
 
 
-def test_load_jsonl_dict_lines_empty(tmp_path):
-	"""Empty file -> empty list."""
-	f = tmp_path / "empty.jsonl"
-	f.write_text("", encoding="utf-8")
-	assert load_jsonl_dict_lines(f) == []
+def test_records_written_by_the_writer_read_back_identically(tmp_path):
+    """The writer and the reader agree, including on escaped line separators."""
+    records = [
+        {"role": "meta", "source": "generic"},
+        {"role": "user", "content": "a\u2028b", "timestamp": "2026-05-16T09:00:00Z"},
+    ]
+    path = write_trajectory_jsonl(tmp_path / "trace.jsonl", records)
 
-
-def test_load_jsonl_dict_lines_missing_file(tmp_path):
-	"""Non-existent file returns empty list (OSError caught)."""
-	missing = tmp_path / "does-not-exist.jsonl"
-	assert load_jsonl_dict_lines(missing) == []
-
-
-def test_load_jsonl_dict_lines_blank_lines(tmp_path):
-	"""Blank lines are skipped."""
-	f = tmp_path / "blanks.jsonl"
-	f.write_text('\n\n{"a":1}\n\n', encoding="utf-8")
-	rows = load_jsonl_dict_lines(f)
-	assert rows == [{"a": 1}]
-
-
-# ---------------------------------------------------------------------------
-# count_non_empty_files
-# ---------------------------------------------------------------------------
-
-
-def test_count_non_empty_files(tmp_path):
-	"""Count files matching glob that have content."""
-	(tmp_path / "a.jsonl").write_text('{"x":1}', encoding="utf-8")
-	(tmp_path / "b.jsonl").write_text("", encoding="utf-8")  # empty
-	(tmp_path / "c.txt").write_text("data", encoding="utf-8")  # wrong ext
-	assert count_non_empty_files(tmp_path, "*.jsonl") == 1
-
-
-def test_count_non_empty_files_missing_dir(tmp_path):
-	"""Non-existent directory returns 0."""
-	assert count_non_empty_files(tmp_path / "nope", "*.jsonl") == 0
+    assert load_jsonl_dict_lines(path) == records
 
 
 # ---------------------------------------------------------------------------
@@ -154,52 +245,34 @@ def test_count_non_empty_files_missing_dir(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_in_window_inside():
-	"""Datetime within start-end -> True."""
-	now = datetime(2026, 2, 20, 12, 0, 0, tzinfo=timezone.utc)
-	start = datetime(2026, 2, 20, 0, 0, 0, tzinfo=timezone.utc)
-	end = datetime(2026, 2, 21, 0, 0, 0, tzinfo=timezone.utc)
-	assert in_window(now, start, end) is True
+def test_window_bounds_are_inclusive():
+    """A session exactly on a bound is inside the window."""
+    moment = datetime(2026, 2, 20, tzinfo=timezone.utc)
+    assert in_window(moment, moment, moment) is True
 
 
-def test_in_window_outside():
-	"""Datetime outside range -> False."""
-	now = datetime(2026, 2, 22, 12, 0, 0, tzinfo=timezone.utc)
-	start = datetime(2026, 2, 20, 0, 0, 0, tzinfo=timezone.utc)
-	end = datetime(2026, 2, 21, 0, 0, 0, tzinfo=timezone.utc)
-	assert in_window(now, start, end) is False
+def test_values_outside_either_bound_are_excluded():
+    """Sessions before the start or after the end are filtered out."""
+    start = datetime(2026, 2, 20, tzinfo=timezone.utc)
+    end = datetime(2026, 2, 21, tzinfo=timezone.utc)
+
+    assert in_window(datetime(2026, 2, 19, tzinfo=timezone.utc), start, end) is False
+    assert in_window(datetime(2026, 2, 22, tzinfo=timezone.utc), start, end) is False
 
 
-def test_in_window_none_bounds():
-	"""None start or end means unbounded."""
-	now = datetime(2026, 2, 20, 12, 0, 0, tzinfo=timezone.utc)
-	assert in_window(now, None, None) is True
-	assert in_window(now, None, datetime(2027, 1, 1, tzinfo=timezone.utc)) is True
-	assert in_window(now, datetime(2025, 1, 1, tzinfo=timezone.utc), None) is True
+def test_missing_bounds_mean_unbounded():
+    """`None` bounds do not narrow the window."""
+    moment = datetime(2026, 2, 20, 12, tzinfo=timezone.utc)
+
+    assert in_window(moment, None, None) is True
+    assert in_window(moment, None, datetime(2027, 1, 1, tzinfo=timezone.utc)) is True
+    assert in_window(moment, datetime(2025, 1, 1, tzinfo=timezone.utc), None) is True
 
 
-def test_in_window_none_value_no_bounds():
-	"""None value with no bounds returns True."""
-	assert in_window(None, None, None) is True
-
-
-def test_in_window_none_value_with_bounds():
-	"""None value with actual bounds returns False."""
-	start = datetime(2026, 1, 1, tzinfo=timezone.utc)
-	assert in_window(None, start, None) is False
-
-
-def test_in_window_exact_boundary():
-	"""Value equal to start or end is inclusive."""
-	dt = datetime(2026, 2, 20, 0, 0, 0, tzinfo=timezone.utc)
-	assert in_window(dt, dt, dt) is True
-
-
-def test_in_window_before_start():
-	"""Value before start returns False."""
-	value = datetime(2026, 1, 1, tzinfo=timezone.utc)
-	start = datetime(2026, 2, 1, tzinfo=timezone.utc)
-	assert in_window(value, start, None) is False
+def test_an_unknown_timestamp_only_passes_an_unbounded_window():
+    """A session with no readable time is not silently assumed to be in range."""
+    assert in_window(None, None, None) is True
+    assert in_window(None, datetime(2026, 1, 1, tzinfo=timezone.utc), None) is False
 
 
 # ---------------------------------------------------------------------------
@@ -207,182 +280,28 @@ def test_in_window_before_start():
 # ---------------------------------------------------------------------------
 
 
-def test_compute_file_hash_deterministic(tmp_path):
-	"""Same file content produces same hash."""
-	f = tmp_path / "test.txt"
-	f.write_text("hello world", encoding="utf-8")
-	h1 = compute_file_hash(f)
-	h2 = compute_file_hash(f)
-	assert h1 == h2
-	assert len(h1) == 64  # SHA-256 hex digest
+def test_the_content_hash_is_deterministic_and_content_addressed(tmp_path):
+    """Re-hashing an unchanged file matches; any edit changes the digest."""
+    path = tmp_path / "trace.jsonl"
+    path.write_text("content A", encoding="utf-8")
+    first = compute_file_hash(path)
+
+    assert compute_file_hash(path) == first
+    assert len(first) == 64
+
+    path.write_text("content B", encoding="utf-8")
+    assert compute_file_hash(path) != first
 
 
-def test_compute_file_hash_changes_on_content(tmp_path):
-	"""Different content produces different hash."""
-	f = tmp_path / "test.txt"
-	f.write_text("content A", encoding="utf-8")
-	h1 = compute_file_hash(f)
-	f.write_text("content B", encoding="utf-8")
-	h2 = compute_file_hash(f)
-	assert h1 != h2
+def test_hashing_an_empty_file_still_produces_a_digest(tmp_path):
+    """An empty cache file is hashable, so it can be compared like any other."""
+    path = tmp_path / "empty.jsonl"
+    path.write_text("", encoding="utf-8")
+
+    assert len(compute_file_hash(path)) == 64
 
 
-def test_compute_file_hash_empty_file(tmp_path):
-	"""Empty file produces consistent hash (SHA-256 of empty)."""
-	f = tmp_path / "empty.txt"
-	f.write_text("", encoding="utf-8")
-	h = compute_file_hash(f)
-	assert len(h) == 64
-
-
-# ---------------------------------------------------------------------------
-# compact_jsonl
-# ---------------------------------------------------------------------------
-
-
-def test_compact_jsonl_identity_cleaner():
-	"""Cleaner that returns input unchanged preserves all lines."""
-	raw = '{"a":1}\n{"b":2}\n'
-	result = compact_jsonl(raw, lambda obj: obj)
-	lines = [line for line in result.strip().split("\n") if line]
-	assert len(lines) == 2
-	assert json.loads(lines[0]) == {"a": 1}
-	assert json.loads(lines[1]) == {"b": 2}
-
-
-def test_compact_jsonl_drop_lines():
-	"""Cleaner returning None drops lines."""
-	raw = '{"keep":true}\n{"drop":true}\n'
-
-	def cleaner(obj: dict[str, Any]) -> dict[str, Any] | None:
-		"""Keep only dicts where keep is true."""
-		if obj.get("drop"):
-			return None
-		return obj
-
-	result = compact_jsonl(raw, cleaner)
-	lines = [line for line in result.strip().split("\n") if line]
-	assert len(lines) == 1
-	assert json.loads(lines[0]) == {"keep": True}
-
-
-def test_compact_jsonl_non_json_lines_kept():
-	"""Non-JSON lines pass through unchanged."""
-	raw = 'not-json\n{"a":1}\n'
-	result = compact_jsonl(raw, lambda obj: obj)
-	lines = [line for line in result.strip().split("\n") if line]
-	assert lines[0] == "not-json"
-	assert json.loads(lines[1]) == {"a": 1}
-
-
-def test_compact_jsonl_empty_lines_skipped():
-	"""Empty lines are dropped from output."""
-	raw = '\n\n{"a":1}\n\n'
-	result = compact_jsonl(raw, lambda obj: obj)
-	lines = [line for line in result.strip().split("\n") if line]
-	assert len(lines) == 1
-
-
-def test_compact_jsonl_cleaner_transforms():
-	"""Cleaner can transform the dict content."""
-	raw = '{"msg":"hello","extra":"remove"}\n'
-
-	def strip_extra(obj: dict[str, Any]) -> dict[str, Any]:
-		"""Remove extra key from dict."""
-		obj.pop("extra", None)
-		return obj
-
-	result = compact_jsonl(raw, strip_extra)
-	parsed = json.loads(result.strip())
-	assert parsed == {"msg": "hello"}
-	assert "extra" not in parsed
-
-
-# ---------------------------------------------------------------------------
-# readonly_connect
-# ---------------------------------------------------------------------------
-
-
-def test_readonly_connect_row_factory(tmp_path):
-	"""readonly_connect returns connection with Row factory."""
-	db_path = tmp_path / "test.db"
-	# Create a table to query
-	conn = sqlite3.connect(str(db_path))
-	conn.execute("CREATE TABLE t (id INTEGER, name TEXT)")
-	conn.execute("INSERT INTO t VALUES (1, 'alice')")
-	conn.commit()
-	conn.close()
-
-	ro = readonly_connect(db_path)
-	row = ro.execute("SELECT * FROM t").fetchone()
-	# Row factory means we can access by column name
-	assert row["id"] == 1
-	assert row["name"] == "alice"
-	ro.close()
-
-
-def test_readonly_connect_blocks_writes(tmp_path):
-	"""readonly_connect with PRAGMA query_only=ON blocks INSERT/UPDATE."""
-	db_path = tmp_path / "test.db"
-	conn = sqlite3.connect(str(db_path))
-	conn.execute("CREATE TABLE t (id INTEGER)")
-	conn.commit()
-	conn.close()
-
-	ro = readonly_connect(db_path)
-	try:
-		ro.execute("INSERT INTO t VALUES (1)")
-		ro.commit()
-		# Some SQLite versions raise on execute, others on commit
-		assert False, "Write should have been blocked"
-	except sqlite3.OperationalError:
-		pass
-	finally:
-		ro.close()
-
-
-# ---------------------------------------------------------------------------
-# write_session_cache
-# ---------------------------------------------------------------------------
-
-
-def test_write_session_cache_basic(tmp_path):
-	"""write_session_cache writes compacted JSONL and returns correct path."""
-	cache_dir = tmp_path / "cache"
-	lines = ['{"a":1}', '{"b":2}']
-
-	def identity_compact(raw: str) -> str:
-		"""Identity compactor -- returns input unchanged."""
-		return raw
-
-	result_path = write_session_cache(cache_dir, "run-001", lines, identity_compact)
-
-	assert result_path == cache_dir / "run-001.jsonl"
-	assert result_path.exists()
-	content = result_path.read_text(encoding="utf-8")
-	assert '{"a":1}' in content
-	assert '{"b":2}' in content
-
-
-def test_write_session_cache_creates_dir(tmp_path):
-	"""write_session_cache creates cache_dir if it does not exist."""
-	cache_dir = tmp_path / "deep" / "nested" / "cache"
-	assert not cache_dir.exists()
-
-	write_session_cache(cache_dir, "run-002", ["line1"], lambda r: r)
-
-	assert cache_dir.exists()
-	assert (cache_dir / "run-002.jsonl").exists()
-
-
-def test_write_session_cache_applies_compact_fn(tmp_path):
-	"""write_session_cache passes raw content through compact_fn."""
-	cache_dir = tmp_path / "cache"
-
-	def upper_compact(raw: str) -> str:
-		"""Convert to uppercase."""
-		return raw.upper()
-
-	write_session_cache(cache_dir, "run-003", ["hello"], upper_compact)
-	content = (cache_dir / "run-003.jsonl").read_text(encoding="utf-8")
-	assert content == "HELLO\n"
+def test_hashing_a_missing_file_fails_loudly(tmp_path):
+    """A cache file that vanished is an error, not a silently stable hash."""
+    with pytest.raises(OSError):
+        compute_file_hash(Path(tmp_path / "gone.jsonl"))

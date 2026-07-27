@@ -1,17 +1,57 @@
-"""Shared adapter helpers for timestamps, JSONL loading, window filtering, and hashing."""
+"""Shared helpers for timestamps, trace JSONL I/O, window filtering, and hashing."""
 
 from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
-from collections.abc import Callable
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
-from lerim.redaction import redact_text
+# ``json.dumps`` escapes every C0 control character, but with
+# ``ensure_ascii=False`` it emits U+2028, U+2029 and U+0085 raw — and
+# ``str.splitlines()`` treats all three as line breaks. Measured on real data:
+# 2 of 19 codex sessions carry U+2028. Escaping them keeps one record on one
+# line for every reader, and the escape decodes back to the same string.
+_LINE_BREAK_ESCAPES = str.maketrans(
+    {"\u2028": "\\u2028", "\u2029": "\\u2029", "\u0085": "\\u0085"}
+)
+
+# trajectory-v1 carries no `is_error` flag: the normalizer drops it, so a failed
+# tool call is only recognizable from the head of its result text. These markers
+# are anchored at the head and taken from observed harness failure output, so
+# the rule under-reports rather than misclassifying successful output. Measured
+# by joining raw claude `is_error` blocks to their normalized records by
+# tool_call_id across 150 local sessions: 81 of 129 real failures detected,
+# 10 of 4,153 successful results flagged (all of them error text the harness
+# itself did not flag).
+TOOL_ERROR_WRAPPER = "<tool_use_error>"
+TOOL_FAILURE_PREFIXES = (
+    "error",
+    "exception",
+    "traceback (most recent call last)",
+    "permission denied",
+    "command not found",
+    "file does not exist",
+    "file has not been read yet",
+    "file content (",
+    "the user doesn't want to proceed",
+    "[request interrupted",
+)
+
+
+def is_failed_tool_result_text(content: str) -> bool:
+    """Return whether a trajectory-v1 tool result's text reports a failed call."""
+    head = " ".join(content.split()).strip()[:200].lower()
+    if not head:
+        return False
+    if TOOL_ERROR_WRAPPER in head:
+        return True
+    if head.startswith("exit code ") and not head.startswith("exit code 0"):
+        return True
+    return head.startswith(TOOL_FAILURE_PREFIXES)
 
 
 def parse_timestamp(value: Any) -> datetime | None:
@@ -40,6 +80,14 @@ def parse_timestamp(value: Any) -> datetime | None:
     return parsed
 
 
+def normalize_timestamp_iso(value: Any) -> str | None:
+    """Parse any timestamp shape and return ISO 8601 UTC string, or None."""
+    dt = parse_timestamp(value)
+    if dt is None:
+        return None
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def load_jsonl_dict_lines(path: Path) -> list[dict[str, Any]]:
     """Read a JSONL file and return only dict payload rows."""
     entries: list[dict[str, Any]] = []
@@ -60,18 +108,25 @@ def load_jsonl_dict_lines(path: Path) -> list[dict[str, Any]]:
     return entries
 
 
-def count_non_empty_files(path: Path, pattern: str) -> int:
-    """Count non-empty files under ``path`` matching a glob pattern."""
-    if not path.exists():
-        return 0
-    count = 0
-    for file_path in path.rglob(pattern):
-        try:
-            if file_path.is_file() and file_path.stat().st_size > 0:
-                count += 1
-        except OSError:
-            continue
-    return count
+def write_trajectory_jsonl(
+    path: Path, records: Sequence[Mapping[str, Any]]
+) -> Path:
+    """Write trajectory-v1 records as one compact JSON object per line.
+
+    Every writer of a trace file goes through here, because the layout is
+    load-bearing: extracted context cites evidence as ``line:<N>`` into these
+    files, so a record that spans two lines silently rebinds every later
+    citation. Records must already be redacted — this only serializes.
+    """
+    lines = [
+        json.dumps(record, ensure_ascii=False, separators=(",", ":")).translate(
+            _LINE_BREAK_ESCAPES
+        )
+        for record in records
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
+    return path
 
 
 def in_window(
@@ -96,114 +151,18 @@ def compute_file_hash(path: Path) -> str:
     return h.hexdigest()
 
 
-# ---------------------------------------------------------------------------
-# Canonical compacted schema
-# ---------------------------------------------------------------------------
-# Every adapter must produce JSONL entries matching this shape:
-#   {"type": "user|assistant", "message": {"role": "user|assistant", "content": ...}, "timestamp": "..."}
-# Content can be a string or a list of block dicts (e.g. tool_use, tool_result).
-
-_CANONICAL_TYPES = frozenset({"user", "assistant"})
-
-
-def make_canonical_entry(
-    entry_type: str,
-    role: str,
-    content: str | list,
-    timestamp: str | None,
-) -> dict[str, Any]:
-    """Build a canonical compacted JSONL entry."""
-    return {
-        "type": entry_type,
-        "message": {"role": role, "content": content},
-        "timestamp": timestamp,
-    }
-
-
-def validate_canonical_entry(obj: dict[str, Any]) -> bool:
-    """Return True if entry conforms to the canonical compacted schema."""
-    if set(obj.keys()) != {"type", "message", "timestamp"}:
-        return False
-    if obj["type"] not in _CANONICAL_TYPES:
-        return False
-    msg = obj.get("message")
-    if not isinstance(msg, dict) or set(msg.keys()) != {"role", "content"}:
-        return False
-    if msg["role"] not in _CANONICAL_TYPES:
-        return False
-    if not isinstance(msg["content"], (str, list)):
-        return False
-    return True
-
-
-def normalize_timestamp_iso(value: Any) -> str | None:
-    """Parse any timestamp shape and return ISO 8601 UTC string, or None."""
-    dt = parse_timestamp(value)
-    if dt is None:
-        return None
-    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def compact_jsonl(
-    raw_text: str, cleaner: Callable[[dict[str, Any]], dict[str, Any] | None]
-) -> str:
-    """Compact JSONL text by applying a format-specific cleaner to each parsed line.
-
-    The *cleaner* receives each parsed JSON dict and returns the cleaned dict,
-    or ``None`` to drop the line entirely.  Non-JSON lines are kept as-is.
-    """
-    kept: list[str] = []
-    for line in raw_text.split("\n"):
-        stripped = line.strip()
-        if not stripped:
-            continue
-        try:
-            obj = json.loads(stripped)
-        except json.JSONDecodeError:
-            kept.append(line)
-            continue
-        obj = cleaner(obj)
-        if obj is None:
-            continue
-        kept.append(json.dumps(obj, ensure_ascii=False))
-    return "\n".join(kept) + "\n"
-
-
-def readonly_connect(db_path: Path) -> sqlite3.Connection:
-    """Open a read-only SQLite connection with Row factory."""
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA query_only=ON")
-    return conn
-
-
-def write_session_cache(
-    cache_dir: Path,
-    run_id: str,
-    lines: list[str],
-    compact_fn: Callable[[str], str],
-) -> Path:
-    """Write compacted, secret-redacted session JSONL to cache directory and return the path."""
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_path = cache_dir / f"{run_id}.jsonl"
-    raw = "\n".join(lines) + "\n"
-    compacted = compact_fn(raw)
-    cache_path.write_text(redact_text(compacted), encoding="utf-8")
-    return cache_path
-
-
 if __name__ == "__main__":
     """Run a real-path smoke test for timestamp parsing and JSONL reading."""
     assert parse_timestamp("2026-02-19T10:00:00+00:00") is not None
     assert parse_timestamp(1_706_000_000) is not None
     assert parse_timestamp("not-a-date") is None
+    assert normalize_timestamp_iso("2026-02-19T10:00:00Z") == "2026-02-19T10:00:00Z"
 
     with TemporaryDirectory() as tmp_dir:
         sample = Path(tmp_dir) / "sample.jsonl"
         sample.write_text('{"a":1}\n{"b":2}\nnot-json\n[1,2,3]\n', encoding="utf-8")
         rows = load_jsonl_dict_lines(sample)
         assert rows == [{"a": 1}, {"b": 2}]
-        assert count_non_empty_files(Path(tmp_dir), "*.jsonl") == 1
 
         h1 = compute_file_hash(sample)
         assert len(h1) == 64, "SHA-256 hex digest should be 64 chars"
@@ -212,6 +171,28 @@ if __name__ == "__main__":
         sample.write_text('{"c":3}\n', encoding="utf-8")
         h3 = compute_file_hash(sample)
         assert h3 != h1, "Changed file should produce different hash"
+
+        # A record carrying U+2028 still occupies exactly one line, for both
+        # `open()` iteration and `str.splitlines()`.
+        trace = Path(tmp_dir) / "nested" / "trace.jsonl"
+        separator = "\u2028"
+        write_trajectory_jsonl(
+            trace,
+            [
+                {"role": "meta", "source": "generic"},
+                {"role": "user", "content": f"var a=1;{separator}var b=2;"},
+                {"role": "assistant", "content": "ok"},
+            ],
+        )
+        raw = trace.read_text(encoding="utf-8")
+        assert len(raw.splitlines()) == 3, raw.splitlines()
+        assert separator not in raw
+        assert json.loads(raw.splitlines()[1])["content"] == f"var a=1;{separator}var b=2;"
+
+    assert is_failed_tool_result_text("Error: command not found")
+    assert is_failed_tool_result_text("Exit code 1\nplan.md")
+    assert not is_failed_tool_result_text("Exit code 0\nplan.md")
+    assert not is_failed_tool_result_text("")
 
     now = datetime.now(timezone.utc)
     assert in_window(now, now, now)

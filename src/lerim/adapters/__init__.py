@@ -1,10 +1,8 @@
-"""Platform adapters and registry."""
+"""Native harness session discovery, normalization, and platform registry."""
 
-from lerim.adapters.base import SessionRecord, ViewerMessage, ViewerSession
 from lerim.adapters.registry import (
     KNOWN_PLATFORMS,
     connect_platform,
-    get_adapter,
     get_connected_agents,
     get_connected_platform_paths,
     list_platforms,
@@ -12,18 +10,28 @@ from lerim.adapters.registry import (
     remove_platform,
     save_platforms,
 )
+from lerim.adapters.trajectory_source import (
+    SOURCE_MAP,
+    UNSUPPORTED_PLATFORMS,
+    SessionListing,
+    UnsupportedPlatformError,
+    list_sessions,
+    normalize_batch,
+)
 
 __all__ = [
-    "ViewerMessage",
-    "ViewerSession",
-    "SessionRecord",
     "KNOWN_PLATFORMS",
-    "get_adapter",
-    "load_platforms",
-    "save_platforms",
+    "SOURCE_MAP",
+    "UNSUPPORTED_PLATFORMS",
+    "SessionListing",
+    "UnsupportedPlatformError",
     "connect_platform",
-    "remove_platform",
-    "list_platforms",
     "get_connected_agents",
     "get_connected_platform_paths",
+    "list_platforms",
+    "list_sessions",
+    "load_platforms",
+    "normalize_batch",
+    "remove_platform",
+    "save_platforms",
 ]

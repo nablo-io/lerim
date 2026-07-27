@@ -309,7 +309,11 @@ def create_mcp_server() -> FastMCP:
         name="lerim_trace_submit",
         description=(
             "Submit a completed agent session transcript to Lerim for normal "
-            "trace import and source-session extraction."
+            "trace import and source-session extraction. trace_text may be JSONL, "
+            "a JSON array, a JSON object holding an events/messages list, or plain "
+            "text. Lerim maps it to trajectory-v1 records, so per-event role "
+            "(user, assistant, reasoning, tool), content, timestamp, tool_calls, "
+            "and tool_call_id are preserved when present."
         ),
     )
     def lerim_trace_submit(
@@ -323,7 +327,7 @@ def create_mcp_server() -> FastMCP:
         filename_hint: str | None = None,
         force: bool = False,
     ) -> dict[str, Any]:
-        """Submit one completed source session for Lerim extraction."""
+        """Submit one completed source session for mapping to trajectory-v1 records."""
         text = str(trace_text or "").strip()
         if not text:
             return {"error": True, "message": "trace_text_required"}

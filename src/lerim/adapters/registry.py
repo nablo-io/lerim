@@ -1,49 +1,37 @@
-"""Connected platform registry for session adapters."""
+"""Connected platform registry: which harnesses Lerim reads sessions from."""
 
 from __future__ import annotations
 
-import importlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from lerim.adapters.trajectory_source import (
+    SOURCE_MAP,
+    UNSUPPORTED_PLATFORMS,
+    default_root,
+    list_sessions,
+)
 
-_ADAPTER_MODULES: dict[str, str] = {
-    "claude": "lerim.adapters.claude",
-    "codex": "lerim.adapters.codex",
-    "opencode": "lerim.adapters.opencode",
-    "cursor": "lerim.adapters.cursor",
-    "pi": "lerim.adapters.pi",
-}
-
-_AUTO_SEED_PLATFORMS = ("claude", "codex", "opencode", "cursor", "pi")
-
-KNOWN_PLATFORMS = tuple(_ADAPTER_MODULES.keys())
-
-
-def get_adapter(name: str):
-    """Return adapter module for a known platform name."""
-    module_path = _ADAPTER_MODULES.get(name)
-    if not module_path:
-        return None
-    return importlib.import_module(module_path)
+# Platforms `lerim connect` accepts as an argument. Unsupported ones stay
+# listed so connecting them explains why they are gone instead of reporting an
+# unknown name.
+KNOWN_PLATFORMS = tuple(SOURCE_MAP) + tuple(UNSUPPORTED_PLATFORMS)
 
 
 def default_path_for(name: str) -> Path | None:
-    """Return adapter default traces path for a platform."""
-    adapter = get_adapter(name)
-    if not adapter:
+    """Return the default session store path for a platform."""
+    if name not in SOURCE_MAP:
         return None
-    return adapter.default_path()
+    return default_root(name)
 
 
 def _count_sessions(path: Path, name: str) -> int:
-    """Count sessions for a platform at a specific filesystem path."""
-    adapter = get_adapter(name)
-    if not adapter:
+    """Count discoverable sessions for a platform at a filesystem path."""
+    if name not in SOURCE_MAP:
         return 0
-    return adapter.count_sessions(path)
+    return len(list_sessions(name, root=path))
 
 
 def load_platforms(path: Path) -> dict[str, Any]:
@@ -76,7 +64,7 @@ def auto_seed(path: Path) -> dict[str, Any]:
         return load_platforms(path)
 
     data: dict[str, Any] = {"platforms": {}}
-    for name in _AUTO_SEED_PLATFORMS:
+    for name in SOURCE_MAP:
         default = default_path_for(name)
         if default and default.exists():
             data["platforms"][name] = {
@@ -92,6 +80,16 @@ def connect_platform(
     path: Path, name: str, custom_path: str | None = None
 ) -> dict[str, Any]:
     """Connect a platform path and return connection metadata."""
+    if name in UNSUPPORTED_PLATFORMS:
+        return {
+            "name": name,
+            "path": None,
+            "session_count": 0,
+            "connected_at": None,
+            "status": "unsupported_platform",
+            "message": UNSUPPORTED_PLATFORMS[name],
+        }
+
     data = load_platforms(path)
 
     if custom_path:
@@ -124,20 +122,13 @@ def connect_platform(
     }
     save_platforms(path, data)
 
-    result: dict[str, Any] = {
+    return {
         "name": name,
         "path": str(resolved),
         "session_count": session_count,
         "connected_at": connected_at,
         "status": "connected",
     }
-
-    # Attach adapter health-check info when available (advisory, non-blocking)
-    adapter = get_adapter(name)
-    if adapter and hasattr(adapter, "validate_connection"):
-        result["validation"] = adapter.validate_connection(resolved)
-
-    return result
 
 
 def remove_platform(path: Path, name: str) -> bool:
@@ -157,33 +148,37 @@ def list_platforms(path: Path, with_counts: bool = True) -> list[dict[str, Any]]
     for name, info in data["platforms"].items():
         platform_path = Path(str(info.get("path") or "")).expanduser()
         session_count = _count_sessions(platform_path, name) if with_counts else 0
-        output.append(
-            {
-                "name": name,
-                "path": info.get("path", ""),
-                "connected_at": info.get("connected_at", ""),
-                "session_count": session_count,
-                "exists": platform_path.exists(),
-            }
-        )
+        entry: dict[str, Any] = {
+            "name": name,
+            "path": info.get("path", ""),
+            "connected_at": info.get("connected_at", ""),
+            "session_count": session_count,
+            "exists": platform_path.exists(),
+        }
+        if name in UNSUPPORTED_PLATFORMS:
+            entry["status"] = "unsupported_platform"
+            entry["message"] = UNSUPPORTED_PLATFORMS[name]
+        output.append(entry)
     return output
 
 
 def get_connected_agents(path: Path) -> list[str]:
-    """Return names of currently connected platform agents."""
+    """Return the connected platforms Lerim can currently ingest."""
     data = auto_seed(path)
-    return list(data.get("platforms", {}).keys())
+    return [name for name in data.get("platforms", {}) if name in SOURCE_MAP]
 
 
 def get_connected_platform_paths(path: Path) -> dict[str, Path]:
-    """Return connected platform names mapped to existing resolved paths."""
+    """Return ingestible connected platforms mapped to existing resolved paths."""
     data = auto_seed(path)
     results: dict[str, Path] = {}
     for name, info in data.get("platforms", {}).items():
+        if name not in SOURCE_MAP:
+            continue
         raw = info.get("path")
         if not raw:
             continue
-        p = Path(raw).expanduser()
-        if p.exists():
-            results[name] = p
+        resolved = Path(raw).expanduser()
+        if resolved.exists():
+            results[name] = resolved
     return results

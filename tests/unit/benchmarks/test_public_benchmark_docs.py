@@ -70,8 +70,7 @@ def test_readme_launch_links_are_github_ready_without_duplicate_demo_asset() -> 
     assert 'href="docs/benchmarks/index.md"' in text
     assert 'href="docs/examples/index.md"' in text
     assert "docs/assets/lerim-context-compiler.svg" in text
-    assert "docs/assets/lerim-context-retrieval.svg" in text
-    assert "docs/assets/lerim-custom-trace-folder.svg" in text
+    assert "docs/assets/lerim-context-loop.svg" in text
     assert "docs/assets/lerim-architecture.svg" not in text
     assert "docs/assets/support-boundary.svg" not in text
     assert "docs/assets/lerim-trace-to-answer.gif" not in text

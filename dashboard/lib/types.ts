@@ -308,7 +308,7 @@ export interface TranscriptMessage {
   role: string;
   content: string;
   timestamp: string;
-  tool_calls: Array<{ name: string; id: string }>;
+  tool_calls: Array<{ name: string; id: string; args: string }>;
 }
 
 export interface MessagesResponse {

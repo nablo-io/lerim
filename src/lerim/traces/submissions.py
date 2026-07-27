@@ -13,7 +13,9 @@ from lerim.config.settings import Config, get_config
 from lerim.traces.importer import TraceImportResult, import_trace_file
 
 MANIFEST_SUFFIX = ".lerim-submission.json"
-SCHEMA_VERSION = 1
+# 2: normalized traces are trajectory-v1 records, so version-1 manifests point at
+# imports written in the retired {"type","message"} shape and cannot be retried.
+SCHEMA_VERSION = 2
 
 
 def submission_manifest_path(trace_path: Path) -> Path:
@@ -120,7 +122,8 @@ def load_submission_manifest(path: Path) -> dict[str, Any]:
         raise ValueError(f"submission manifest must be a JSON object: {manifest_path}")
     if int(data.get("schema_version") or 0) != SCHEMA_VERSION:
         raise ValueError(
-            f"unsupported submission manifest schema: {data.get('schema_version')}"
+            f"unsupported submission manifest schema: {data.get('schema_version')} "
+            f"(expected {SCHEMA_VERSION}); resubmit the trace instead of retrying"
         )
     return data
 

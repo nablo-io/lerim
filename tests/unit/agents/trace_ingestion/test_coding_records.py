@@ -12,7 +12,7 @@ def test_direct_user_strategy_replaces_fixed_slot_duplicate(tmp_path) -> None:
     """Direct visible-user conventions should outrank lower-level fixed slots."""
     trace_path = tmp_path / "trace.jsonl"
     trace_path.write_text(
-        '{"type":"user","message":{"role":"user","content":"Yes, go with PostgreSQL. Also, I always want to use UUIDs for primary keys instead of auto-increment integers. And make sure all timestamps use UTC timezone. These are project-wide conventions."}}\n',
+        '{"role":"user","content":"Yes, go with PostgreSQL. Also, I always want to use UUIDs for primary keys instead of auto-increment integers. And make sure all timestamps use UTC timezone. These are project-wide conventions."}\n',
         encoding="utf-8",
     )
 

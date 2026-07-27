@@ -42,7 +42,12 @@ from lerim.context.spec import (
 if TYPE_CHECKING:
     from lerim.context.retrieval import SearchHit
 
-SCHEMA_VERSION = "8"
+# 9: trajectory-v1 became Lerim's single trace format. Cached traces were
+# rewritten, so every stored content hash changed and every `line:<N>` citation
+# recorded before this version points into a file that no longer has that
+# layout. Databases stamped 8 or lower need the one-time reindex documented in
+# the release notes.
+SCHEMA_VERSION = "9"
 LOGGER = logging.getLogger(__name__)
 RECORDS_INDEX_GENERATION_KEY = "records_index_generation"
 RECORDS_FTS_GENERATION_KEY = "records_fts_generation"
