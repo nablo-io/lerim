@@ -28,9 +28,6 @@ handlers  # noqa
 # Pydantic model fields — populated at validation time
 artifacts  # noqa
 
-# Base class — subclassed by platform adapters
-Adapter  # noqa
-
 # Lazy import pattern
 __getattr__  # noqa
 
@@ -133,6 +130,36 @@ CREATE  # noqa
 UPDATE  # noqa
 ARCHIVE  # noqa
 SUPERSEDE  # noqa
+
+# TrajectoryErrorCode mirrors the upstream bridge's complete error-code set, so
+# a code arriving over the protocol resolves to a named member instead of a bare
+# string. Members are matched by value at runtime rather than referenced by name,
+# which vulture cannot see. Mirroring the whole set is the point: a code Lerim
+# never branches on today must still be reportable when the bridge returns it.
+SUPPORTED_SOURCES  # noqa
+INVALID_INPUT  # noqa
+UNKNOWN_SOURCE  # noqa
+PYTHON_UNAVAILABLE  # noqa
+PYTHON_DEPENDENCY_MISSING  # noqa
+CHECKPOINT_DATABASE_NOT_FOUND  # noqa
+CHECKPOINT_DATABASE_UNREADABLE  # noqa
+CHECKPOINT_READ_FAILED  # noqa
+CHECKPOINT_NOT_FOUND  # noqa
+CHECKPOINT_MESSAGES_MISSING  # noqa
+INVALID_CHECKPOINT_STATE  # noqa
+LISTING_UNAVAILABLE  # noqa
+MISSING_USER_RECORDS  # noqa
+INVALID_NORMALIZED_TRANSCRIPT  # noqa
+SOURCE_GROUP_REQUIRED  # noqa
+SOURCE_GROUP_CONFLICT  # noqa
+INTERNAL_ERROR  # noqa
+
+# No production caller: reachable only from tests. Pre-dates this branch — on
+# main it was re-exported from `lerim.sessions.__init__`, which satisfied vulture
+# without anything actually calling it. Emptying that module to break an import
+# cycle removed the export and exposed it. Listed rather than deleted to keep an
+# unrelated removal out of the release; decide whether to wire it up or drop it.
+update_session_extract_fields  # noqa
 
 # Third-party runtime attributes and public health/diagnostic helpers
 graph_optimization_level  # noqa
