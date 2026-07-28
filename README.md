@@ -10,10 +10,6 @@
 </p>
 
 <p align="center">
-  <em>Lerim is an independent open-source project by <a href="https://nablo.io">Nablo</a> - one example of our work. It compiles context and does not train models; model specialization (distillation, RL) is Nablo's separate post-training business and does not depend on Lerim.</em>
-</p>
-
-<p align="center">
   <a href="https://pypi.org/project/lerim/"><img src="https://img.shields.io/pypi/v/lerim?style=flat-square&color=d4a44a" alt="PyPI version"></a>
   <a href="https://pypi.org/project/lerim/"><img src="https://img.shields.io/badge/python-3.11%2B-3776AB?style=flat-square" alt="Python 3.11+"></a>
   <a href="https://github.com/nablo-io/lerim/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square" alt="License"></a>
@@ -22,8 +18,6 @@
 </p>
 
 <p align="center">
-  <a href="https://nablo.io/lerim">Website</a>
-  ·
   <a href="https://docs.nablo.io">Docs</a>
   ·
   <a href="docs/benchmarks/index.md">Benchmarks</a>
@@ -270,12 +264,8 @@ To read the codebase, start with
 
 Lerim core is Apache-2.0. The local CLI, runtime, self-hosted sync server,
 native trace parsing, context DB schema, benchmark scripts, and integration docs
-stay usable without any paid account. Any hosted, commercial, or model-training
-offering is Nablo's business, not a Lerim product. See COMMERCIAL.md for the
-open-source scope.
-
-Want Lerim's compiled context feeding a trained, specialized model - or want us
-to host and run this for you? [Get in touch →](https://nablo.io/#audit)
+stay usable without any paid account. Any hosted or commercial offering sits
+outside the open-source core. See COMMERCIAL.md for the open-source scope.
 
 ## Contributing
 
